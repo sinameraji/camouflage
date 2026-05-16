@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crate::tty::Key;
 
 pub enum Action {
     None,
@@ -11,14 +11,17 @@ pub enum Action {
     Replay,
 }
 
-pub fn handle_key(k: KeyEvent, buf: &mut String) -> Action {
-    match (k.code, k.modifiers) {
-        (KeyCode::Char('c'), KeyModifiers::CONTROL) => Action::Quit,
-        (KeyCode::Char('e'), KeyModifiers::CONTROL) => Action::JumpToLatest,
-        (KeyCode::Char('q'), _) if buf.is_empty() => Action::Quit,
-        (KeyCode::Char('r'), _) if buf.is_empty() => Action::Replay,
-        (KeyCode::Char('b'), _) if buf.is_empty() => Action::None, // benchmark hook (reserved)
-        (KeyCode::Enter, _) => {
+pub fn handle_key(k: Key, buf: &mut String) -> Action {
+    match k {
+        Key::CtrlC => Action::Quit,
+        Key::CtrlE => Action::JumpToLatest,
+        Key::Char('q') if buf.is_empty() => Action::Quit,
+        Key::Char('r') if buf.is_empty() => Action::Replay,
+        Key::Char(c) => {
+            buf.push(c);
+            Action::None
+        }
+        Key::Enter => {
             if buf.is_empty() {
                 Action::None
             } else {
@@ -26,18 +29,15 @@ pub fn handle_key(k: KeyEvent, buf: &mut String) -> Action {
                 Action::SubmitInput(text)
             }
         }
-        (KeyCode::Esc, _) => Action::CancelStream,
-        (KeyCode::Up, _) => Action::ScrollUp(1),
-        (KeyCode::Down, _) => Action::ScrollDown(1),
-        (KeyCode::PageUp, _) => Action::ScrollUp(10),
-        (KeyCode::PageDown, _) => Action::ScrollDown(10),
-        (KeyCode::End, _) => Action::JumpToLatest,
-        (KeyCode::Backspace, _) => {
+        Key::Esc => Action::CancelStream,
+        Key::Up => Action::ScrollUp(1),
+        Key::Down => Action::ScrollDown(1),
+        Key::PageUp => Action::ScrollUp(10),
+        Key::PageDown => Action::ScrollDown(10),
+        Key::End => Action::JumpToLatest,
+        Key::Home => Action::ScrollUp(u16::MAX),
+        Key::Backspace => {
             buf.pop();
-            Action::None
-        }
-        (KeyCode::Char(c), m) if !m.contains(KeyModifiers::CONTROL) && !m.contains(KeyModifiers::ALT) => {
-            buf.push(c);
             Action::None
         }
         _ => Action::None,

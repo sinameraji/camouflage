@@ -5,7 +5,6 @@ mod tty;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use std::os::fd::RawFd;
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -38,11 +37,6 @@ fn default_db_path() -> PathBuf {
 }
 
 fn main() -> Result<()> {
-    // Swap fd 0 to /dev/tty before tokio starts so crossterm sees a TTY at
-    // stdin. The original stdin (if it was a pipe) is moved to `events_fd`.
-    let layout = tty::install_fd_layout().context("installing fd layout")?;
-    let events_fd: Option<RawFd> = layout.events_fd;
-
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -65,6 +59,5 @@ fn main() -> Result<()> {
         stdin_events: args.stdin_events,
         replay: args.replay,
         fps: args.fps.max(1).min(120),
-        events_fd,
     }))
 }

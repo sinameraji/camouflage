@@ -1,64 +1,212 @@
-//! Terminal-fd plumbing.
+//! Direct /dev/tty key reader.
 //!
-//! Problem: when invoked as `cmd | camouflage-tui --stdin-events`, fd 0 is
-//! the NDJSON pipe, not a TTY. crossterm's raw-mode + event reader both
-//! ultimately depend on fd 0 being a terminal, so they fail/hang and the
-//! TUI exits before drawing.
+//! Why this exists: crossterm 0.28 uses mio/kqueue to poll for terminal
+//! events, and on macOS, registering a freshly-opened /dev/tty fd with
+//! kqueue's EVFILT_READ returns EINVAL. When stdin is a pipe (the entire
+//! point of `cmd | camouflage-tui --stdin-events`), crossterm opens
+//! /dev/tty itself, so it hits this path and fails to initialize. The
+//! result: `event::poll` returns "Failed to initialize input reader".
 //!
-//! Solution: at startup, dup fd 0 (the pipe) to a new fd we keep for
-//! NDJSON ingestion, then dup /dev/tty over fd 0. After this swap:
-//!
-//!   fd 0 = /dev/tty   (crossterm is happy)
-//!   fd N = original pipe   (we read NDJSON from here)
-//!
-//! If fd 0 is already a TTY (no pipe), we leave everything alone and
-//! return `None` for the events fd.
+//! Workaround: read bytes from /dev/tty ourselves with plain blocking
+//! read(2) on a dedicated thread, and parse the small subset of escape
+//! sequences we actually use. crossterm remains responsible for raw mode
+//! (which works fine — it uses tcsetattr, not kqueue) and drawing.
 
 use std::io;
 use std::os::fd::RawFd;
+use std::sync::mpsc;
 
-/// Result of the fd swap.
-pub struct FdLayout {
-    /// If `Some`, fd 0 was a pipe; this is the dup'd fd for NDJSON.
-    /// If `None`, fd 0 was already a TTY — there is no separate events fd
-    /// and `--stdin-events` was effectively a no-op.
-    pub events_fd: Option<RawFd>,
+#[derive(Debug, Clone, Copy)]
+pub enum Key {
+    Char(char),
+    Enter,
+    Backspace,
+    Esc,
+    Up,
+    Down,
+    Left,
+    Right,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+    CtrlC,
+    CtrlE,
 }
 
-/// Returns true if `fd` refers to a terminal.
-fn is_tty(fd: RawFd) -> bool {
-    unsafe { libc::isatty(fd) == 1 }
+/// Open /dev/tty for reading and return its raw fd.
+pub fn open_tty_for_read() -> io::Result<RawFd> {
+    let path = b"/dev/tty\0";
+    let fd = unsafe { libc::open(path.as_ptr() as *const _, libc::O_RDONLY | libc::O_NOCTTY) };
+    if fd < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(fd)
+    }
 }
 
-/// Perform the fd swap described in the module docs. Idempotent: safe to
-/// call once at startup.
-pub fn install_fd_layout() -> io::Result<FdLayout> {
-    if is_tty(0) {
-        return Ok(FdLayout { events_fd: None });
-    }
-    // Save the original stdin (the pipe) to a fresh fd.
-    let saved = unsafe { libc::dup(0) };
-    if saved < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // Open /dev/tty for both read and write.
-    let tty_path = b"/dev/tty\0";
-    let tty_fd = unsafe { libc::open(tty_path.as_ptr() as *const _, libc::O_RDWR) };
-    if tty_fd < 0 {
-        let e = io::Error::last_os_error();
-        unsafe { libc::close(saved) };
-        return Err(e);
-    }
-    // Put /dev/tty at fd 0.
-    let rc = unsafe { libc::dup2(tty_fd, 0) };
-    if rc < 0 {
-        let e = io::Error::last_os_error();
-        unsafe {
-            libc::close(saved);
-            libc::close(tty_fd);
+/// Spawn a blocking thread that reads keys from `tty_fd` and forwards them
+/// through the returned receiver. The thread terminates when the fd hits
+/// EOF or an error.
+pub fn spawn_key_reader(tty_fd: RawFd) -> mpsc::Receiver<Key> {
+    let (tx, rx) = mpsc::channel::<Key>();
+    std::thread::spawn(move || {
+        let mut parser = EscParser::new();
+        let mut buf = [0u8; 64];
+        loop {
+            let n = unsafe { libc::read(tty_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
+            if n <= 0 {
+                break;
+            }
+            for &b in &buf[..n as usize] {
+                if let Some(k) = parser.feed(b) {
+                    if tx.send(k).is_err() {
+                        return;
+                    }
+                }
+            }
         }
-        return Err(e);
+    });
+    rx
+}
+
+/// Tiny ANSI escape-sequence parser covering the keys we use.
+///
+/// States:
+/// - Ground: each byte either a printable, control, or `ESC` starting a sequence
+/// - Esc: after seeing `0x1b`
+/// - Csi: after seeing `ESC [`
+struct EscParser {
+    state: State,
+    csi_buf: Vec<u8>,
+}
+
+enum State {
+    Ground,
+    Esc,
+    Csi,
+}
+
+impl EscParser {
+    fn new() -> Self {
+        Self {
+            state: State::Ground,
+            csi_buf: Vec::with_capacity(8),
+        }
     }
-    unsafe { libc::close(tty_fd) };
-    Ok(FdLayout { events_fd: Some(saved) })
+
+    fn feed(&mut self, b: u8) -> Option<Key> {
+        match self.state {
+            State::Ground => match b {
+                0x03 => Some(Key::CtrlC),
+                0x05 => Some(Key::CtrlE),
+                0x0d | 0x0a => Some(Key::Enter),
+                0x7f | 0x08 => Some(Key::Backspace),
+                0x1b => {
+                    self.state = State::Esc;
+                    None
+                }
+                b if b >= 0x20 && b < 0x7f => Some(Key::Char(b as char)),
+                _ => None,
+            },
+            State::Esc => match b {
+                b'[' => {
+                    self.state = State::Csi;
+                    self.csi_buf.clear();
+                    None
+                }
+                0x1b => None,
+                _ => {
+                    // Lone ESC (or Alt-X we don't handle); treat as Esc.
+                    self.state = State::Ground;
+                    Some(Key::Esc)
+                }
+            },
+            State::Csi => {
+                // CSI ends on a byte in 0x40..=0x7e
+                if (0x40..=0x7e).contains(&b) {
+                    let k = match b {
+                        b'A' => Some(Key::Up),
+                        b'B' => Some(Key::Down),
+                        b'C' => Some(Key::Right),
+                        b'D' => Some(Key::Left),
+                        b'H' => Some(Key::Home),
+                        b'F' => Some(Key::End),
+                        b'~' => {
+                            // Look at csi_buf for number
+                            let s = std::str::from_utf8(&self.csi_buf).unwrap_or("");
+                            match s {
+                                "1" | "7" => Some(Key::Home),
+                                "4" | "8" => Some(Key::End),
+                                "5" => Some(Key::PageUp),
+                                "6" => Some(Key::PageDown),
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    };
+                    self.csi_buf.clear();
+                    self.state = State::Ground;
+                    k
+                } else {
+                    self.csi_buf.push(b);
+                    None
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn feed_all(p: &mut EscParser, bytes: &[u8]) -> Vec<Key> {
+        let mut out = vec![];
+        for &b in bytes {
+            if let Some(k) = p.feed(b) {
+                out.push(k);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn parse_arrow_keys() {
+        let mut p = EscParser::new();
+        let keys = feed_all(&mut p, b"\x1b[A\x1b[B\x1b[C\x1b[D");
+        assert!(matches!(keys.as_slice(), [Key::Up, Key::Down, Key::Right, Key::Left]));
+    }
+
+    #[test]
+    fn parse_pageup_pagedown_end() {
+        let mut p = EscParser::new();
+        let keys = feed_all(&mut p, b"\x1b[5~\x1b[6~\x1b[F");
+        assert!(matches!(keys.as_slice(), [Key::PageUp, Key::PageDown, Key::End]));
+    }
+
+    #[test]
+    fn parse_printable_and_enter() {
+        let mut p = EscParser::new();
+        let keys = feed_all(&mut p, b"hi\r");
+        assert_eq!(keys.len(), 3);
+        assert!(matches!(keys[0], Key::Char('h')));
+        assert!(matches!(keys[1], Key::Char('i')));
+        assert!(matches!(keys[2], Key::Enter));
+    }
+
+    #[test]
+    fn parse_ctrl_c() {
+        let mut p = EscParser::new();
+        let keys = feed_all(&mut p, &[0x03]);
+        assert!(matches!(keys.as_slice(), [Key::CtrlC]));
+    }
+
+    #[test]
+    fn lone_esc_emits_esc() {
+        let mut p = EscParser::new();
+        // ESC then a non-[ byte
+        let keys = feed_all(&mut p, b"\x1bz");
+        assert!(matches!(keys.first(), Some(Key::Esc)));
+    }
 }

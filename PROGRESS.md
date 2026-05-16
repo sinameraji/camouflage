@@ -56,7 +56,7 @@ Code-complete and tests pass. Offline benchmark hits all four numeric targets. O
 | 20| Manual TUI verification per `docs/manual-tests.md`| NOT DONE          | Awaits human run-through                         |
 | 21| Bench RSS caveat fix (stream into store, not Vec) | NOT DONE          | Documented in `BENCHMARKS.md`                    |
 
-| 22| Raw mode via /dev/tty (so `pipe \| camouflage-tui --stdin-events` actually starts) | DONE | `crates/tui/src/tty.rs`. Was a hard blocker: crossterm's default raw-mode operates on fd 0; with a pipe in fd 0 it returns ENOTTY and the TUI exits before drawing. |
+| 22| Pipe-stdin works end-to-end (custom /dev/tty key reader bypassing crossterm's broken mio path) | DONE | `crates/tui/src/tty.rs`. Verified via pty test: 290 events streamed and persisted, full UI rendered. Root cause: macOS kqueue returns EINVAL when registering a freshly-opened /dev/tty fd, which kills crossterm's event source. Workaround: blocking `read(/dev/tty)` thread with a small ANSI parser. |
 
 **v0.1: 17 / 22 complete.**
 
@@ -78,3 +78,4 @@ Brief one-liners per session. Keep this short — git log has the detail.
 | 2026-05-15 | Scaffolded workspace; v0.1 code-complete; all unit tests pass; bench hits 4/4 targets.   |
 | 2026-05-16 | Initialized git, imported specs into `docs/specs/`, added PROGRESS.md tracker.           |
 | 2026-05-16 | Created public GitHub repo, pushed. Fixed pipe-stdin raw-mode bug (open /dev/tty directly).|
+| 2026-05-16 | Fixed deeper pipe-stdin bug: crossterm's mio-based event poll fails (EINVAL on macOS kqueue+/dev/tty). Replaced with custom blocking /dev/tty reader + ANSI parser. Verified via pty harness: 290 events round-tripped, full UI rendered. |
