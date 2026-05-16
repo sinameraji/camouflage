@@ -95,6 +95,18 @@ pub struct SearchView<'a> {
     pub query: &'a str,
 }
 
+/// v0.4: live runtime metrics shown in the toggleable overlay.
+pub struct MetricsView {
+    pub total_events: u64,
+    pub events_per_sec: f64,
+    pub frame_us: u128,
+    pub session_secs: u64,
+    pub rows_live: usize,
+    pub row_cap: usize,
+    pub history_rows: usize,
+    pub background_tasks: usize,
+}
+
 /// Row-kind filter cycled with `f`. None = show everything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowFilterKind {
@@ -133,6 +145,7 @@ pub fn render<B: Backend>(
     row_filter: Option<RowFilterKind>,
     search: Option<SearchView<'_>>,
     help_open: bool,
+    metrics: Option<MetricsView>,
 ) -> Result<()> {
     terminal.draw(|f| {
         let area = f.area();
@@ -449,6 +462,9 @@ pub fn render<B: Backend>(
         if help_open {
             draw_help_overlay(f, area);
         }
+        if let Some(m) = metrics.as_ref() {
+            draw_metrics_overlay(f, area, m);
+        }
     })?;
     Ok(())
 }
@@ -495,6 +511,7 @@ fn draw_help_overlay(f: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
         kv("Esc", "cancel active stream", key, dim),
         kv("1 / 2 / 3", "permission: allow once / session / deny", key, dim),
         kv("r", "reload (in --replay mode: restart)", key, dim),
+        kv("M", "toggle live-metrics overlay", key, dim),
         kv("q · Ctrl+C", "quit", key, dim),
         Line::from(""),
         Line::from(vec![
@@ -510,6 +527,50 @@ fn draw_help_overlay(f: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
                 .borders(Borders::ALL)
                 .title(" help ")
                 .border_style(Style::default().fg(Color::Yellow)),
+        );
+    f.render_widget(widget, overlay);
+}
+
+fn draw_metrics_overlay(
+    f: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    m: &MetricsView,
+) {
+    // Small top-right panel. Doesn't take focus; just informational.
+    let w: u16 = 36;
+    let h: u16 = 11;
+    if area.width < w + 2 || area.height < h + 2 {
+        return;
+    }
+    let overlay = ratatui::layout::Rect {
+        x: area.x + area.width.saturating_sub(w + 1),
+        y: area.y + 1,
+        width: w,
+        height: h,
+    };
+    f.render_widget(Clear, overlay);
+    let dim = Style::default().fg(Color::DarkGray);
+    let val = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
+    let cap_pct = if m.row_cap == 0 { 0 } else { m.rows_live * 100 / m.row_cap };
+    let frame_ms = m.frame_us as f64 / 1000.0;
+    let rows = vec![
+        Line::from(vec![Span::styled("session  ", dim), Span::styled(format!("{}s", m.session_secs), val)]),
+        Line::from(vec![Span::styled("events   ", dim), Span::styled(format!("{}", m.total_events), val)]),
+        Line::from(vec![Span::styled("rate     ", dim), Span::styled(format!("{:.1}/s", m.events_per_sec), val)]),
+        Line::from(vec![Span::styled("frame    ", dim), Span::styled(format!("{:.2}ms", frame_ms), val)]),
+        Line::from(vec![Span::styled("rows     ", dim), Span::styled(format!("{}/{} ({}%)", m.rows_live, m.row_cap, cap_pct), val)]),
+        Line::from(vec![Span::styled("history  ", dim), Span::styled(format!("{}", m.history_rows), val)]),
+        Line::from(vec![Span::styled("tasks    ", dim), Span::styled(format!("{}", m.background_tasks), val)]),
+        Line::from(""),
+        Line::from(vec![Span::styled("M", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)), Span::styled(" again to close", dim)]),
+    ];
+    let widget = Paragraph::new(rows)
+        .wrap(Wrap { trim: false })
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" metrics ")
+                .border_style(Style::default().fg(Color::Cyan)),
         );
     f.render_widget(widget, overlay);
 }

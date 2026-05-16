@@ -132,6 +132,17 @@ pub async fn run(cfg: Config) -> Result<()> {
     let mut input_buf = String::new();
     let mut status: String = "idle".into();
 
+    // v0.4: live-metrics overlay state. Tracks total events seen, a 1-second
+    // rolling rate, and the most-recent draw frame time. Cheap; updated
+    // inline in the event-receive and render hot paths.
+    let mut metrics_open: bool = false;
+    let session_started_at = std::time::Instant::now();
+    let mut total_events: u64 = 0;
+    let mut events_since_window: u64 = 0;
+    let mut events_per_sec: f64 = 0.0;
+    let mut last_rate_window = std::time::Instant::now();
+    let mut last_frame_time_us: u128 = 0;
+
     // Replay state: loaded but not played-through. We start paused at
     // position 0 so the user can scrub controls before content shows.
     let mut replay_state: Option<ReplayState> = None;
@@ -502,6 +513,10 @@ pub async fn run(cfg: Config) -> Result<()> {
                     help_open = !help_open;
                     model.mark_dirty();
                 }
+                input::Action::ToggleMetrics => {
+                    metrics_open = !metrics_open;
+                    model.mark_dirty();
+                }
                 input::Action::InspectorCursorUp => {
                     if inspector_open {
                         inspector_cursor = inspector_cursor.saturating_add(1)
@@ -689,6 +704,8 @@ pub async fn run(cfg: Config) -> Result<()> {
             }
             Some(ev) = rendered_rx.recv() => {
                 model.apply(&ev);
+                total_events += 1;
+                events_since_window += 1;
                 status = match ev.event_type {
                     EventType::AssistantTokenDelta | EventType::AssistantStreamStarted => "streaming".into(),
                     EventType::AssistantMessageCompleted => "idle".into(),
@@ -702,6 +719,8 @@ pub async fn run(cfg: Config) -> Result<()> {
                     match rendered_rx.try_recv() {
                         Ok(ev2) => {
                             model.apply(&ev2);
+                            total_events += 1;
+                            events_since_window += 1;
                             drained += 1;
                         }
                         Err(_) => break,
@@ -762,6 +781,29 @@ pub async fn run(cfg: Config) -> Result<()> {
                     } else {
                         None
                     };
+                    // Update 1-second rate window for the metrics overlay.
+                    let now = std::time::Instant::now();
+                    if now.duration_since(last_rate_window) >= std::time::Duration::from_secs(1) {
+                        let secs = now.duration_since(last_rate_window).as_secs_f64().max(0.001);
+                        events_per_sec = events_since_window as f64 / secs;
+                        events_since_window = 0;
+                        last_rate_window = now;
+                    }
+                    let metrics = if metrics_open {
+                        Some(draw::MetricsView {
+                            total_events,
+                            events_per_sec,
+                            frame_us: last_frame_time_us,
+                            session_secs: session_started_at.elapsed().as_secs(),
+                            rows_live: model.rows().len(),
+                            row_cap: cfg.row_cap.unwrap_or(camouflage_renderer::model::DEFAULT_ROW_CAP),
+                            history_rows: model.history_rows().len(),
+                            background_tasks: model.background_tasks().len(),
+                        })
+                    } else {
+                        None
+                    };
+                    let draw_start = std::time::Instant::now();
                     draw::render(
                         &mut terminal,
                         &model,
@@ -773,7 +815,9 @@ pub async fn run(cfg: Config) -> Result<()> {
                         filter,
                         search_view,
                         help_open,
+                        metrics,
                     )?;
+                    last_frame_time_us = draw_start.elapsed().as_micros();
                     model.mark_clean();
                 }
                 // Resize check (size() is cheap; no kqueue needed)

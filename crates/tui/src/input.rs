@@ -42,6 +42,8 @@ pub enum Action {
     BookmarkNext,
     /// v0.4+: toggle the help overlay.
     ToggleHelp,
+    /// v0.4+: toggle the live-metrics overlay (events/sec, frame time, RSS).
+    ToggleMetrics,
 }
 
 /// Variant of `handle_key` used while a PermissionRequested is pending.
@@ -71,6 +73,7 @@ pub fn handle_key(k: Key, buf: &mut String) -> Action {
         Key::Char('m') if buf.is_empty() => Action::BookmarkAdd,
         Key::Char('\'') if buf.is_empty() => Action::BookmarkNext,
         Key::Char('?') if buf.is_empty() => Action::ToggleHelp,
+        Key::Char('M') if buf.is_empty() => Action::ToggleMetrics,
         Key::Char(c) => {
             buf.push(c);
             Action::None
