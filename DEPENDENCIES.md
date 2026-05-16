@@ -16,8 +16,9 @@ Direct dependencies, with rationale. Budget: ≤15 for v0.1.
 | thiserror             | protocol, store, headless | Library error enums                      | hand-rolled `Error`               |
 | tracing               | tui, store           | Structured logging                           | log + env_logger                  |
 | tracing-subscriber    | tui                  | Tracing -> stderr formatter                  | fmt by hand                       |
+| libc                  | tui                  | Open /dev/tty + apply termios (raw mode) so the TUI works when stdin is a pipe of NDJSON events | nix (heavier) |
 
-**Total direct deps: 12** (well under the 15 budget).
+**Total direct deps: 13** (under the 15 budget).
 
 ## Rules
 

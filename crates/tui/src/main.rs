@@ -1,6 +1,7 @@
 mod app;
 mod draw;
 mod input;
+mod tty;
 
 use anyhow::{Context, Result};
 use clap::Parser;

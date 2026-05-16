@@ -1,11 +1,11 @@
-use crate::{draw, input};
+use crate::{draw, input, tty};
 use anyhow::{Context, Result};
 use camouflage_headless::{run_reader, NdjsonDecoder};
 use camouflage_protocol::{Event, EventType, SCHEMA_VERSION};
 use camouflage_renderer::{RenderModel, ViewportState};
 use camouflage_store::{EventStore, SqliteStore};
 use crossterm::event::{poll as ct_poll, read as ct_read, Event as CtEvent, KeyEventKind};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
@@ -276,7 +276,9 @@ fn now_ms() -> i64 {
 }
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
-    enable_raw_mode()?;
+    // Apply raw mode on /dev/tty rather than stdin, so we work when stdin is
+    // a pipe carrying NDJSON events.
+    tty::enable_raw_mode_via_tty().context("enabling raw mode on /dev/tty")?;
     let mut stdout = std::io::stdout();
     stdout.execute(EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
@@ -286,7 +288,7 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
 }
 
 fn teardown_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
-    disable_raw_mode()?;
+    tty::restore();
     terminal.backend_mut().execute(LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     Ok(())
@@ -295,7 +297,7 @@ fn teardown_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Resul
 fn install_panic_hook() {
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let _ = disable_raw_mode();
+        tty::restore();
         let _ = std::io::stdout().execute(LeaveAlternateScreen);
         prev(info);
     }));

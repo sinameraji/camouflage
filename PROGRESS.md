@@ -56,7 +56,9 @@ Code-complete and tests pass. Offline benchmark hits all four numeric targets. O
 | 20| Manual TUI verification per `docs/manual-tests.md`| NOT DONE          | Awaits human run-through                         |
 | 21| Bench RSS caveat fix (stream into store, not Vec) | NOT DONE          | Documented in `BENCHMARKS.md`                    |
 
-**v0.1: 16 / 21 complete.**
+| 22| Raw mode via /dev/tty (so `pipe \| camouflage-tui --stdin-events` actually starts) | DONE | `crates/tui/src/tty.rs`. Was a hard blocker: crossterm's default raw-mode operates on fd 0; with a pipe in fd 0 it returns ENOTTY and the TUI exits before drawing. |
+
+**v0.1: 17 / 22 complete.**
 
 ---
 
@@ -75,3 +77,4 @@ Brief one-liners per session. Keep this short — git log has the detail.
 |------------|------------------------------------------------------------------------------------------|
 | 2026-05-15 | Scaffolded workspace; v0.1 code-complete; all unit tests pass; bench hits 4/4 targets.   |
 | 2026-05-16 | Initialized git, imported specs into `docs/specs/`, added PROGRESS.md tracker.           |
+| 2026-05-16 | Created public GitHub repo, pushed. Fixed pipe-stdin raw-mode bug (open /dev/tty directly).|
