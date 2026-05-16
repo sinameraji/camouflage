@@ -17,8 +17,9 @@ Direct dependencies, with rationale. Budget: ≤15 for v0.1.
 | tracing               | tui, store           | Structured logging                           | log + env_logger                  |
 | tracing-subscriber    | tui                  | Tracing -> stderr formatter                  | fmt by hand                       |
 | libc                  | tui                  | Open /dev/tty + apply termios (raw mode) so the TUI works when stdin is a pipe of NDJSON events | nix (heavier) |
+| unicode-width         | tui                  | Display-width-aware truncation of long rows / status segments on narrow terminals | char-count fallback (wrong for emoji + CJK) |
 
-**Total direct deps: 13** (under the 15 budget).
+**Total direct deps: 14** (under the 15 budget).
 
 ## Rules
 

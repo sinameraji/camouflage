@@ -6,6 +6,38 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Terminal;
+use unicode_width::UnicodeWidthStr;
+
+/// Truncate a string so its display width <= `max_cols`, appending an
+/// ellipsis when truncation actually happens. Width-aware (handles wide
+/// characters via `unicode-width`).
+fn truncate_to_width(s: &str, max_cols: usize) -> String {
+    if max_cols == 0 {
+        return String::new();
+    }
+    let w = UnicodeWidthStr::width(s);
+    if w <= max_cols {
+        return s.to_string();
+    }
+    let budget = max_cols.saturating_sub(1); // reserve 1 col for the …
+    let mut acc = String::new();
+    let mut used = 0usize;
+    for ch in s.chars() {
+        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + cw > budget {
+            break;
+        }
+        acc.push(ch);
+        used += cw;
+    }
+    acc.push('…');
+    acc
+}
+
+/// Sum of display widths across spans.
+fn spans_width(spans: &[Span]) -> usize {
+    spans.iter().map(|s| UnicodeWidthStr::width(s.content.as_ref())).sum()
+}
 
 /// Braille-dots spinner frames. Borrowed from KimiFlare's `dots` style.
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -52,6 +84,8 @@ pub fn render<B: Backend>(
         f.render_widget(header, chunks[0]);
 
         // Transcript viewport — virtualized over history + live rows.
+        // Each logical row stays on a single visual line; longer text gets
+        // truncated with an ellipsis so the bounded-memory math holds.
         let history = model.history_rows();
         let live = model.rows();
         let total = (history.len() + live.len()) as i64;
@@ -60,10 +94,11 @@ pub fn render<B: Backend>(
         let start = (end - height).max(0);
         let combined = history.iter().chain(live.iter());
         let active_tools = model.tools();
+        let transcript_width = chunks[1].width as usize;
         let lines: Vec<Line> = combined
             .skip(start as usize)
             .take((end - start) as usize)
-            .map(|r| row_to_line(r, frame, active_tools))
+            .map(|r| row_to_line(r, frame, active_tools, transcript_width))
             .collect();
         let transcript = Paragraph::new(lines);
         f.render_widget(transcript, chunks[1]);
@@ -140,18 +175,53 @@ pub fn render<B: Backend>(
                 ));
             }
         }
-        // Renderer-internal counts at the end (dimmed).
-        spans.push(Span::styled(
-            format!(
-                "  [{}] live={} history={} total={}{}",
-                follow,
-                live.len(),
-                history.len(),
-                model.total_rows(),
-                indicator,
-            ),
-            Style::default().fg(Color::DarkGray),
-        ));
+        // Renderer-internal counts at the end (dimmed). On narrow terminals
+        // these get dropped first to protect host segments — and the "new
+        // output below" indicator stays whenever it's set, since it conveys
+        // actionable UX state.
+        let status_width = chunks[3].width as usize;
+        let used = spans_width(&spans);
+        let counts_text = format!(
+            "  [{}] live={} history={} total={}",
+            follow,
+            live.len(),
+            history.len(),
+            model.total_rows(),
+        );
+        if used + counts_text.len() + indicator.len() <= status_width {
+            spans.push(Span::styled(counts_text, Style::default().fg(Color::DarkGray)));
+        }
+        if !indicator.is_empty() {
+            // Indicator gets priority over counts on a narrow terminal.
+            if spans_width(&spans) + indicator.len() <= status_width {
+                spans.push(Span::styled(
+                    indicator.to_string(),
+                    Style::default().fg(Color::Yellow),
+                ));
+            }
+        }
+        // Final safety net: if host segments alone overflow the line, trim
+        // the *visible* text of the last span(s) until we fit, appending an
+        // ellipsis. Walk from the back so we keep mode + phase visible.
+        while spans_width(&spans) > status_width && !spans.is_empty() {
+            let total = spans_width(&spans);
+            let overflow = total - status_width;
+            let last = spans.last_mut().unwrap();
+            let last_w = UnicodeWidthStr::width(last.content.as_ref());
+            if last_w == 0 {
+                spans.pop();
+                continue;
+            }
+            if last_w <= overflow + 1 {
+                // Drop this span entirely.
+                spans.pop();
+            } else {
+                let new_w = last_w - overflow - 1;
+                let trimmed = truncate_to_width(last.content.as_ref(), new_w + 1);
+                last.content = std::borrow::Cow::Owned(trimmed);
+                break;
+            }
+        }
         // Task ribbon (only if there are any active tasks).
         if has_tasks {
             let mut ribbon_spans: Vec<Span> = Vec::new();
@@ -227,6 +297,7 @@ fn row_to_line<'a>(
     r: &'a camouflage_renderer::Row,
     frame: u64,
     active_tools: &std::collections::HashMap<String, camouflage_renderer::ToolState>,
+    max_width: usize,
 ) -> Line<'a> {
     // Assistant row that's open (active stream) but has no text yet → spinner only.
     // Tool row whose ToolState is not yet finished → spinner instead of ✓.
@@ -256,9 +327,13 @@ fn row_to_line<'a>(
         RowKind::Error => ("✗".to_string(), Color::Red),
         RowKind::Marker => ("¶".to_string(), Color::Blue),
     };
+    // Prefix is exactly 2 visual columns ("X "). Reserve them.
+    let prefix_w = 2;
+    let text_budget = max_width.saturating_sub(prefix_w);
+    let body = truncate_to_width(r.text.as_str(), text_budget);
     Line::from(vec![
         Span::styled(format!("{} ", prefix), Style::default().fg(color)),
-        Span::raw(r.text.as_str()),
+        Span::raw(body),
     ])
 }
 
