@@ -8,9 +8,14 @@ Specs: [`docs/specs/MVP_BUILD_PROMPT.md`](docs/specs/MVP_BUILD_PROMPT.md), [`doc
 
 ## Current stage
 
-**v0.1 MVP — IN PROGRESS (~85% complete)**
+**v0.2.0 shipped (Replay & Timeline Inspection). Next: v0.3 (Renderer Abstraction) — OR build the real KimiFlare adapter first to validate the protocol against an actual coding agent.**
 
-Code-complete and tests pass. Offline benchmark hits all four numeric targets. Outstanding items are manual terminal verification, a 5-hour soak run, and a few v0.2-adjacent gaps (lazy paging on scroll, input-latency measurement under a real terminal).
+Three tagged releases on GitHub at https://github.com/sinameraji/camouflage:
+- `v0.1.0` — event-native TUI MVP (22 milestones, four perf targets met)
+- `v0.1.5` — extensibility primitives (`StatusUpdate`, bidirectional protocol, permission widget, task ribbon, etc.)
+- `v0.2.0` — replay controls, event inspector, filter, search, tool timing, bookmarks
+
+The protocol can now express ~80% of KimiFlare's TUI surface (per the inventory in the original plan), and sessions are fully inspectable for debugging. Diff viewer + slash-command palette + theme system remain deferred to v0.4.
 
 ---
 
@@ -27,7 +32,7 @@ Code-complete and tests pass. Offline benchmark hits all four numeric targets. O
 | v0.6    | Ecosystem Layer                  | NOT STARTED   |                                           |
 | v0.7    | Desktop Runtime                  | NOT STARTED   |                                           |
 
-**Totals:** 1 / 8 versions complete (v0.1.0). v0.1.5 in progress.
+**Totals:** 3 / 8 versions complete (v0.1.0, v0.1.5, v0.2.0). Five remaining: v0.3 / v0.4 / v0.5 / v0.6 / v0.7.
 
 ## v0.2 slice checklist
 
@@ -92,7 +97,7 @@ Code-complete and tests pass. Offline benchmark hits all four numeric targets. O
 | 17| Lazy-page older rows from store on scroll-up      | DONE              | History buffer in `RenderModel` + worker task in `app.rs` that calls `store.load_range` and `reconstruct_rows` on scroll-near-top. Verified via pty test (cap=20, 200 events): single fetch returned 181 rows. |
 | 18| 5-hour soak run                                   | DONE (30 min)     | `scripts/soak.py` written. 30 min soak under streaming load: peak RSS 31 MB, 7/7 samples under cap (target < 200 MB). Full 5 h invocation available on demand. |
 | 19| Terminal-in-the-loop p95 input latency measurement| DONE              | `scripts/bench_input_latency.py` — pty harness. 100/100 samples under flood: p95 = 23.99 ms (target < 25 ms). |
-| 20| Manual TUI verification per `docs/manual-tests.md`| NOT DONE          | Awaits human run-through                         |
+| 20| Manual TUI verification per `docs/manual-tests.md`| DONE              | User confirmed end-to-end on real terminal (mock content rendered, keys work, narrow-terminal wrap working). |
 | 21| Bench RSS caveat fix (stream into store, not Vec) | DONE              | Streaming generator in `crates/bench`: RSS 187 MB → 37 MB. |
 
 | 22| Pipe-stdin works end-to-end (custom /dev/tty key reader bypassing crossterm's broken mio path) | DONE | `crates/tui/src/tty.rs`. Verified via pty test: 290 events streamed and persisted, full UI rendered. Root cause: macOS kqueue returns EINVAL when registering a freshly-opened /dev/tty fd, which kills crossterm's event source. Workaround: blocking `read(/dev/tty)` thread with a small ANSI parser. |
@@ -107,6 +112,23 @@ Code-complete and tests pass. Offline benchmark hits all four numeric targets. O
 - **When a milestone changes state**, edit its row here AND the inline `[STATUS]` marker in the relevant spec under `docs/specs/`.
 - **When a new milestone surfaces**, append it to the appropriate version's checklist with status `NOT DONE`.
 - **Commit this file** alongside the code changes that move it forward — git history then explains "how" while this file explains "what's left."
+
+## What's left
+
+Per the spec roadmap, in order:
+
+| Version | Title | Headline scope |
+|---------|-------|----------------|
+| v0.3 | Renderer Abstraction | Renderer protocol, websocket transport, headless runtime mode, browser replay viewer, event schema validator, event fixture system |
+| v0.4 | Advanced TUI UX | Split panes, vim motions, **command palette**, **diff viewer**, sticky tool panels, session tabs, timeline minimap, live metrics, stream profiler, theme system, slash-command picker, `@`-mention picker, help menu |
+| v0.5 | DevTools Layer | Event tracing, timeline debugging, performance profiling, renderer profiling, latency inspection, event validation, crash replay, deterministic replay, regression fixtures, session export/import |
+| v0.6 | Ecosystem Layer | Node SDK, Rust SDK, protocol docs, integration adapters, renderer plugin API, benchmark suite, schema validation tooling, CI benchmark runner, migration guide from Ink, migration guide from Electron/webviews |
+| v0.7 | Desktop Runtime | Native desktop shell, GPU rendering exploration, detached replay viewer, session archive browser, advanced profiling, remote stream synchronization, persistent local session library |
+
+Off-roadmap but high-value:
+
+- **KimiFlare adapter (`~/kimi-code`)** — write a real `--emit-events` mode in KimiFlare that produces NDJSON Camouflage can consume. This is the wedge that proves the protocol against a real agent. After v0.1.5 + v0.2.0 nothing structural is blocking it; only diff display (v0.4) and slash commands (v0.4) would be cosmetically degraded.
+- **5-hour soak** — the script (`scripts/soak.py`) is ready; 30 min has been validated. Run the full 18000 s when an idle laptop is available.
 
 ## Session log
 
