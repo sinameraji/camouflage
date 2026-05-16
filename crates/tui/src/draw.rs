@@ -1,5 +1,9 @@
 use anyhow::Result;
-use camouflage_renderer::{format_elapsed_ms, RenderModel, RowKind, ViewportState};
+use camouflage_renderer::{
+    format_elapsed_ms,
+    markdown::{parse_inline, InlineStyle},
+    RenderModel, RowKind, ViewportState,
+};
 use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
@@ -481,8 +485,26 @@ fn row_to_line<'a>(
     // user can see how long the tool has been executing.
     let mut spans: Vec<Span> = vec![
         Span::styled(format!("{} ", prefix), Style::default().fg(color)),
-        Span::raw(r.text.as_str()),
     ];
+    if r.kind == RowKind::Assistant && !r.text.is_empty() {
+        for sp in parse_inline(&r.text) {
+            let style = match sp.style {
+                InlineStyle::Plain => Style::default().fg(Color::White),
+                InlineStyle::Bold => Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+                InlineStyle::Italic => Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::ITALIC),
+                InlineStyle::Code => Style::default()
+                    .fg(Color::Cyan)
+                    .bg(Color::Rgb(28, 33, 40)),
+            };
+            spans.push(Span::styled(sp.text, style));
+        }
+    } else {
+        spans.push(Span::raw(r.text.as_str()));
+    }
     if r.kind == RowKind::Tool {
         if let Some(state) = r.tool_id.as_ref().and_then(|tid| active_tools.get(tid)) {
             if !state.finished {

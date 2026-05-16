@@ -4,6 +4,7 @@
 //! a ring buffer of recent rendered rows, one active stream buffer,
 //! and a small map of active tool states.
 
+pub mod markdown;
 pub mod viewport;
 pub mod model;
 pub mod snapshot;
