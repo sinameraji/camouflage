@@ -19,8 +19,8 @@ Code-complete and tests pass. Offline benchmark hits all four numeric targets. O
 | Version | Title                            | Status        | Notes                                     |
 |---------|----------------------------------|---------------|-------------------------------------------|
 | v0.1    | MVP Event-Native TUI             | ✅ DONE        | Tagged `v0.1.0`. All 22 milestones complete. |
-| v0.1.5  | Extensibility Primitives         | ✅ DONE        | All 6 slices verified via `kimiflare-mock` integration run. |
-| v0.2    | Replay & Timeline Inspection     | NOT STARTED   |                                           |
+| v0.1.5  | Extensibility Primitives         | ✅ DONE        | All 6 slices + post-tag UX polish for narrow terminals. |
+| v0.2    | Replay & Timeline Inspection     | IN PROGRESS   | Replay controls + event inspector + filtering + search. |
 | v0.3    | Renderer Abstraction             | NOT STARTED   |                                           |
 | v0.4    | Advanced TUI UX                  | NOT STARTED   |                                           |
 | v0.5    | DevTools Layer                   | NOT STARTED   |                                           |
@@ -28,6 +28,19 @@ Code-complete and tests pass. Offline benchmark hits all four numeric targets. O
 | v0.7    | Desktop Runtime                  | NOT STARTED   |                                           |
 
 **Totals:** 1 / 8 versions complete (v0.1.0). v0.1.5 in progress.
+
+## v0.2 slice checklist (in progress)
+
+Per the spec — make AI sessions inspectable.
+
+| Slice | Subject | Status |
+|-------|---------|--------|
+| A | Replay controls (pause / play / step / speed / seek) on `--replay` | NOT STARTED |
+| B | Event inspector — keypress opens a side panel with the raw event JSON for the focused row | NOT STARTED |
+| C | Filter toolbar — show only errors, tools, patches, etc. (key `f`) | NOT STARTED |
+| D | Search — `Ctrl+F` over visible transcript text + payload contents | NOT STARTED |
+| E | Tool timing view — per-tool elapsed time, recent failures | NOT STARTED |
+| F | Event-snapshot bookmarks + jump-to-snapshot | NOT STARTED |
 
 ## v0.1.5 slice checklist
 
@@ -95,3 +108,4 @@ Brief one-liners per session. Keep this short — git log has the detail.
 | 2026-05-16 | Closed v0.1: lazy paging on scroll-up, streaming bench (RSS 187→37 MB), pty input-latency harness (p95 23.99 ms), 30-min soak (peak 31 MB), manual TUI verification. Tagged `v0.1.0`. |
 | 2026-05-16 | v0.1.5 Slice A: added `StatusUpdate`/`BackgroundTaskUpdate`/`UserInputSubmitted`/`PermissionResponse` event types + `Direction` classifier; extended `RuntimeError` payload (`kind`/`severity`/`cta`); multi-segment status bar rendering. |
 | 2026-05-16 | v0.1.5 Slices B–F: spinners on in-flight blocks + phase; outbound NDJSON emitter in `crates/headless`; `--emit-responses` flag; inline 3-option permission widget with bidirectional `PermissionResponse`; background-task ribbon; kind-aware error rendering with CTAs; `examples/kimiflare-mock` integration generator. v0.1.5 complete. |
+| 2026-05-16 | v0.1.5 polish: narrow-terminal wrap support across all four regions — transcript rows wrap to multiple visual lines, status bar grows to 1-3 lines, input box grows as user types, permission widget grows to fit buttons line. Added `unicode-width` (14th dep, under budget). Commits `b7f313e` → `35c244f`. |
