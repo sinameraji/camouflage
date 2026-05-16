@@ -60,7 +60,7 @@ pub fn render<B: Backend>(
             ""
         };
         let status_line = Paragraph::new(Line::from(vec![
-            Span::styled(format!(" {} ", status), Style::default().fg(Color::Yellow)),
+            Span::styled(format!(" {} ", status), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
             Span::styled(
                 format!("[{}] rows={} total={}{}",
                     follow,
@@ -70,8 +70,7 @@ pub fn render<B: Backend>(
                 ),
                 Style::default().fg(Color::DarkGray),
             ),
-        ]))
-        .block(Block::default().borders(Borders::TOP));
+        ]));
         f.render_widget(status_line, chunks[2]);
 
         // Input

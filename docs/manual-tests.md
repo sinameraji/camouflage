@@ -1,5 +1,29 @@
 # Manual TUI tests
 
+## Quick smoke test — "is it actually rendering?"
+
+```bash
+cargo run --release -p fake-agent -- --tokens 50000 --tools 200 --fast \
+  | cargo run --release -p camouflage-tui -- --stdin-events
+```
+
+You should see (top to bottom):
+
+- `Camouflage session=<8 hex chars>` header
+- A transcript: cyan `›` user message, `tok tok …` assistant rows, magenta `⚙ ✓ bash npm test …` collapsed tool rows, gray `· session ended` at the end
+- A **status line** like ` idle [follow] rows=12 total=12` — if you don't see this, the layout has regressed
+- An `┌─ input ─┐` box at the bottom with a `›` prompt
+
+Interactions to verify:
+
+- Type characters → they appear after `›` in the input box
+- `Enter` → input line clears, a new `›` row appears in the transcript with your text
+- `Up` / `PgUp` → viewport freezes; status changes to `[scrolled]` and ` | new output below ↓` appears
+- `End` or `Ctrl+E` → snaps back to bottom, status returns to `[follow]`
+- `q` or `Ctrl+C` → clean exit, terminal restored to your shell prompt with no garbage
+
+
+
 Run each scenario and verify behavior. These exercise terminal-side behavior
 not covered by unit tests (which are pure-logic against `RenderModel` and
 `ViewportState`).
