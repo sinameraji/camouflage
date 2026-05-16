@@ -22,6 +22,8 @@
       "text": "session ended"
     }
   ],
-  "status": {},
+  "status": {
+    "phase": "idle"
+  },
   "tasks": []
 }

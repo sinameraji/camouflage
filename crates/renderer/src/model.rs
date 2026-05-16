@@ -93,6 +93,12 @@ pub struct RenderModel {
     /// v0.4.5+ — `@`-mention candidates the host advertises. The TUI
     /// shows a picker when the input cursor is just after an `@`.
     mention_candidates: Vec<MentionEntry>,
+    /// TB1 fix (v0.4.5+): dedupe `session started` rows. The TUI used to
+    /// synthesize a SessionStarted at boot AND the host typically emits
+    /// its own, producing two identical rows. This flag flips on the
+    /// first SessionStarted; subsequent ones are no-ops at the row
+    /// level (still persisted by the caller).
+    session_started_seen: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,6 +176,7 @@ impl RenderModel {
             background_tasks: Vec::new(),
             slash_commands: Vec::new(),
             mention_candidates: Vec::new(),
+            session_started_seen: false,
         }
     }
 
@@ -305,12 +312,18 @@ impl RenderModel {
     pub fn apply(&mut self, ev: &Event) -> bool {
         match ev.event_type {
             EventType::SessionStarted => {
-                self.push_row(Row {
-                    seq: ev.seq,
-                    kind: RowKind::System,
-                    text: "session started".to_string(),
-                    tool_id: None,
-                });
+                // TB1 fix: don't emit duplicate "session started" rows when
+                // the TUI's boot-synth race-condition fires after the host's
+                // SessionStarted (or vice-versa).
+                if !self.session_started_seen {
+                    self.session_started_seen = true;
+                    self.push_row(Row {
+                        seq: ev.seq,
+                        kind: RowKind::System,
+                        text: "session started".to_string(),
+                        tool_id: None,
+                    });
+                }
             }
             EventType::SessionEnded => {
                 self.push_row(Row {
@@ -319,6 +332,12 @@ impl RenderModel {
                     text: "session ended".to_string(),
                     tool_id: None,
                 });
+                // TB2 fix: when a session ends, reset phase to "idle" so the
+                // status bar doesn't lie if the host's last StatusUpdate was
+                // mid-stream. Other segments are left intact (final tokens /
+                // cost / branch remain visible).
+                self.status_segments
+                    .insert("phase".to_string(), "idle".to_string());
             }
             EventType::UserMessageCreated => {
                 let text = ev

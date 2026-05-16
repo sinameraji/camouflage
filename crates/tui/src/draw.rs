@@ -80,6 +80,19 @@ fn spinner_glyph(frame: u64) -> char {
     SPINNER[(frame as usize) % SPINNER.len()]
 }
 
+/// TB3 fix: drive the spinner glyph from wall-clock time, not the
+/// per-redraw `frame_counter`. Scrolling causes extra redraws but
+/// shouldn't advance the spinner — that was the user-visible bug.
+/// 80 ms per glyph ≈ 12.5 fps, comfortable for the eye.
+fn spinner_frame_now() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    ms / 80
+}
+
 /// View-time projection of the event inspector. None = panel closed.
 pub struct InspectorView<'a> {
     /// Rows-from-newest of the focused row (0 = bottom).
@@ -329,7 +342,7 @@ pub fn render<B: Backend>(
         );
         if needs_spinner {
             spans.push(Span::styled(
-                format!("{} ", spinner_glyph(frame)),
+                format!("{} ", spinner_glyph(spinner_frame_now())),
                 Style::default().fg(Color::Yellow),
             ));
         }
@@ -390,7 +403,7 @@ pub fn render<B: Backend>(
                     ribbon_spans.push(Span::styled("  ", Style::default()));
                 }
                 ribbon_spans.push(Span::styled(
-                    spinner_glyph(frame).to_string(),
+                    spinner_glyph(spinner_frame_now()).to_string(),
                     Style::default().fg(Color::Cyan),
                 ));
                 ribbon_spans.push(Span::raw(" "));
@@ -875,7 +888,7 @@ fn row_to_line<'a>(
         RowKind::User => ("›".to_string(), user_color),
         RowKind::Assistant => {
             if r.text.is_empty() {
-                (spinner_glyph(frame).to_string(), spinner_color)
+                (spinner_glyph(spinner_frame_now()).to_string(), spinner_color)
             } else {
                 (" ".to_string(), assistant_color)
             }
@@ -888,7 +901,7 @@ fn row_to_line<'a>(
                 .map(|st| !st.finished)
                 .unwrap_or(false);
             if unfinished {
-                (spinner_glyph(frame).to_string(), spinner_color)
+                (spinner_glyph(spinner_frame_now()).to_string(), spinner_color)
             } else {
                 ("⚙".to_string(), tool_color)
             }
