@@ -148,15 +148,38 @@ function waitForExit(child, softTimeoutMs) {
  */
 export async function mount(opts = {}) {
   const bin = opts.bin || DEFAULT_BIN;
-  // `--stdin-events --emit-responses` are required for the renderer to
-  // talk our wire protocol. Set `skipDefaultArgs: true` only when wrapping
-  // a non-Camouflage binary in a test or harness.
-  const defaultArgs = opts.skipDefaultArgs ? [] : ["--stdin-events", "--emit-responses"];
-  const args = [...defaultArgs, ...(opts.args || [])];
+  // Two integration modes:
+  //
+  // Default (programmatic, e.g. tests, daemons, anything not user-facing):
+  //   stdio = [pipe, pipe, inherit|pipe]
+  //   args  = --stdin-events --emit-responses
+  //   stdout carries outbound NDJSON; we parse it line-by-line.
+  //
+  // renderToTerminal: true (the "host wraps the renderer" mode for
+  // Option-B-style integrations like KimiFlare):
+  //   stdio = [pipe, inherit, inherit, pipe]
+  //   args  = --stdin-events --responses-fd 3
+  //   stdout goes directly to the user's terminal (rendering is visible);
+  //   outbound NDJSON arrives on fd 3 (a separate pipe back to us).
+  const renderToTerminal = !!opts.renderToTerminal;
   const stderrMode = opts.inheritStderr === false ? "pipe" : "inherit";
 
+  let defaultArgs;
+  let stdio;
+  if (opts.skipDefaultArgs) {
+    defaultArgs = [];
+    stdio = ["pipe", "pipe", stderrMode];
+  } else if (renderToTerminal) {
+    defaultArgs = ["--stdin-events", "--responses-fd", "3"];
+    stdio = ["pipe", "inherit", "inherit", "pipe"];
+  } else {
+    defaultArgs = ["--stdin-events", "--emit-responses"];
+    stdio = ["pipe", "pipe", stderrMode];
+  }
+  const args = [...defaultArgs, ...(opts.args || [])];
+
   const child = spawn(bin, args, {
-    stdio: ["pipe", "pipe", stderrMode],
+    stdio,
     env: opts.env ? { ...process.env, ...opts.env } : process.env,
   });
 
@@ -176,8 +199,13 @@ export async function mount(opts = {}) {
   const handle = new CamouflageHandle(child, child.stdin);
 
   // Stream outbound events (UserInputSubmitted, PermissionResponse) from
-  // renderer stdout, parse, and re-emit on the handle.
-  const rl = createInterface({ input: child.stdout });
+  // whichever stream the renderer is writing them to. In renderToTerminal
+  // mode that's fd 3 (child.stdio[3]); otherwise it's stdout.
+  const outboundStream = renderToTerminal ? child.stdio[3] : child.stdout;
+  if (!outboundStream) {
+    throw new Error("camouflage: outbound stream is null — did the spawn succeed?");
+  }
+  const rl = createInterface({ input: outboundStream });
   rl.on("line", (line) => {
     const trimmed = line.trim();
     if (!trimmed) return;

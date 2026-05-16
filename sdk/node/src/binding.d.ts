@@ -16,6 +16,14 @@ export interface MountOptions {
    *  Only used to point the binding at a non-Camouflage binary for tests
    *  or specialised harnesses. */
   skipDefaultArgs?: boolean;
+  /** When true, the renderer's stdout and stderr go directly to the user's
+   *  terminal (TUI rendering is visible to the user), and outbound
+   *  NDJSON arrives on fd 3 via the new --responses-fd path. Use this when
+   *  building a "host CLI that internally drives Camouflage" — e.g.
+   *  KimiFlare's eventual Ink replacement. Default false: backward-
+   *  compatible programmatic mode where both directions ride on the
+   *  pipes the binding manages. */
+  renderToTerminal?: boolean;
 }
 
 export interface PermissionResponseEvent {
