@@ -8,7 +8,13 @@ Specs: [`docs/specs/MVP_BUILD_PROMPT.md`](docs/specs/MVP_BUILD_PROMPT.md), [`doc
 
 ## Current stage
 
-**v0.6 code-complete (Ecosystem Layer) — three slices A–C shipped (Rust SDK facade crate, protocol docs, Node SDK). Pending: tag `v0.6.0`. Integration adapters, renderer plugin API, benchmark suite extensions, CI benchmark runner, migration guides deferred to v0.6.5.**
+**Ink-replacement-ready milestone shipped (tagged `v0.4.5`).** Three phases of focused work closed the gap between Camouflage and KimiFlare's React/Ink UI:
+
+- **Phase 1** (5 slices on `~/kimi-code-clone-3` `camouflage-adapter` branch): adapter now emits `ToolExecutionStdout/Stderr`, supports `--multi-turn` mode, emits `StatusUpdate` (mode/phase/elapsed/tokens/branch), wires bidirectional `PermissionResponse`, emits `BackgroundTaskUpdate` for skills/memory/agent tasks.
+- **Phase 2** (4 slices on this repo): slash-command picker (`/`), `@`-mention picker, expandable tool-output overlay (`X`), permission widget with free-text feedback.
+- **Phase 3** (this repo): TB1/TB2/TB3 TUI bugs cleared, +3 themes (6 total: dark/light/dracula/nord/gruvbox-dark/tokyo-night).
+
+KimiFlare can now realistically swap out Ink for Camouflage end-to-end. Remaining gaps are nice-to-haves (more themes, hierarchical help menu, queued-prompts row, etc.) — see "What's left".
 
 Three tagged releases on GitHub at https://github.com/sinameraji/camouflage:
 - `v0.1.0` — event-native TUI MVP (22 milestones, four perf targets met)
@@ -208,15 +214,13 @@ Off-roadmap but high-value:
   - **`StatusUpdate` + `BackgroundTaskUpdate` emission** — needs a different tap point inside `app.tsx::sharedCallbacks` since the headless `runAgentTurn` doesn't surface phase/usage in that shape.
 - **5-hour soak** — the script (`scripts/soak.py`) is ready; 30 min has been validated. Run the full 18000 s when an idle laptop is available.
 
-## TUI bug backlog (from adapter testing)
+## TUI bug backlog (from adapter testing) — CLEARED
 
-Discovered 2026-05-16 while smoke-testing the KimiFlare adapter against a real terminal. Each should be one small commit; none are roadmap milestones. Address between version cuts, not in the middle of one — writing them down so they don't get lost.
-
-| #   | Bug | Likely cause / where to look | Repro |
-|-----|-----|------------------------------|-------|
-| TB1 | "session started" row appears twice on session boot | TUI synthesizes a session-start row even when the host emits `SessionStarted` — collision in `crates/renderer/src/model.rs` apply path or the boot synth in `crates/tui/src/app.rs`. | Run adapter one-shot; observe two consecutive `- session started` rows at the top. |
-| TB2 | Status bar phase stays `streaming` after `SessionEnded` arrives | `SessionEnded` apply path should clear / reset the `StatusBarState` phase segment (or the renderer should infer idle when no active stream/tool). `crates/renderer/src/status.rs` + `apply()` in `model.rs`. | Run adapter one-shot to completion; status bar still reads `streaming` indefinitely. |
-| TB3 | Spinners (status-bar phase glyph + task-ribbon dot) animate while user scrolls | Spinner frame counter is incrementing on *redraw* tick instead of on a wall-clock tick. Scroll causes redraws → glyph advances without time passing. Fix: drive spinner frame from `Instant::now()` modulo period, not a per-redraw counter. `crates/tui/src/draw.rs`. | Run adapter one-shot; before completion, scroll up/down — watch the spinners spin in lockstep with scroll. |
+| #   | Bug | Status |
+|-----|-----|--------|
+| TB1 | "session started" row appears twice on session boot | ✅ FIXED — `55e4958` (model deduplicates SessionStarted via `session_started_seen` flag) |
+| TB2 | Status bar phase stays `streaming` after `SessionEnded` | ✅ FIXED — `55e4958` (SessionEnded apply path sets `phase=idle` in status_segments) |
+| TB3 | Spinners animate while user scrolls | ✅ FIXED — `55e4958` (spinner glyph now derived from wall-clock `ms/80`, not per-redraw counter) |
 
 ## Cross-version validation notes
 
@@ -245,4 +249,5 @@ Brief one-liners per session. Keep this short — git log has the detail.
 | 2026-05-16 | v0.3 code-complete: Slices A–F shipped (`b95d9cb` → `700ce3d`). New surfaces: `camouflage-validate`, `camouflage-record`, `camouflage-broadcast`, `Renderer`/`SnapshotRenderer` traits, `Snapshot` serde projection, workspace `fixtures/` + CI gate, single-file `viewer/index.html` browser viewer. Dep budget bumped to 16 (added `tokio-tungstenite` + `futures-util`). 45 workspace tests pass. Tagged `v0.3.0`. |
 | 2026-05-16 | v0.4 code-complete (partial): Slices A–E shipped (`f7e8940` → `6ee3efc`). Markdown rendering for assistant text, diff viewer with color-coded markers, `?` help overlay, `M` metrics overlay, theme system with 3 built-ins (`T` cycles). 51 workspace tests, all green. Slash-command picker + split panes + vim motions + session tabs + `@`-picker + minimap deferred to v0.4.5 (need host-protocol coordination or are large independent features). Tagged `v0.4.0`. |
 | 2026-05-16 | v0.5 code-complete (partial): Slices A–D shipped (`ca32cee` → `812fdf8`). `camouflage-export` (stored session → portable NDJSON, with `--list`), crash-replay dump on panic (ring buffer flushed to `crash-<ts>.ndjson`), golden-snapshot regression tests (per-fixture `<name>.snapshot.json` checked-in + integration test gate), `camouflage-replay-check` (deterministic CI helper). 63 workspace tests, all green. Event tracing + latency inspection + per-event profiling deferred to v0.5.5. Tagged `v0.5.0`. |
-| 2026-05-16 | v0.6 code-complete (partial): Slices A–C shipped (`40fc880` + Node SDK). New `camouflage` Rust facade crate (re-exports + prelude), exhaustive `docs/protocol.md` event reference, Node SDK at `sdk/node/` (ESM + TS types + NDJSON reader + validate + encode, 5 tests passing). 66 Rust workspace tests + 5 Node tests, all green. Integration adapters + plugin API + benchmark CI + migration guides deferred to v0.6.5. Tag `v0.6.0` pending. |
+| 2026-05-16 | v0.6 code-complete (partial): Slices A–C shipped (`40fc880` + Node SDK). New `camouflage` Rust facade crate (re-exports + prelude), exhaustive `docs/protocol.md` event reference, Node SDK at `sdk/node/` (ESM + TS types + NDJSON reader + validate + encode, 5 tests passing). 66 Rust workspace tests + 5 Node tests, all green. Integration adapters + plugin API + benchmark CI + migration guides deferred to v0.6.5. Tagged `v0.6.0`. |
+| 2026-05-17 | Ink-replacement-ready milestone shipped (tagged `v0.4.5`). Three-phase push: (1) KimiFlare adapter completeness — 5 slices in `~/kimi-code-clone-3` `camouflage-adapter` branch (`8fc1093` → `a8c9108`): tool stdout/stderr emission, multi-turn mode, StatusUpdate (mode/phase/elapsed/tokens/branch), bidirectional permission flow, BackgroundTaskUpdate. (2) Camouflage TUI features — 4 slices on main (`2ced5a4` → `cbcd655`): expandable tool overlay (X), permission feedback input, slash-command picker (with new `SlashCommandsRegistered` event), `@`-mention picker (with new `MentionCandidatesRegistered` event). (3) TUI bug backlog cleared (`55e4958`): TB1/TB2/TB3 all fixed. +3 themes (nord/gruvbox-dark/tokyo-night). Protocol EventType variants 22 → 24. KimiFlare can now realistically swap Ink for Camouflage. |
