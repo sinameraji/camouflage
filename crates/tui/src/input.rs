@@ -46,6 +46,9 @@ pub enum Action {
     ToggleMetrics,
     /// v0.4+: cycle to the next built-in theme.
     CycleTheme,
+    /// v0.4.5+: toggle the tool-output overlay (shows most-recent tool's
+    /// captured stdout/stderr).
+    ToggleToolOutput,
 }
 
 /// Variant of `handle_key` used while a PermissionRequested is pending.
@@ -77,6 +80,7 @@ pub fn handle_key(k: Key, buf: &mut String) -> Action {
         Key::Char('?') if buf.is_empty() => Action::ToggleHelp,
         Key::Char('M') if buf.is_empty() => Action::ToggleMetrics,
         Key::Char('T') if buf.is_empty() => Action::CycleTheme,
+        Key::Char('X') if buf.is_empty() => Action::ToggleToolOutput,
         Key::Char(c) => {
             buf.push(c);
             Action::None

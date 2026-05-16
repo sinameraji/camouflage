@@ -42,7 +42,17 @@ pub struct ToolState {
     pub started_ms: i64,
     /// v0.2+: wall-clock timestamp from the ToolExecutionFinished event.
     pub finished_ms: Option<i64>,
+    /// v0.4.5+: most recent output captured for the X-overlay. Truncated
+    /// to TOOL_OUTPUT_CAP bytes (head + tail with a "… N bytes elided"
+    /// marker) so a 100MB tool output doesn't blow up the model.
+    pub recent_stdout: String,
+    pub recent_stderr: String,
 }
+
+/// Per-tool stdout/stderr capture cap, in bytes. Above this we keep the
+/// head + tail and elide the middle. Tuned so a typical compiler error
+/// fits whole but a giant log dump still costs only a few KB of memory.
+pub const TOOL_OUTPUT_CAP: usize = 8_192;
 
 /// Bounded render model. Stores only enough state to draw the current viewport
 /// plus a small scrollback cache. Never holds the full transcript.
@@ -376,6 +386,8 @@ impl RenderModel {
                         row_index_hint: Some(idx),
                         started_ms: ev.timestamp_ms,
                         finished_ms: None,
+                        recent_stdout: String::new(),
+                        recent_stderr: String::new(),
                     },
                 );
             }
@@ -393,11 +405,18 @@ impl RenderModel {
                     .and_then(|v| v.as_str())
                     .map(|s| s.len())
                     .unwrap_or(0);
+                let chunk_str = ev
+                    .payload
+                    .get("chunk")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 if let Some(state) = self.tools.get_mut(tool_id) {
                     if matches!(ev.event_type, EventType::ToolExecutionStdout) {
                         state.stdout_bytes += chunk_len;
+                        append_capped(&mut state.recent_stdout, chunk_str);
                     } else {
                         state.stderr_bytes += chunk_len;
+                        append_capped(&mut state.recent_stderr, chunk_str);
                     }
                     self.dirty = true;
                 }
@@ -696,6 +715,38 @@ impl Default for RenderModel {
 
 /// Format milliseconds as a short human-friendly elapsed string:
 /// "234ms", "1.2s", "1m 23s".
+/// Append `chunk` to `buf`, keeping the total under [`TOOL_OUTPUT_CAP`] by
+/// eliding the middle if it would overflow. Always preserves the head
+/// (first N/2 bytes) + tail (last N/2 bytes) with a `… N bytes elided`
+/// marker — useful when the user scrolls up to see early errors.
+fn append_capped(buf: &mut String, chunk: &str) {
+    if buf.len() + chunk.len() <= TOOL_OUTPUT_CAP {
+        buf.push_str(chunk);
+        return;
+    }
+    let combined = format!("{buf}{chunk}");
+    let total = combined.len();
+    let head_len = TOOL_OUTPUT_CAP / 2;
+    let tail_len = TOOL_OUTPUT_CAP / 2;
+    let head_end = combined
+        .char_indices()
+        .map(|(i, _)| i)
+        .take_while(|&i| i <= head_len)
+        .last()
+        .unwrap_or(0);
+    let tail_start = combined
+        .char_indices()
+        .rev()
+        .map(|(i, _)| i)
+        .take_while(|&i| total - i <= tail_len)
+        .last()
+        .unwrap_or(total);
+    let head = &combined[..head_end];
+    let tail = &combined[tail_start..];
+    let elided = total.saturating_sub(head.len() + tail.len());
+    *buf = format!("{head}\n… {elided} bytes elided …\n{tail}");
+}
+
 pub fn format_elapsed_ms(ms: i64) -> String {
     if ms < 1000 {
         format!("{ms}ms")

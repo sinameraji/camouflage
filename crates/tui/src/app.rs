@@ -145,6 +145,8 @@ pub async fn run(cfg: Config) -> Result<()> {
 
     // v0.4: active theme name (cycled with `T`).
     let mut theme_name: String = "default-dark".to_string();
+    // v0.4.5: tool-output overlay toggle (X).
+    let mut tool_output_open: bool = false;
 
     // Replay state: loaded but not played-through. We start paused at
     // position 0 so the user can scrub controls before content shows.
@@ -530,6 +532,10 @@ pub async fn run(cfg: Config) -> Result<()> {
                     status = format!("theme: {theme_name}");
                     model.mark_dirty();
                 }
+                input::Action::ToggleToolOutput => {
+                    tool_output_open = !tool_output_open;
+                    model.mark_dirty();
+                }
                 input::Action::InspectorCursorUp => {
                     if inspector_open {
                         inspector_cursor = inspector_cursor.saturating_add(1)
@@ -836,6 +842,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                         help_open,
                         metrics,
                         theme,
+                        tool_output_open,
                     )?;
                     last_frame_time_us = draw_start.elapsed().as_micros();
                     model.mark_clean();

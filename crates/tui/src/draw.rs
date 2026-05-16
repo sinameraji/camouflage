@@ -147,6 +147,7 @@ pub fn render<B: Backend>(
     help_open: bool,
     metrics: Option<MetricsView>,
     theme: &camouflage_renderer::theme::Theme,
+    tool_output_open: bool,
 ) -> Result<()> {
     terminal.draw(|f| {
         let area = f.area();
@@ -466,6 +467,9 @@ pub fn render<B: Backend>(
         if let Some(m) = metrics.as_ref() {
             draw_metrics_overlay(f, area, m);
         }
+        if tool_output_open {
+            draw_tool_output_overlay(f, area, model);
+        }
     })?;
     Ok(())
 }
@@ -514,6 +518,7 @@ fn draw_help_overlay(f: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
         kv("r", "reload (in --replay mode: restart)", key, dim),
         kv("M", "toggle live-metrics overlay", key, dim),
         kv("T", "cycle theme", key, dim),
+        kv("X", "tool-output overlay (most recent)", key, dim),
         kv("q · Ctrl+C", "quit", key, dim),
         Line::from(""),
         Line::from(vec![
@@ -528,6 +533,95 @@ fn draw_help_overlay(f: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(" help ")
+                .border_style(Style::default().fg(Color::Yellow)),
+        );
+    f.render_widget(widget, overlay);
+}
+
+fn draw_tool_output_overlay(
+    f: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    model: &RenderModel,
+) {
+    // Find the most-recent tool by started_ms. If there are no tools yet,
+    // show a placeholder.
+    let recent = model
+        .tools()
+        .values()
+        .max_by_key(|t| t.started_ms)
+        .cloned();
+    let w = area.width.saturating_mul(80) / 100;
+    let w = w.max(40).min(area.width.saturating_sub(2));
+    let h = area.height.saturating_mul(80) / 100;
+    let h = h.max(10).min(area.height.saturating_sub(2));
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    let overlay = ratatui::layout::Rect { x, y, width: w, height: h };
+    f.render_widget(Clear, overlay);
+
+    let dim = Style::default().fg(Color::DarkGray);
+    let head = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let val = Style::default().fg(Color::White);
+    let err = Style::default().fg(Color::Red);
+
+    let mut lines: Vec<Line> = Vec::new();
+    match recent {
+        None => {
+            lines.push(Line::from(vec![Span::styled(
+                "no tool executions in this session yet",
+                dim,
+            )]));
+        }
+        Some(t) => {
+            lines.push(Line::from(vec![
+                Span::styled(format!("{}", t.tool), head),
+                Span::raw("  "),
+                Span::styled(format!("{}", t.command), dim),
+            ]));
+            let finished = if t.finished {
+                format!("exit={}", t.exit_code.unwrap_or(0))
+            } else {
+                "(running)".to_string()
+            };
+            lines.push(Line::from(vec![
+                Span::styled(finished, dim),
+                Span::raw("  "),
+                Span::styled(format!("stdout={}B  stderr={}B", t.stdout_bytes, t.stderr_bytes), dim),
+            ]));
+            lines.push(Line::from(""));
+            if !t.recent_stdout.is_empty() {
+                lines.push(Line::from(vec![Span::styled("─ stdout ─", head)]));
+                for raw_line in t.recent_stdout.lines() {
+                    lines.push(Line::from(vec![Span::styled(raw_line.to_string(), val)]));
+                }
+            }
+            if !t.recent_stderr.is_empty() {
+                lines.push(Line::from(""));
+                lines.push(Line::from(vec![Span::styled("─ stderr ─", head)]));
+                for raw_line in t.recent_stderr.lines() {
+                    lines.push(Line::from(vec![Span::styled(raw_line.to_string(), err)]));
+                }
+            }
+            if t.recent_stdout.is_empty() && t.recent_stderr.is_empty() {
+                lines.push(Line::from(vec![Span::styled(
+                    "(no captured output yet)",
+                    dim,
+                )]));
+            }
+        }
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("X", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(" again to close", dim),
+    ]));
+
+    let widget = Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" tool output (most recent) ")
                 .border_style(Style::default().fg(Color::Yellow)),
         );
     f.render_widget(widget, overlay);
