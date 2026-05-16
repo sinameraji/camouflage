@@ -7,6 +7,7 @@ members = [
     "crates/tui",
     "crates/headless",
     "crates/bench",
+    "crates/sdk",
     "examples/fake-agent",
     "examples/kimiflare-mock",
 ]
