@@ -13,6 +13,10 @@ pub enum RowKind {
     Tool,
     Error,
     Marker,
+    /// v0.4+ — a single line of a unified diff hunk. The first character of
+    /// `Row.text` is the diff marker (`+`, `-`, ` `, `@`, or empty for the
+    /// header). Renderers color-code based on that marker.
+    Diff,
 }
 
 #[derive(Debug, Clone)]
@@ -449,12 +453,44 @@ impl RenderModel {
                     .get("path")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
+                let added = ev.payload.get("added").and_then(|v| v.as_i64()).unwrap_or(0);
+                let removed = ev.payload.get("removed").and_then(|v| v.as_i64()).unwrap_or(0);
+                // Header row always present.
+                let header = if added > 0 || removed > 0 {
+                    format!("patch proposed: {} (+{} -{})", path, added, removed)
+                } else {
+                    format!("patch proposed: {}", path)
+                };
                 self.push_row(Row {
                     seq: ev.seq,
                     kind: RowKind::System,
-                    text: format!("patch proposed: {}", path),
+                    text: header,
                     tool_id: None,
                 });
+                // Optional `diff` field carries a unified diff body. Split
+                // into per-line Diff rows, truncated to the v0.4 budget so
+                // a 5k-line patch doesn't blow the row cap.
+                if let Some(diff) = ev.payload.get("diff").and_then(|v| v.as_str()) {
+                    const MAX_DIFF_ROWS: usize = 40;
+                    let lines: Vec<&str> = diff.lines().collect();
+                    let shown = lines.len().min(MAX_DIFF_ROWS);
+                    for line in &lines[..shown] {
+                        self.push_row(Row {
+                            seq: ev.seq,
+                            kind: RowKind::Diff,
+                            text: (*line).to_string(),
+                            tool_id: None,
+                        });
+                    }
+                    if lines.len() > shown {
+                        self.push_row(Row {
+                            seq: ev.seq,
+                            kind: RowKind::Diff,
+                            text: format!("… {} more lines (truncated)", lines.len() - shown),
+                            tool_id: None,
+                        });
+                    }
+                }
             }
             EventType::PatchApplied => {
                 let path = ev
@@ -699,6 +735,59 @@ mod tests {
             event_type: et,
             payload,
         }
+    }
+
+    #[test]
+    fn patch_proposed_without_diff_emits_header_only() {
+        let mut m = RenderModel::new();
+        m.apply(&ev(
+            0,
+            EventType::PatchProposed,
+            json!({"path":"src/x.rs","added":3,"removed":1}),
+        ));
+        let rows: Vec<_> = m.rows().iter().collect();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, RowKind::System);
+        assert!(rows[0].text.contains("src/x.rs"));
+        assert!(rows[0].text.contains("+3 -1"));
+    }
+
+    #[test]
+    fn patch_proposed_with_diff_splits_into_diff_rows() {
+        let diff = "@@ -1,3 +1,4 @@\n use foo;\n-let x = 1;\n+let x = 2;\n+let y = 3;\n more";
+        let mut m = RenderModel::new();
+        m.apply(&ev(
+            0,
+            EventType::PatchProposed,
+            json!({"path":"src/x.rs","added":2,"removed":1,"diff":diff}),
+        ));
+        let kinds: Vec<_> = m.rows().iter().map(|r| r.kind.clone()).collect();
+        // header (System) + 6 diff lines
+        assert_eq!(kinds[0], RowKind::System);
+        assert!(kinds[1..].iter().all(|k| *k == RowKind::Diff));
+        assert_eq!(kinds.len(), 7);
+        // Spot-check marker preservation: lines start with @, space, -, +, +, space
+        let firsts: Vec<char> = m.rows()
+            .iter()
+            .skip(1)
+            .map(|r| r.text.chars().next().unwrap_or(' '))
+            .collect();
+        assert_eq!(firsts, vec!['@', ' ', '-', '+', '+', ' ']);
+    }
+
+    #[test]
+    fn patch_proposed_truncates_long_diffs() {
+        let big: String = (0..100).map(|i| format!("+line {i}\n")).collect();
+        let mut m = RenderModel::new();
+        m.apply(&ev(
+            0,
+            EventType::PatchProposed,
+            json!({"path":"src/x.rs","diff":big}),
+        ));
+        let diff_rows: Vec<_> = m.rows().iter().filter(|r| r.kind == RowKind::Diff).collect();
+        // 40 diff lines + 1 truncation footer
+        assert_eq!(diff_rows.len(), 41);
+        assert!(diff_rows.last().unwrap().text.contains("more lines"));
     }
 
     #[test]

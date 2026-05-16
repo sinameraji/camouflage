@@ -112,7 +112,8 @@ impl RowFilterKind {
             // Patches/permissions live in System rows; match by row text
             // prefix produced by RenderModel::apply.
             Self::Patches => {
-                r.kind == RowKind::System && r.text.starts_with("patch ")
+                r.kind == RowKind::Diff
+                    || (r.kind == RowKind::System && r.text.starts_with("patch "))
             }
             Self::Permissions => {
                 r.kind == RowKind::System && r.text.starts_with("permission ")
@@ -480,6 +481,17 @@ fn row_to_line<'a>(
         }
         RowKind::Error => ("✗".to_string(), Color::Red),
         RowKind::Marker => ("¶".to_string(), Color::Blue),
+        RowKind::Diff => {
+            // First character of text is the unified-diff marker.
+            let marker = r.text.chars().next().unwrap_or(' ');
+            let (glyph, c) = match marker {
+                '+' => (" ", Color::Green),
+                '-' => (" ", Color::Red),
+                '@' => (" ", Color::Cyan),
+                _ => (" ", Color::DarkGray),
+            };
+            (glyph.to_string(), c)
+        }
     };
     // For an in-flight tool row, append the running elapsed time so the
     // user can see how long the tool has been executing.
@@ -502,6 +514,8 @@ fn row_to_line<'a>(
             };
             spans.push(Span::styled(sp.text, style));
         }
+    } else if r.kind == RowKind::Diff {
+        spans.push(Span::styled(r.text.as_str(), Style::default().fg(color)));
     } else {
         spans.push(Span::raw(r.text.as_str()));
     }

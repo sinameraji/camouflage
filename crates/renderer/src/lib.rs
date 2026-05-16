@@ -96,6 +96,7 @@ fn row_kind_to_snapshot(k: &RowKind) -> SnapshotRowKind {
         RowKind::Tool => SnapshotRowKind::Tool,
         RowKind::Error => SnapshotRowKind::Error,
         RowKind::Marker => SnapshotRowKind::Marker,
+        RowKind::Diff => SnapshotRowKind::Diff,
     }
 }
 
