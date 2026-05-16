@@ -86,6 +86,32 @@ pub struct InspectorView<'a> {
     pub json: &'a str,
 }
 
+/// Row-kind filter cycled with `f`. None = show everything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowFilterKind {
+    Errors,
+    Tools,
+    Patches,
+    Permissions,
+}
+
+impl RowFilterKind {
+    fn matches(self, r: &camouflage_renderer::Row) -> bool {
+        match self {
+            Self::Errors => r.kind == RowKind::Error,
+            Self::Tools => r.kind == RowKind::Tool,
+            // Patches/permissions live in System rows; match by row text
+            // prefix produced by RenderModel::apply.
+            Self::Patches => {
+                r.kind == RowKind::System && r.text.starts_with("patch ")
+            }
+            Self::Permissions => {
+                r.kind == RowKind::System && r.text.starts_with("permission ")
+            }
+        }
+    }
+}
+
 pub fn render<B: Backend>(
     terminal: &mut Terminal<B>,
     model: &RenderModel,
@@ -94,6 +120,7 @@ pub fn render<B: Backend>(
     status: &str,
     frame: u64,
     inspector: Option<InspectorView<'_>>,
+    row_filter: Option<RowFilterKind>,
 ) -> Result<()> {
     terminal.draw(|f| {
         let area = f.area();
@@ -170,8 +197,12 @@ pub fn render<B: Backend>(
         // lines to fill the viewport (plus a small safety margin).
         let mut rows_taken: Vec<&camouflage_renderer::Row> = Vec::new();
         let mut visual_so_far: usize = 0;
-        let combined: Vec<&camouflage_renderer::Row> =
-            history.iter().chain(live.iter()).take(end).collect();
+        let combined: Vec<&camouflage_renderer::Row> = history
+            .iter()
+            .chain(live.iter())
+            .take(end)
+            .filter(|r| row_filter.map_or(true, |f| f.matches(r)))
+            .collect();
         for r in combined.iter().rev() {
             rows_taken.push(*r);
             let text_w = UnicodeWidthStr::width(r.text.as_str()).max(1);

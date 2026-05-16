@@ -115,6 +115,8 @@ pub async fn run(cfg: Config) -> Result<()> {
     let mut inspector_cursor: usize = 0;
     let mut inspector_cached_seq: Option<i64> = None;
     let mut inspector_cached_json: String = String::new();
+    // v0.2 filter toolbar — cycles through row-kind subsets.
+    let mut row_filter = RowFilter::All;
     let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
     let mut viewport = ViewportState::new(session_id, height.saturating_sub(4), width);
     let mut input_buf = String::new();
@@ -496,6 +498,11 @@ pub async fn run(cfg: Config) -> Result<()> {
                         model.mark_dirty();
                     }
                 }
+                input::Action::CycleFilter => {
+                    row_filter = row_filter.next();
+                    status = format!("filter: {}", row_filter.label());
+                    model.mark_dirty();
+                }
                 input::Action::None => {
                     model.mark_dirty();
                 }
@@ -624,6 +631,13 @@ pub async fn run(cfg: Config) -> Result<()> {
                     } else {
                         None
                     };
+                    let filter = match row_filter {
+                        RowFilter::All => None,
+                        RowFilter::Errors => Some(draw::RowFilterKind::Errors),
+                        RowFilter::Tools => Some(draw::RowFilterKind::Tools),
+                        RowFilter::Patches => Some(draw::RowFilterKind::Patches),
+                        RowFilter::Permissions => Some(draw::RowFilterKind::Permissions),
+                    };
                     draw::render(
                         &mut terminal,
                         &model,
@@ -632,6 +646,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                         &status,
                         frame_counter,
                         insp,
+                        filter,
                     )?;
                     model.mark_clean();
                 }
@@ -656,6 +671,38 @@ fn shutdown(
 ) -> Result<()> {
     teardown_terminal(terminal).ok();
     result
+}
+
+/// Subset of row kinds the user wants to see. Cycled by pressing `f`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RowFilter {
+    All,
+    Errors,
+    Tools,
+    Patches,
+    Permissions,
+}
+
+impl RowFilter {
+    fn next(self) -> Self {
+        match self {
+            Self::All => Self::Errors,
+            Self::Errors => Self::Tools,
+            Self::Tools => Self::Patches,
+            Self::Patches => Self::Permissions,
+            Self::Permissions => Self::All,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Errors => "errors",
+            Self::Tools => "tools",
+            Self::Patches => "patches",
+            Self::Permissions => "permissions",
+        }
+    }
 }
 
 /// Resolve the seq of the row currently under the inspector cursor.

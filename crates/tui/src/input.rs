@@ -25,6 +25,8 @@ pub enum Action {
     /// v0.2+: move inspector cursor within the visible rows.
     InspectorCursorUp,
     InspectorCursorDown,
+    /// v0.2+: cycle the row-kind filter (all → errors → tools → patches → permissions → all).
+    CycleFilter,
 }
 
 /// Variant of `handle_key` used while a PermissionRequested is pending.
@@ -47,6 +49,7 @@ pub fn handle_key(k: Key, buf: &mut String) -> Action {
         Key::Char('q') if buf.is_empty() => Action::Quit,
         Key::Char('r') if buf.is_empty() => Action::Replay,
         Key::Char('i') if buf.is_empty() => Action::ToggleInspector,
+        Key::Char('f') if buf.is_empty() => Action::CycleFilter,
         Key::Char(c) => {
             buf.push(c);
             Action::None
