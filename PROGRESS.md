@@ -51,7 +51,7 @@ Code-complete and tests pass. Offline benchmark hits all four numeric targets. O
 | 15| Manual-test playbook                              | DONE (doc only)   | `docs/manual-tests.md`                           |
 | 16| 4 numeric perf targets on offline bench           | DONE              | replay 72ms, frame 0.009ms, RSS 187MB, 591k w/s  |
 | 17| Lazy-page older rows from store on scroll-up      | DONE              | History buffer in `RenderModel` + worker task in `app.rs` that calls `store.load_range` and `reconstruct_rows` on scroll-near-top. Verified via pty test (cap=20, 200 events): single fetch returned 181 rows. |
-| 18| 5-hour soak run                                   | NOT DONE          | Needs `fake-agent --duration 18000 --fast`       |
+| 18| 5-hour soak run                                   | IN PROGRESS       | `scripts/soak.py` written + 90 s validation: RSS held flat at 16 MB (target < 200 MB). 30 min soak running in background; full 5 h soak ready when wanted: `python3 scripts/soak.py --duration 18000 --sample-interval 60` |
 | 19| Terminal-in-the-loop p95 input latency measurement| DONE              | `scripts/bench_input_latency.py` — pty harness. 100/100 samples under flood: p95 = 23.99 ms (target < 25 ms). |
 | 20| Manual TUI verification per `docs/manual-tests.md`| NOT DONE          | Awaits human run-through                         |
 | 21| Bench RSS caveat fix (stream into store, not Vec) | DONE              | Streaming generator in `crates/bench`: RSS 187 MB → 37 MB. |
