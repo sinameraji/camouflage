@@ -1,0 +1,41 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/protocol",
+    "crates/store",
+    "crates/renderer",
+    "crates/tui",
+    "crates/headless",
+    "crates/bench",
+    "examples/fake-agent",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+rust-version = "1.75"
+
+[workspace.dependencies]
+ratatui = "0.28"
+crossterm = "0.28"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync", "time", "signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+camouflage-protocol = { path = "crates/protocol" }
+camouflage-store = { path = "crates/store" }
+camouflage-renderer = { path = "crates/renderer" }
+camouflage-headless = { path = "crates/headless" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

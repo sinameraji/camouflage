@@ -1,0 +1,18 @@
+[package]
+name = "camouflage-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "camouflage-bench"
+path = "src/main.rs"
+
+[dependencies]
+camouflage-protocol = { workspace = true }
+camouflage-store = { workspace = true }
+camouflage-renderer = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
