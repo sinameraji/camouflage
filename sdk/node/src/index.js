@@ -15,6 +15,4 @@ export {
   encode,
 } from "./types.js";
 
-// The runtime binding (mount + subprocess management) lands in the next
-// commit. Keeping the index slim so the types-only import path stays
-// available immediately.
+export { mount } from "./binding.js";

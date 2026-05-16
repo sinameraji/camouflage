@@ -47,3 +47,12 @@ export {
   validate,
   encode,
 } from "./types.js";
+
+export {
+  mount,
+  MountOptions,
+  CamouflageHandle,
+  PermissionResponseEvent,
+  InvalidEvent,
+  ExitEvent,
+} from "./binding.js";
