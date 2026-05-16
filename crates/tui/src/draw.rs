@@ -8,7 +8,7 @@ use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Terminal;
 use unicode_width::UnicodeWidthStr;
 
@@ -132,6 +132,7 @@ pub fn render<B: Backend>(
     inspector: Option<InspectorView<'_>>,
     row_filter: Option<RowFilterKind>,
     search: Option<SearchView<'_>>,
+    help_open: bool,
 ) -> Result<()> {
     terminal.draw(|f| {
         let area = f.area();
@@ -445,8 +446,81 @@ pub fn render<B: Backend>(
             .block(Block::default().borders(Borders::ALL).title("input"));
             f.render_widget(input, input_chunk);
         }
+        if help_open {
+            draw_help_overlay(f, area);
+        }
     })?;
     Ok(())
+}
+
+fn draw_help_overlay(f: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
+    // Centered overlay: 60% width, ~75% height, never smaller than 36×14.
+    let w = area.width.saturating_mul(60) / 100;
+    let w = w.max(36).min(area.width.saturating_sub(2));
+    let h = area.height.saturating_mul(75) / 100;
+    let h = h.max(14).min(area.height.saturating_sub(2));
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    let overlay = ratatui::layout::Rect { x, y, width: w, height: h };
+
+    f.render_widget(Clear, overlay);
+
+    let dim = Style::default().fg(Color::DarkGray);
+    let key = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let head = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
+
+    let rows: Vec<Line> = vec![
+        Line::from(vec![Span::styled("Navigation", head)]),
+        kv("↑/↓ · PgUp/PgDn · Home/End", "scroll", key, dim),
+        kv("Ctrl+E", "jump to latest", key, dim),
+        Line::from(""),
+        Line::from(vec![Span::styled("Inspection (v0.2)", head)]),
+        kv("i", "toggle event-inspector panel", key, dim),
+        kv("f", "cycle row-kind filter", key, dim),
+        kv("Ctrl+F", "open inline search", key, dim),
+        kv("n / N", "next / prev search match", key, dim),
+        kv("m", "bookmark current focus", key, dim),
+        kv("'", "cycle to next bookmark", key, dim),
+        Line::from(""),
+        Line::from(vec![Span::styled("Replay (--replay)", head)]),
+        kv("Space", "toggle play / pause", key, dim),
+        kv("→ / ←", "step forward / backward 1 event", key, dim),
+        kv("+ / -", "adjust replay speed (0.25× – 64×)", key, dim),
+        kv("0", "restart replay", key, dim),
+        Line::from(""),
+        Line::from(vec![Span::styled("Other", head)]),
+        kv("Enter", "submit input", key, dim),
+        kv("Esc", "cancel active stream", key, dim),
+        kv("1 / 2 / 3", "permission: allow once / session / deny", key, dim),
+        kv("r", "reload (in --replay mode: restart)", key, dim),
+        kv("q · Ctrl+C", "quit", key, dim),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("?", key),
+            Span::styled(" again to close", dim),
+        ]),
+    ];
+
+    let widget = Paragraph::new(rows)
+        .wrap(Wrap { trim: false })
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" help ")
+                .border_style(Style::default().fg(Color::Yellow)),
+        );
+    f.render_widget(widget, overlay);
+}
+
+fn kv<'a>(k: &'a str, desc: &'a str, key_style: Style, dim: Style) -> Line<'a> {
+    Line::from(vec![
+        Span::raw("  "),
+        Span::styled(k, key_style),
+        Span::raw("  "),
+        Span::styled(desc, dim),
+    ])
 }
 
 fn row_to_line<'a>(

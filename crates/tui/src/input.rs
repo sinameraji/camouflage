@@ -40,6 +40,8 @@ pub enum Action {
     BookmarkAdd,
     /// v0.2+: cycle to the next bookmark.
     BookmarkNext,
+    /// v0.4+: toggle the help overlay.
+    ToggleHelp,
 }
 
 /// Variant of `handle_key` used while a PermissionRequested is pending.
@@ -68,6 +70,7 @@ pub fn handle_key(k: Key, buf: &mut String) -> Action {
         Key::Char('N') if buf.is_empty() => Action::SearchPrev,
         Key::Char('m') if buf.is_empty() => Action::BookmarkAdd,
         Key::Char('\'') if buf.is_empty() => Action::BookmarkNext,
+        Key::Char('?') if buf.is_empty() => Action::ToggleHelp,
         Key::Char(c) => {
             buf.push(c);
             Action::None

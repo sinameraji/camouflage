@@ -112,6 +112,8 @@ pub async fn run(cfg: Config) -> Result<()> {
     // store by seq on demand and cache the pretty-printed JSON. Cursor
     // offset is rows-from-the-newest, so 0 = bottom-most row.
     let mut inspector_open: bool = false;
+    // v0.4: help-overlay toggle (`?` when input buf is empty).
+    let mut help_open: bool = false;
     let mut inspector_cursor: usize = 0;
     let mut inspector_cached_seq: Option<i64> = None;
     let mut inspector_cached_json: String = String::new();
@@ -496,6 +498,10 @@ pub async fn run(cfg: Config) -> Result<()> {
                     }
                     model.mark_dirty();
                 }
+                input::Action::ToggleHelp => {
+                    help_open = !help_open;
+                    model.mark_dirty();
+                }
                 input::Action::InspectorCursorUp => {
                     if inspector_open {
                         inspector_cursor = inspector_cursor.saturating_add(1)
@@ -766,6 +772,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                         insp,
                         filter,
                         search_view,
+                        help_open,
                     )?;
                     model.mark_clean();
                 }
