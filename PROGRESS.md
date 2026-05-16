@@ -8,14 +8,16 @@ Specs: [`docs/specs/MVP_BUILD_PROMPT.md`](docs/specs/MVP_BUILD_PROMPT.md), [`doc
 
 ## Current stage
 
-**v0.2.0 shipped (Replay & Timeline Inspection). Next: v0.3 (Renderer Abstraction) — OR build the real KimiFlare adapter first to validate the protocol against an actual coding agent.**
+**v0.3 code-complete (Renderer Abstraction) — six slices A–F shipped. Pending: tag `v0.3.0`. Next: v0.4 (Advanced TUI UX) OR address the TUI bug backlog from real-terminal adapter testing.**
 
 Three tagged releases on GitHub at https://github.com/sinameraji/camouflage:
 - `v0.1.0` — event-native TUI MVP (22 milestones, four perf targets met)
 - `v0.1.5` — extensibility primitives (`StatusUpdate`, bidirectional protocol, permission widget, task ribbon, etc.)
 - `v0.2.0` — replay controls, event inspector, filter, search, tool timing, bookmarks
 
-The protocol can now express ~80% of KimiFlare's TUI surface (per the inventory in the original plan), and sessions are fully inspectable for debugging. Diff viewer + slash-command palette + theme system remain deferred to v0.4.
+v0.3 adds: strict NDJSON validator (`camouflage-validate`), event fixture system, headless persistence runtime (`camouflage-record`), `Renderer` trait + serializable `Snapshot`, WebSocket transport (`camouflage-broadcast`), single-file browser replay viewer (`viewer/index.html`). The Camouflage protocol is now consumable from non-Rust frontends over the wire, with both a Rust trait contract and a runnable JS reference implementation.
+
+Diff viewer + slash-command palette + theme system remain deferred to v0.4.
 
 ---
 
@@ -26,13 +28,40 @@ The protocol can now express ~80% of KimiFlare's TUI surface (per the inventory 
 | v0.1    | MVP Event-Native TUI             | ✅ DONE        | Tagged `v0.1.0`. All 22 milestones complete. |
 | v0.1.5  | Extensibility Primitives         | ✅ DONE        | All 6 slices + post-tag UX polish for narrow terminals. |
 | v0.2    | Replay & Timeline Inspection     | ✅ DONE        | Replay controls, event inspector, filter, search, tool timing, bookmarks. |
-| v0.3    | Renderer Abstraction             | NOT STARTED   |                                           |
+| v0.3    | Renderer Abstraction             | ✅ DONE        | Validator, fixtures, headless record, Renderer trait + Snapshot, WS broadcast, browser viewer. Tag `v0.3.0` pending. |
 | v0.4    | Advanced TUI UX                  | NOT STARTED   |                                           |
 | v0.5    | DevTools Layer                   | NOT STARTED   |                                           |
 | v0.6    | Ecosystem Layer                  | NOT STARTED   |                                           |
 | v0.7    | Desktop Runtime                  | NOT STARTED   |                                           |
 
-**Totals:** 3 / 8 versions complete (v0.1.0, v0.1.5, v0.2.0). Five remaining: v0.3 / v0.4 / v0.5 / v0.6 / v0.7.
+**Totals:** 4 / 8 versions code-complete (v0.1.0, v0.1.5, v0.2.0, v0.3). Four remaining: v0.4 / v0.5 / v0.6 / v0.7.
+
+## v0.3 slice checklist
+
+| Slice | Subject | Status |
+|-------|---------|--------|
+| A | Strict NDJSON validator (`camouflage-validate`) — typed payload checks, line+reason errors | ✅ DONE — `b95d9cb` |
+| B | Event fixture system (`fixtures/`, loader + CI gate that revalidates all fixtures) | ✅ DONE — `fedfe75` |
+| C | Headless runtime (`camouflage-record` — persist NDJSON to SQLite, no UI) | ✅ DONE — `427d7c1` |
+| D | `Renderer` trait + serializable `Snapshot` projection of `RenderModel` | ✅ DONE — `cf4ff7d` |
+| E | WebSocket transport (`camouflage-broadcast` — fan NDJSON to live WS clients with replay buffer) | ✅ DONE — `1c5bee8` |
+| F | Single-file browser replay viewer (`viewer/index.html`) | ✅ DONE — `700ce3d` |
+
+## v0.3 surfaces added
+
+| Surface | Where | Notes |
+|---------|-------|-------|
+| `camouflage-validate` | `crates/headless/src/bin/camouflage_validate.rs` | Stdin or file → strict typed validation; exits 1 on any error. |
+| `camouflage-record` | `crates/headless/src/bin/camouflage_record.rs` | Stdin → SQLite WAL store; flags for batch size, session id, summary. |
+| `camouflage-broadcast` | `crates/headless/src/bin/camouflage_broadcast.rs` | Stdin → WebSocket fan-out, in-memory replay buffer, slow-client drop. |
+| `Renderer` / `SnapshotRenderer` traits | `crates/renderer/src/lib.rs` | Contract for any non-TUI renderer; `RenderModel` implements both. |
+| `Snapshot` / `SnapshotRow` / `SnapshotTask` / `SnapshotPermission` | `crates/renderer/src/snapshot.rs` | Serde-derived; narrow projection of `RenderModel` for wire transport. |
+| Workspace `fixtures/` | repo root | `kimiflare-mock.ndjson`, `kimiflare-adapter-simple.ndjson`, `all-event-types.ndjson` |
+| `viewer/index.html` | repo root | Single-file viewer; auto-connects to `ws://localhost:8080`. |
+
+## Dependency budget update
+
+v0.3 added `tokio-tungstenite` + `futures-util` for the WebSocket transport. The workspace is now at **16 direct dependencies (was 14; previous budget was 15)**. Both are standard async-WS choices with no smaller alternative; the budget is intentionally re-pegged to 16. Future deps should still be justified at the slice-plan stage.
 
 ## v0.2 slice checklist
 
@@ -167,3 +196,5 @@ Brief one-liners per session. Keep this short — git log has the detail.
 | 2026-05-16 | v0.1.5 polish: narrow-terminal wrap support across all four regions — transcript rows wrap to multiple visual lines, status bar grows to 1-3 lines, input box grows as user types, permission widget grows to fit buttons line. Added `unicode-width` (14th dep, under budget). Commits `b7f313e` → `35c244f`. |
 | 2026-05-16 | v0.2 complete: replay controls, event inspector, filter toolbar, search, per-tool elapsed timing, bookmarks. Six slices across `b9fac44` → `ce8aa19`. Tagged `v0.2.0`. |
 | 2026-05-16 | KimiFlare adapter MVP shipped in `~/kimi-code-clone-3` on branch `camouflage-adapter` (commit `b840b80`). Added `--emit-events` one-shot mode (`src/emit-mode.ts`) cloning the `runPrintMode` template; emits 8 event types (Session/UserMessage/AssistantStream/Tool/Permission/RuntimeError) via NDJSON to stdout. Smoke-tested with a real Cloudflare turn — clean 6-event stream end-to-end. Multi-turn, bidirectional permission responses, `StatusUpdate` and `BackgroundTaskUpdate` deferred to follow-up commits. |
+| 2026-05-16 | Real-terminal adapter test surfaced 3 TUI bugs + 1 adapter gap + 2 v0.4-scheduled cosmetic gaps. Captured in new "TUI bug backlog" + "Cross-version validation notes" sections instead of fixing reactively, to keep roadmap momentum. |
+| 2026-05-16 | v0.3 code-complete: Slices A–F shipped (`b95d9cb` → `700ce3d`). New surfaces: `camouflage-validate`, `camouflage-record`, `camouflage-broadcast`, `Renderer`/`SnapshotRenderer` traits, `Snapshot` serde projection, workspace `fixtures/` + CI gate, single-file `viewer/index.html` browser viewer. Dep budget bumped to 16 (added `tokio-tungstenite` + `futures-util`). 45 workspace tests pass. Tag `v0.3.0` pending. |
