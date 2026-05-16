@@ -95,11 +95,20 @@ pub fn render<B: Backend>(
         // protect the transcript from being squeezed on tiny terminals.
         let has_tasks = !model.background_tasks().is_empty();
         let task_line: u16 = if has_tasks { 1 } else { 0 };
-        let bottom_height: u16 = if model.pending_permission().is_some() { 4 } else { 3 };
         let status_text_width = status_total_width(model, viewport, status);
+        let inner_w = area.width.saturating_sub(2).max(1) as usize; // input box subtracts borders
         let status_height: u16 = {
             let w = area.width.max(1) as usize;
             (((status_text_width + w - 1) / w).max(1).min(3)) as u16
+        };
+        // Bottom box height: permission widget needs 4 (border + 2 content + border);
+        // input grows as the user types past one visible line, capped at 5 rows total.
+        let bottom_height: u16 = if model.pending_permission().is_some() {
+            4
+        } else {
+            let input_w = UnicodeWidthStr::width(input_buf).max(1);
+            let content_lines = ((input_w + inner_w - 1) / inner_w).max(1).min(3) as u16;
+            content_lines + 2 // top + bottom border
         };
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -321,6 +330,7 @@ pub fn render<B: Backend>(
                 Span::styled("› ", Style::default().fg(Color::Cyan)),
                 Span::raw(input_buf),
             ]))
+            .wrap(Wrap { trim: false })
             .block(Block::default().borders(Borders::ALL).title("input"));
             f.render_widget(input, input_chunk);
         }
