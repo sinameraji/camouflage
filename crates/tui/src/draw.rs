@@ -76,6 +76,16 @@ fn spinner_glyph(frame: u64) -> char {
     SPINNER[(frame as usize) % SPINNER.len()]
 }
 
+/// View-time projection of the event inspector. None = panel closed.
+pub struct InspectorView<'a> {
+    /// Rows-from-newest of the focused row (0 = bottom).
+    pub cursor_offset: usize,
+    /// Seq of the focused event, if resolved.
+    pub focused_seq: Option<i64>,
+    /// Pretty-printed JSON of the focused event.
+    pub json: &'a str,
+}
+
 pub fn render<B: Backend>(
     terminal: &mut Terminal<B>,
     model: &RenderModel,
@@ -83,6 +93,7 @@ pub fn render<B: Backend>(
     input_buf: &str,
     status: &str,
     frame: u64,
+    inspector: Option<InspectorView<'_>>,
 ) -> Result<()> {
     terminal.draw(|f| {
         let area = f.area();
@@ -182,7 +193,37 @@ pub fn render<B: Backend>(
         let transcript = Paragraph::new(lines)
             .wrap(Wrap { trim: false })
             .scroll((scroll_top, 0));
-        f.render_widget(transcript, chunks[1]);
+
+        // When the inspector is open, split chunks[1] horizontally so the
+        // transcript shares the row with a JSON detail panel on the right.
+        if let Some(insp) = inspector.as_ref() {
+            let split = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Min(20), Constraint::Length((chunks[1].width / 2).min(60).max(30))])
+                .split(chunks[1]);
+            f.render_widget(transcript, split[0]);
+            // Inspector pane.
+            let header_text = match insp.focused_seq {
+                Some(seq) => format!("event @ seq {} (offset {})", seq, insp.cursor_offset),
+                None => "no event under cursor".to_string(),
+            };
+            let body = if insp.json.is_empty() {
+                "(loading…)".to_string()
+            } else {
+                insp.json.to_string()
+            };
+            let panel = Paragraph::new(body)
+                .wrap(Wrap { trim: false })
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(header_text)
+                        .border_style(Style::default().fg(Color::Cyan)),
+                );
+            f.render_widget(panel, split[1]);
+        } else {
+            f.render_widget(transcript, chunks[1]);
+        }
 
         // Status line — multi-segment, host-driven. Convention: known keys
         // (mode, phase, elapsed, tokens, cost, branch, warn) render in that

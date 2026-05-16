@@ -20,6 +20,11 @@ pub enum Action {
     ReplayFaster,
     ReplaySlower,
     ReplayRestart,
+    /// v0.2+: toggle the event inspector side panel.
+    ToggleInspector,
+    /// v0.2+: move inspector cursor within the visible rows.
+    InspectorCursorUp,
+    InspectorCursorDown,
 }
 
 /// Variant of `handle_key` used while a PermissionRequested is pending.
@@ -41,6 +46,7 @@ pub fn handle_key(k: Key, buf: &mut String) -> Action {
         Key::CtrlE => Action::JumpToLatest,
         Key::Char('q') if buf.is_empty() => Action::Quit,
         Key::Char('r') if buf.is_empty() => Action::Replay,
+        Key::Char('i') if buf.is_empty() => Action::ToggleInspector,
         Key::Char(c) => {
             buf.push(c);
             Action::None

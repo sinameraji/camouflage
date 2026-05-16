@@ -107,6 +107,14 @@ pub async fn run(cfg: Config) -> Result<()> {
         Some(c) => RenderModel::with_cap(c),
         None => RenderModel::new(),
     };
+    // v0.2 inspector state. When open, a side panel shows the raw JSON of
+    // the event under the inspector cursor. We look up the event from the
+    // store by seq on demand and cache the pretty-printed JSON. Cursor
+    // offset is rows-from-the-newest, so 0 = bottom-most row.
+    let mut inspector_open: bool = false;
+    let mut inspector_cursor: usize = 0;
+    let mut inspector_cached_seq: Option<i64> = None;
+    let mut inspector_cached_json: String = String::new();
     let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
     let mut viewport = ViewportState::new(session_id, height.saturating_sub(4), width);
     let mut input_buf = String::new();
@@ -298,10 +306,22 @@ pub async fn run(cfg: Config) -> Result<()> {
     loop {
         // Non-blocking poll for keys before each frame.
         while let Ok(key) = key_rx.try_recv() {
-            // Priority order: pending permission widget → replay controls
-            // (if --replay) → normal key handler.
+            // Priority order: pending permission widget → inspector cursor
+            // (if open) → replay controls (if --replay) → normal handler.
             let action = if model.pending_permission().is_some() {
                 input::handle_key_permission(key)
+            } else if inspector_open
+                && matches!(
+                    key,
+                    crate::tty::Key::Up | crate::tty::Key::Down | crate::tty::Key::Esc
+                )
+            {
+                match key {
+                    crate::tty::Key::Up => input::Action::InspectorCursorUp,
+                    crate::tty::Key::Down => input::Action::InspectorCursorDown,
+                    crate::tty::Key::Esc => input::Action::ToggleInspector,
+                    _ => input::Action::None,
+                }
             } else if let (Some(_), Some(act)) =
                 (replay_state.as_ref(), input::handle_key_replay(key, &input_buf))
             {
@@ -455,6 +475,27 @@ pub async fn run(cfg: Config) -> Result<()> {
                         model.mark_dirty();
                     }
                 }
+                input::Action::ToggleInspector => {
+                    inspector_open = !inspector_open;
+                    if inspector_open {
+                        inspector_cursor = 0;
+                        inspector_cached_seq = None;
+                    }
+                    model.mark_dirty();
+                }
+                input::Action::InspectorCursorUp => {
+                    if inspector_open {
+                        inspector_cursor = inspector_cursor.saturating_add(1)
+                            .min(model.combined_len().saturating_sub(1));
+                        model.mark_dirty();
+                    }
+                }
+                input::Action::InspectorCursorDown => {
+                    if inspector_open {
+                        inspector_cursor = inspector_cursor.saturating_sub(1);
+                        model.mark_dirty();
+                    }
+                }
                 input::Action::None => {
                     model.mark_dirty();
                 }
@@ -543,6 +584,26 @@ pub async fn run(cfg: Config) -> Result<()> {
             }
             _ = ticker.tick() => {
                 frame_counter = frame_counter.wrapping_add(1);
+                // Refresh inspector cache if the cursor moved or the row at
+                // the cursor has changed seq (e.g. due to new events).
+                if inspector_open {
+                    if let Some(focused_seq) = inspector_focused_seq(&model, inspector_cursor) {
+                        if inspector_cached_seq != Some(focused_seq) {
+                            if let Ok(events) =
+                                store.load_range(session_id, focused_seq, focused_seq + 1)
+                            {
+                                if let Some(ev) = events.into_iter().next() {
+                                    inspector_cached_json = serde_json::to_string_pretty(&ev)
+                                        .unwrap_or_else(|_| "<json error>".into());
+                                    inspector_cached_seq = Some(focused_seq);
+                                }
+                            }
+                        }
+                    } else {
+                        inspector_cached_seq = None;
+                        inspector_cached_json.clear();
+                    }
+                }
                 // A spinner is "alive" if any tool isn't finished OR the host's
                 // phase segment is in a spinnable state. When alive, redraw
                 // every tick so the glyph rotates even if the model is clean.
@@ -554,7 +615,24 @@ pub async fn run(cfg: Config) -> Result<()> {
                     .unwrap_or(false);
                 let spinner_alive = any_unfinished_tool || phase_spins;
                 if model.dirty() || spinner_alive {
-                    draw::render(&mut terminal, &model, &viewport, &input_buf, &status, frame_counter)?;
+                    let insp = if inspector_open {
+                        Some(draw::InspectorView {
+                            cursor_offset: inspector_cursor,
+                            focused_seq: inspector_cached_seq,
+                            json: &inspector_cached_json,
+                        })
+                    } else {
+                        None
+                    };
+                    draw::render(
+                        &mut terminal,
+                        &model,
+                        &viewport,
+                        &input_buf,
+                        &status,
+                        frame_counter,
+                        insp,
+                    )?;
                     model.mark_clean();
                 }
                 // Resize check (size() is cheap; no kqueue needed)
@@ -578,6 +656,23 @@ fn shutdown(
 ) -> Result<()> {
     teardown_terminal(terminal).ok();
     result
+}
+
+/// Resolve the seq of the row currently under the inspector cursor.
+/// `cursor_offset == 0` means the bottom-most (newest) visible row.
+fn inspector_focused_seq(model: &RenderModel, cursor_offset: usize) -> Option<i64> {
+    let total = model.combined_len();
+    if total == 0 {
+        return None;
+    }
+    let idx = total.saturating_sub(1).saturating_sub(cursor_offset);
+    let history = model.history_rows();
+    if idx < history.len() {
+        history.get(idx).map(|r| r.seq)
+    } else {
+        let live_idx = idx - history.len();
+        model.rows().get(live_idx).map(|r| r.seq)
+    }
 }
 
 fn replay_status(rs: &ReplayState) -> String {
