@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Camouflage Replay Viewer</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root {
+  --bg: #0f1218;
+  --bg-elev: #161b22;
+  --fg: #c9d1d9;
+  --fg-dim: #768390;
+  --accent: #58a6ff;
+  --user: #d2a8ff;
+  --assistant: #c9d1d9;
+  --tool: #79c0ff;
+  --error: #ff7b72;
+  --warn: #f0883e;
+  --ok: #56d364;
+  --bar: #1c2128;
+  --border: #2a313c;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff; --bg-elev: #f6f8fa; --fg: #1f2328; --fg-dim: #59636e;
+    --accent: #0969da; --user: #8250df; --assistant: #1f2328; --tool: #0550ae;
+    --error: #cf222e; --warn: #9a6700; --ok: #1a7f37; --bar: #f6f8fa; --border: #d0d7de;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: var(--mono); font-size: 13px; line-height: 1.45;
+  color: var(--fg); background: var(--bg);
+  display: flex; flex-direction: column;
+}
+header {
+  background: var(--bg-elev); padding: 8px 14px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+}
+header h1 { margin: 0; font-size: 13px; font-weight: 600; color: var(--accent); }
+header input {
+  flex: 1; max-width: 360px; padding: 4px 8px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--fg); border-radius: 4px;
+  font-family: var(--mono); font-size: 12px;
+}
+header button {
+  padding: 4px 12px; border: 1px solid var(--border); background: var(--bg);
+  color: var(--fg); border-radius: 4px; cursor: pointer; font-family: var(--mono);
+  font-size: 12px;
+}
+header button:hover { border-color: var(--accent); color: var(--accent); }
+#conn-status { font-size: 11px; padding: 2px 8px; border-radius: 10px; }
+.conn-ok { background: rgba(86,211,100,.12); color: var(--ok); }
+.conn-bad { background: rgba(255,123,114,.12); color: var(--error); }
+.conn-pending { background: rgba(240,136,62,.12); color: var(--warn); }
+#tasks {
+  background: var(--bar); padding: 4px 14px; font-size: 11px;
+  border-bottom: 1px solid var(--border); min-height: 22px; flex-shrink: 0;
+  color: var(--fg-dim);
+}
+#tasks .task { margin-right: 12px; }
+#tasks .running { color: var(--warn); }
+#tasks .done { color: var(--ok); }
+#tasks .error { color: var(--error); }
+#tasks:empty { display: none; }
+main {
+  flex: 1; overflow-y: auto; padding: 10px 14px;
+}
+.row { padding: 2px 0; white-space: pre-wrap; word-break: break-word; }
+.row.user::before { content: "› "; color: var(--user); }
+.row.user { color: var(--user); }
+.row.assistant { color: var(--assistant); padding-top: 4px; }
+.row.tool { color: var(--tool); }
+.row.error { color: var(--error); }
+.row.system { color: var(--fg-dim); font-size: 12px; }
+.row.marker { color: var(--fg-dim); font-style: italic; font-size: 12px; }
+.row .meta { color: var(--fg-dim); font-size: 11px; }
+#permission {
+  background: var(--bg-elev); border: 1px solid var(--warn); border-radius: 6px;
+  padding: 10px 14px; margin: 8px 14px; flex-shrink: 0;
+}
+#permission:empty { display: none; }
+#permission h3 { margin: 0 0 4px 0; font-size: 12px; color: var(--warn); }
+#permission .req { color: var(--fg); font-size: 13px; }
+#permission .detail { color: var(--fg-dim); font-size: 12px; margin-top: 4px; }
+#status {
+  background: var(--bar); padding: 6px 14px; font-size: 12px;
+  border-top: 1px solid var(--border); flex-shrink: 0;
+  display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+}
+#status .seg { color: var(--fg-dim); }
+#status .seg b { color: var(--fg); font-weight: 600; }
+#status .seg.phase b { color: var(--accent); }
+#status .seg.warn b { color: var(--warn); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Camouflage</h1>
+  <input id="ws-url" value="ws://localhost:8080" spellcheck="false">
+  <button id="connect">Connect</button>
+  <span id="conn-status" class="conn-pending">disconnected</span>
+  <span id="event-count" style="color:var(--fg-dim);font-size:11px"></span>
+</header>
+<div id="tasks"></div>
+<main id="transcript"></main>
+<div id="permission"></div>
+<div id="status"><span class="seg">idle</span></div>
+<script>
+"use strict";
+
+// Minimal in-browser RenderModel. Mirrors the Rust crate's apply() at the
+// granularity a debugger / replay viewer actually needs. NOT a perfect clone
+// — TUI-only details (color decoration, spinner glyphs, scrollback paging)
+// stay in the Rust renderer.
+class Model {
+  constructor() {
+    this.rows = [];          // {seq, kind, text, toolId?}
+    this.status = new Map(); // key -> value
+    this.tasks = new Map();  // task_id -> {label, state, progress}
+    this.permission = null;  // {request_id, tool, action, detail}
+    this.tools = new Map();  // tool_id -> row index hint
+    this.activeStreamRow = null;
+    this.eventCount = 0;
+  }
+  apply(ev) {
+    this.eventCount++;
+    const t = ev.event_type;
+    const p = ev.payload || {};
+    const seq = this.rows.length;
+    switch (t) {
+      case "SessionStarted":
+        this.rows.push({ seq, kind: "system", text: "session started" });
+        break;
+      case "SessionEnded":
+        this.rows.push({ seq, kind: "system", text: "session ended" });
+        // Reset phase so the status bar doesn't lie post-session.
+        if (this.status.get("phase") && this.status.get("phase") !== "idle") {
+          this.status.set("phase", "idle");
+        }
+        this.activeStreamRow = null;
+        break;
+      case "UserMessageCreated":
+      case "UserInputSubmitted":
+        this.rows.push({ seq, kind: "user", text: p.text || "" });
+        break;
+      case "AssistantStreamStarted":
+        this.activeStreamRow = this.rows.length;
+        this.rows.push({ seq, kind: "assistant", text: "" });
+        break;
+      case "AssistantTokenDelta":
+        if (this.activeStreamRow != null) {
+          this.rows[this.activeStreamRow].text += p.token || "";
+        } else {
+          // Token arrived before a stream-started — synthesize a row.
+          this.activeStreamRow = this.rows.length;
+          this.rows.push({ seq, kind: "assistant", text: p.token || "" });
+        }
+        break;
+      case "AssistantMessageCompleted":
+        this.activeStreamRow = null;
+        break;
+      case "ToolExecutionStarted": {
+        const idx = this.rows.length;
+        this.tools.set(p.tool_id, idx);
+        const cmd = (p.command || "").trim();
+        const shown = cmd.length > 120 ? cmd.slice(0, 117) + "..." : cmd;
+        this.rows.push({
+          seq, kind: "tool", toolId: p.tool_id,
+          text: `▶ ${p.tool} ${shown}`,
+        });
+        break;
+      }
+      case "ToolExecutionStdout":
+      case "ToolExecutionStderr": {
+        const idx = this.tools.get(p.tool_id);
+        if (idx != null) {
+          // Append a chunk under the tool row — keep it collapsed (just a count).
+          // For an MVP we just append a single trailing summary line so the row
+          // stays compact but the user knows there was output.
+          const tag = t === "ToolExecutionStdout" ? "out" : "err";
+          this.rows[idx].text = this.rows[idx].text.replace(/ \(\d+ \w+ chunks\)$/, "");
+          this.rows[idx]._chunks = (this.rows[idx]._chunks || {});
+          this.rows[idx]._chunks[tag] = (this.rows[idx]._chunks[tag] || 0) + 1;
+          const tags = Object.entries(this.rows[idx]._chunks)
+            .map(([k, v]) => `${v} ${k} chunks`).join(", ");
+          this.rows[idx].text += ` (${tags})`;
+        }
+        break;
+      }
+      case "ToolExecutionFinished": {
+        const idx = this.tools.get(p.tool_id);
+        if (idx != null) {
+          const mark = p.exit_code === 0 ? "✓" : "✗";
+          this.rows[idx].text = this.rows[idx].text.replace(/^▶/, mark);
+          this.rows[idx].text += ` (exit=${p.exit_code})`;
+        }
+        break;
+      }
+      case "PatchProposed":
+        this.rows.push({ seq, kind: "system", text: `patch proposed: ${p.path || "?"} (+${p.added || 0} -${p.removed || 0})` });
+        break;
+      case "PatchApplied":
+        this.rows.push({ seq, kind: "system", text: `patch applied: ${p.path || "?"}` });
+        break;
+      case "PermissionRequested":
+        this.permission = p;
+        break;
+      case "PermissionGranted":
+      case "PermissionDenied":
+      case "PermissionResponse":
+        if (this.permission && (p.request_id === this.permission.request_id)) {
+          this.permission = null;
+        }
+        this.rows.push({
+          seq, kind: "system",
+          text: `permission ${t === "PermissionGranted" ? "granted" : t === "PermissionDenied" ? "denied" : (p.choice || "responded")} (${p.request_id || ""})`,
+        });
+        break;
+      case "RuntimeError": {
+        const cta = p.cta ? ` → ${p.cta.label}` : "";
+        const kind = p.kind ? `[${p.kind}] ` : "";
+        this.rows.push({ seq, kind: "error", text: `${kind}${p.message || "error"}${cta}` });
+        break;
+      }
+      case "StatusUpdate":
+        if (p.segments) {
+          for (const [k, v] of Object.entries(p.segments)) {
+            if (v === "" || v == null) this.status.delete(k);
+            else this.status.set(k, String(v));
+          }
+        }
+        break;
+      case "BackgroundTaskUpdate":
+        if (p.state === "done" && this.tasks.has(p.task_id)) {
+          this.tasks.set(p.task_id, { label: p.label, state: "done", progress: 1 });
+          // Drop done tasks after a short delay so the ribbon doesn't accumulate.
+          setTimeout(() => { this.tasks.delete(p.task_id); render(); }, 1500);
+        } else {
+          this.tasks.set(p.task_id, { label: p.label, state: p.state, progress: p.progress });
+        }
+        break;
+      case "SessionCompacted":
+      case "ViewportMarker":
+        this.rows.push({ seq, kind: "marker", text: `· ${t}` });
+        break;
+      default:
+        this.rows.push({ seq, kind: "system", text: `[unknown ${t}]` });
+    }
+  }
+}
+
+const model = new Model();
+const $transcript = document.getElementById("transcript");
+const $status = document.getElementById("status");
+const $tasks = document.getElementById("tasks");
+const $perm = document.getElementById("permission");
+const $count = document.getElementById("event-count");
+const $connStatus = document.getElementById("conn-status");
+const $url = document.getElementById("ws-url");
+const $btn = document.getElementById("connect");
+
+const STATUS_ORDER = ["mode", "phase", "elapsed", "tokens", "cost", "branch", "warn"];
+
+let ws = null;
+let renderScheduled = false;
+
+function render() {
+  if (renderScheduled) return;
+  renderScheduled = true;
+  requestAnimationFrame(() => {
+    renderScheduled = false;
+    doRender();
+  });
+}
+
+function doRender() {
+  // Transcript — naive full rerender. Replace with a virtual-list later if
+  // sessions grow into the 100k-row range; today the bench fits comfortably.
+  const wasAtBottom = $transcript.scrollTop + $transcript.clientHeight >= $transcript.scrollHeight - 20;
+  const frag = document.createDocumentFragment();
+  for (const r of model.rows) {
+    const el = document.createElement("div");
+    el.className = `row ${r.kind}`;
+    el.textContent = r.text;
+    frag.appendChild(el);
+  }
+  $transcript.replaceChildren(frag);
+  if (wasAtBottom) $transcript.scrollTop = $transcript.scrollHeight;
+
+  // Status bar
+  const segs = [];
+  for (const k of STATUS_ORDER) {
+    if (model.status.has(k)) {
+      segs.push(`<span class="seg ${k}">${k}: <b>${escapeHtml(model.status.get(k))}</b></span>`);
+    }
+  }
+  for (const [k, v] of model.status) {
+    if (!STATUS_ORDER.includes(k)) {
+      segs.push(`<span class="seg">${k}: <b>${escapeHtml(v)}</b></span>`);
+    }
+  }
+  $status.innerHTML = segs.length ? segs.join("") : '<span class="seg">idle</span>';
+
+  // Tasks
+  const taskParts = [];
+  for (const [id, t] of model.tasks) {
+    const pct = t.progress != null ? ` ${Math.round(t.progress * 100)}%` : "";
+    taskParts.push(`<span class="task ${t.state}">${escapeHtml(t.label || id)}${pct}</span>`);
+  }
+  $tasks.innerHTML = taskParts.join("");
+
+  // Permission
+  if (model.permission) {
+    const p = model.permission;
+    $perm.innerHTML = `
+      <h3>permission requested</h3>
+      <div class="req"><b>${escapeHtml(p.tool || "?")}</b>: ${escapeHtml(p.action || "")}</div>
+      ${p.detail ? `<div class="detail">${escapeHtml(p.detail)}</div>` : ""}
+    `;
+  } else {
+    $perm.innerHTML = "";
+  }
+
+  $count.textContent = `${model.eventCount} events`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
+}
+
+function setConn(state, text) {
+  $connStatus.className = state;
+  $connStatus.textContent = text;
+}
+
+function connect() {
+  if (ws) { try { ws.close(); } catch {} ws = null; }
+  setConn("conn-pending", "connecting…");
+  const url = $url.value.trim();
+  try {
+    ws = new WebSocket(url);
+  } catch (e) {
+    setConn("conn-bad", `bad url: ${e.message}`);
+    return;
+  }
+  ws.onopen = () => setConn("conn-ok", "connected");
+  ws.onclose = () => setConn("conn-bad", "disconnected");
+  ws.onerror = () => setConn("conn-bad", "error");
+  ws.onmessage = (msg) => {
+    try {
+      const ev = JSON.parse(msg.data);
+      model.apply(ev);
+      render();
+    } catch (e) {
+      console.warn("bad frame", msg.data, e);
+    }
+  };
+}
+
+$btn.addEventListener("click", connect);
+$url.addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
+
+// Auto-connect on load.
+connect();
+</script>
+</body>
+</html>
