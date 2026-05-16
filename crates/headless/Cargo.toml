@@ -12,6 +12,10 @@ path = "src/bin/camouflage_validate.rs"
 name = "camouflage-record"
 path = "src/bin/camouflage_record.rs"
 
+[[bin]]
+name = "camouflage-broadcast"
+path = "src/bin/camouflage_broadcast.rs"
+
 [dependencies]
 camouflage-protocol = { workspace = true }
 camouflage-store = { workspace = true }
@@ -22,3 +26,5 @@ uuid = { workspace = true }
 thiserror = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
