@@ -20,6 +20,10 @@ path = "src/bin/camouflage_broadcast.rs"
 name = "camouflage-export"
 path = "src/bin/camouflage_export.rs"
 
+[[bin]]
+name = "camouflage-replay-check"
+path = "src/bin/camouflage_replay_check.rs"
+
 [dependencies]
 camouflage-protocol = { workspace = true }
 camouflage-store = { workspace = true }
@@ -33,3 +37,4 @@ anyhow = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
 rusqlite = { workspace = true }
+camouflage-renderer = { workspace = true }

@@ -39,6 +39,8 @@ camouflage-protocol = { path = "crates/protocol" }
 camouflage-store = { path = "crates/store" }
 camouflage-renderer = { path = "crates/renderer" }
 camouflage-headless = { path = "crates/headless" }
+# camouflage-renderer dep above is already declared; headless now reuses it
+# for its replay-check binary.
 
 [profile.release]
 opt-level = 3

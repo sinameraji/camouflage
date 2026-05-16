@@ -15,7 +15,7 @@
 //!
 //! Golden JSON is pretty-printed so diffs in PRs are reviewable.
 
-use crate::{RenderModel, Renderer, Snapshot, SnapshotRenderer};
+use crate::{RenderModel, Snapshot, SnapshotRenderer};
 use camouflage_protocol::{Event, EventType, SCHEMA_VERSION};
 use serde::Deserialize;
 use std::path::Path;
