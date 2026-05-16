@@ -127,8 +127,28 @@ Per the spec roadmap, in order:
 
 Off-roadmap but high-value:
 
-- **KimiFlare adapter (`~/kimi-code`)** — write a real `--emit-events` mode in KimiFlare that produces NDJSON Camouflage can consume. This is the wedge that proves the protocol against a real agent. After v0.1.5 + v0.2.0 nothing structural is blocking it; only diff display (v0.4) and slash commands (v0.4) would be cosmetically degraded.
+- **KimiFlare adapter (`~/kimi-code-clone-3`, branch `camouflage-adapter`)** — MVP shipped 2026-05-16 (`b840b80` in that repo). One-shot `--emit-events` mode emits 8 event types via NDJSON. Validated end-to-end with a real Cloudflare turn through `camouflage-tui --stdin-events`. Follow-up slices, in priority order:
+  - **Emit `ToolExecutionStdout` chunks** so tool output is visible in the transcript (currently shows `stdout=0B`). [adapter gap from 2026-05-16 test]
+  - **Multi-turn mode** — stdin reader for `UserInputSubmitted` to drive follow-up prompts into new `runAgentTurn` calls.
+  - **Bidirectional permission flow** — route stdin `PermissionResponse` into the pending `askPermission` promise instead of the current auto-allow / auto-deny.
+  - **`StatusUpdate` + `BackgroundTaskUpdate` emission** — needs a different tap point inside `app.tsx::sharedCallbacks` since the headless `runAgentTurn` doesn't surface phase/usage in that shape.
 - **5-hour soak** — the script (`scripts/soak.py`) is ready; 30 min has been validated. Run the full 18000 s when an idle laptop is available.
+
+## TUI bug backlog (from adapter testing)
+
+Discovered 2026-05-16 while smoke-testing the KimiFlare adapter against a real terminal. Each should be one small commit; none are roadmap milestones. Address between version cuts, not in the middle of one — writing them down so they don't get lost.
+
+| #   | Bug | Likely cause / where to look | Repro |
+|-----|-----|------------------------------|-------|
+| TB1 | "session started" row appears twice on session boot | TUI synthesizes a session-start row even when the host emits `SessionStarted` — collision in `crates/renderer/src/model.rs` apply path or the boot synth in `crates/tui/src/app.rs`. | Run adapter one-shot; observe two consecutive `- session started` rows at the top. |
+| TB2 | Status bar phase stays `streaming` after `SessionEnded` arrives | `SessionEnded` apply path should clear / reset the `StatusBarState` phase segment (or the renderer should infer idle when no active stream/tool). `crates/renderer/src/status.rs` + `apply()` in `model.rs`. | Run adapter one-shot to completion; status bar still reads `streaming` indefinitely. |
+| TB3 | Spinners (status-bar phase glyph + task-ribbon dot) animate while user scrolls | Spinner frame counter is incrementing on *redraw* tick instead of on a wall-clock tick. Scroll causes redraws → glyph advances without time passing. Fix: drive spinner frame from `Instant::now()` modulo period, not a per-redraw counter. `crates/tui/src/draw.rs`. | Run adapter one-shot; before completion, scroll up/down — watch the spinners spin in lockstep with scroll. |
+
+## Cross-version validation notes
+
+Evidence collected from the 2026-05-16 adapter test that confirms scope decisions for later versions — record here so we don't relitigate at version-cut time.
+
+- **v0.4 (Advanced TUI UX) — markdown rendering and diff viewer confirmed as critical.** Assistant text rendered with literal `**bold**`, raw backticks, and no paragraph wrap. Long unbroken token sequences cluster into walls of text. Confirms diff/markdown/theme work belongs *exactly* where the roadmap puts it — do not pull forward into v0.3.
 
 ## Session log
 
