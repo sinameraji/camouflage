@@ -5,6 +5,7 @@ mod tty;
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use std::os::fd::RawFd;
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -36,8 +37,12 @@ fn default_db_path() -> PathBuf {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    // Swap fd 0 to /dev/tty before tokio starts so crossterm sees a TTY at
+    // stdin. The original stdin (if it was a pipe) is moved to `events_fd`.
+    let layout = tty::install_fd_layout().context("installing fd layout")?;
+    let events_fd: Option<RawFd> = layout.events_fd;
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -52,11 +57,14 @@ async fn main() -> Result<()> {
     let store =
         camouflage_store::SqliteStore::open(&db_path).context("opening event store")?;
 
-    app::run(app::Config {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(app::run(app::Config {
         store,
         stdin_events: args.stdin_events,
         replay: args.replay,
         fps: args.fps.max(1).min(120),
-    })
-    .await
+        events_fd,
+    }))
 }

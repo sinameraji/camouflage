@@ -1,18 +1,18 @@
-use crate::{draw, input, tty};
+use crate::{draw, input};
 use anyhow::{Context, Result};
-use camouflage_headless::{run_reader, NdjsonDecoder};
+use camouflage_headless::NdjsonDecoder;
 use camouflage_protocol::{Event, EventType, SCHEMA_VERSION};
 use camouflage_renderer::{RenderModel, ViewportState};
 use camouflage_store::{EventStore, SqliteStore};
 use crossterm::event::{poll as ct_poll, read as ct_read, Event as CtEvent, KeyEventKind};
-use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
-use std::io::Stdout;
+use std::io::{BufRead, BufReader as StdBufReader, Stdout};
+use std::os::fd::{FromRawFd, RawFd};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
-use tokio::io::BufReader;
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration, Instant};
 use uuid::Uuid;
@@ -22,6 +22,9 @@ pub struct Config {
     pub stdin_events: bool,
     pub replay: Option<Uuid>,
     pub fps: u32,
+    /// File descriptor for NDJSON event input. `Some` when stdin was a pipe
+    /// at startup (it has been dup'd here so fd 0 can be /dev/tty).
+    pub events_fd: Option<RawFd>,
 }
 
 pub async fn run(cfg: Config) -> Result<()> {
@@ -47,16 +50,38 @@ pub async fn run(cfg: Config) -> Result<()> {
     let start_seq = store.latest_seq(session_id).unwrap_or(-1).max(-1) + 1;
     let seq_counter = Arc::new(AtomicI64::new(start_seq));
 
-    // Wire NDJSON stdin if requested.
+    // Wire NDJSON ingestion. We read from `events_fd` (the dup'd pipe, if any)
+    // on a blocking thread and forward into the async channel. Using stdin
+    // (fd 0) is unsafe here because we deliberately swapped fd 0 to /dev/tty.
     let (ev_tx, mut ev_rx) = mpsc::channel::<Event>(4096);
     if cfg.stdin_events {
         let decoder = NdjsonDecoder::new(session_id);
-        let stdin = tokio::io::stdin();
-        let reader = BufReader::new(stdin);
         let tx = ev_tx.clone();
-        tokio::spawn(async move {
-            let _ = run_reader(reader, decoder, tx).await;
-        });
+        if let Some(fd) = cfg.events_fd {
+            std::thread::spawn(move || {
+                // Safety: we own this fd (dup'd at startup), nothing else reads it.
+                let file = unsafe { std::fs::File::from_raw_fd(fd) };
+                let reader = StdBufReader::new(file);
+                for line in reader.lines() {
+                    let Ok(line) = line else { break };
+                    if line.trim().is_empty() { continue; }
+                    let parsed = decoder.parse_line(&line);
+                    let ev = match parsed {
+                        Ok(ev) => ev,
+                        Err(e) => Event {
+                            id: Uuid::new_v4(),
+                            session_id,
+                            seq: 0,
+                            timestamp_ms: now_ms(),
+                            schema_version: SCHEMA_VERSION,
+                            event_type: EventType::RuntimeError,
+                            payload: serde_json::json!({"message": format!("ndjson: {e}")}),
+                        },
+                    };
+                    if tx.blocking_send(ev).is_err() { break; }
+                }
+            });
+        }
     }
 
     // Persist-before-render writer task.
@@ -276,9 +301,9 @@ fn now_ms() -> i64 {
 }
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
-    // Apply raw mode on /dev/tty rather than stdin, so we work when stdin is
-    // a pipe carrying NDJSON events.
-    tty::enable_raw_mode_via_tty().context("enabling raw mode on /dev/tty")?;
+    // By the time we get here, fd 0 is /dev/tty (see tty::install_fd_layout
+    // called from main()), so crossterm's normal raw-mode path works.
+    enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     stdout.execute(EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
@@ -288,7 +313,7 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
 }
 
 fn teardown_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
-    tty::restore();
+    let _ = disable_raw_mode();
     terminal.backend_mut().execute(LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     Ok(())
@@ -297,7 +322,7 @@ fn teardown_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Resul
 fn install_panic_hook() {
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        tty::restore();
+        let _ = disable_raw_mode();
         let _ = std::io::stdout().execute(LeaveAlternateScreen);
         prev(info);
     }));
