@@ -148,6 +148,7 @@ pub fn render<B: Backend>(
     metrics: Option<MetricsView>,
     theme: &camouflage_renderer::theme::Theme,
     tool_output_open: bool,
+    permission_feedback: &str,
 ) -> Result<()> {
     terminal.draw(|f| {
         let area = f.area();
@@ -168,16 +169,21 @@ pub fn render<B: Backend>(
         };
         // Bottom box height grows to fit wrapped content.
         let bottom_height: u16 = if let Some(pp) = model.pending_permission() {
-            // Two logical content lines: title row + buttons row. Each may
-            // wrap on a narrow terminal; total visual lines = sum of the two.
+            // Three logical content lines: title + buttons + feedback. Each
+            // may wrap on a narrow terminal; total visual lines = sum.
             let title_w = UnicodeWidthStr::width(" ⚠ permission needed: ")
                 + UnicodeWidthStr::width(pp.action.as_str())
                 + 4 + UnicodeWidthStr::width(pp.tool.as_str()); // "  (tool)"
             let buttons_w =
                 UnicodeWidthStr::width("   [1] allow once   [2] allow for session   [3] deny   [Esc] deny");
+            let feedback_w = UnicodeWidthStr::width("   feedback › ")
+                + UnicodeWidthStr::width(permission_feedback).max(
+                    UnicodeWidthStr::width("(optional — type a reason, sent with your choice)"),
+                );
             let title_lines = ((title_w + inner_w - 1) / inner_w).max(1);
             let button_lines = ((buttons_w + inner_w - 1) / inner_w).max(1);
-            let content = (title_lines + button_lines).max(2).min(6) as u16;
+            let feedback_lines = ((feedback_w + inner_w - 1) / inner_w).max(1);
+            let content = (title_lines + button_lines + feedback_lines).max(3).min(8) as u16;
             content + 2 // top + bottom border
         } else {
             let input_w = UnicodeWidthStr::width(input_buf).max(1);
@@ -441,6 +447,24 @@ pub fn render<B: Backend>(
                     Span::raw(" deny   "),
                     Span::styled("[Esc]", Style::default().fg(Color::DarkGray)),
                     Span::raw(" deny"),
+                ]),
+                Line::from(vec![
+                    Span::styled(
+                        "   feedback › ",
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled(
+                        if permission_feedback.is_empty() {
+                            "(optional — type a reason, sent with your choice)".to_string()
+                        } else {
+                            permission_feedback.to_string()
+                        },
+                        if permission_feedback.is_empty() {
+                            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)
+                        } else {
+                            Style::default().fg(Color::White)
+                        },
+                    ),
                 ]),
             ];
             let widget = Paragraph::new(lines)

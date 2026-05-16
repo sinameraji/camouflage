@@ -52,14 +52,27 @@ pub enum Action {
 }
 
 /// Variant of `handle_key` used while a PermissionRequested is pending.
-/// Only quit + permission-choice keys are honoured; everything else is ignored.
-pub fn handle_key_permission(k: Key) -> Action {
+/// 1/2/3 trigger the response; printable characters (other than the
+/// reserved digits) are buffered as the `feedback` field of the eventual
+/// `PermissionResponse`, so a user can type "deny because the path is
+/// outside the workspace" and have it ride along with the choice.
+pub fn handle_key_permission(k: Key, feedback: &mut String) -> Action {
     match k {
         Key::CtrlC => Action::Quit,
         Key::Char('1') => Action::PermissionAllowOnce,
         Key::Char('2') => Action::PermissionAllowSession,
-        Key::Char('3') | Key::Char('?') => Action::PermissionDeny,
+        Key::Char('3') => Action::PermissionDeny,
         Key::Esc => Action::PermissionDeny,
+        Key::Backspace => {
+            feedback.pop();
+            Action::None
+        }
+        Key::Char(c) => {
+            // Don't let reserved digits leak into feedback. Other
+            // printable chars accumulate.
+            feedback.push(c);
+            Action::None
+        }
         _ => Action::None,
     }
 }

@@ -147,6 +147,9 @@ pub async fn run(cfg: Config) -> Result<()> {
     let mut theme_name: String = "default-dark".to_string();
     // v0.4.5: tool-output overlay toggle (X).
     let mut tool_output_open: bool = false;
+    // v0.4.5: free-text feedback typed while a permission widget is shown.
+    // Cleared each time a permission is resolved.
+    let mut permission_feedback: String = String::new();
 
     // Replay state: loaded but not played-through. We start paused at
     // position 0 so the user can scrub controls before content shows.
@@ -345,7 +348,7 @@ pub async fn run(cfg: Config) -> Result<()> {
             let action = if search_open {
                 input::handle_key_search(key)
             } else if model.pending_permission().is_some() {
-                input::handle_key_permission(key)
+                input::handle_key_permission(key, &mut permission_feedback)
             } else if inspector_open
                 && matches!(
                     key,
@@ -434,6 +437,14 @@ pub async fn run(cfg: Config) -> Result<()> {
                         .map(|p| p.request_id.clone())
                         .unwrap_or_default();
                     if let Some(tx) = outbound_tx.as_ref() {
+                        let mut payload = serde_json::json!({
+                            "request_id": request_id,
+                            "choice": choice_str,
+                        });
+                        if !permission_feedback.trim().is_empty() {
+                            payload["feedback"] =
+                                serde_json::Value::String(permission_feedback.trim().to_string());
+                        }
                         let ev = Event {
                             id: Uuid::new_v4(),
                             session_id,
@@ -441,10 +452,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                             timestamp_ms: now_ms(),
                             schema_version: SCHEMA_VERSION,
                             event_type: EventType::PermissionResponse,
-                            payload: serde_json::json!({
-                                "request_id": request_id,
-                                "choice": choice_str,
-                            }),
+                            payload,
                         };
                         let _ = tx.send(OutgoingEvent(ev)).await;
                     } else {
@@ -462,6 +470,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                         let _ = persist_tx.send(ev).await;
                     }
                     model.clear_pending_permission();
+                    permission_feedback.clear();
                     model.mark_dirty();
                 }
                 input::Action::ReplayTogglePlay => {
@@ -843,6 +852,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                         metrics,
                         theme,
                         tool_output_open,
+                        &permission_feedback,
                     )?;
                     last_frame_time_us = draw_start.elapsed().as_micros();
                     model.mark_clean();
