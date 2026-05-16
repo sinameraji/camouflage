@@ -143,6 +143,9 @@ pub async fn run(cfg: Config) -> Result<()> {
     let mut last_rate_window = std::time::Instant::now();
     let mut last_frame_time_us: u128 = 0;
 
+    // v0.4: active theme name (cycled with `T`).
+    let mut theme_name: String = "default-dark".to_string();
+
     // Replay state: loaded but not played-through. We start paused at
     // position 0 so the user can scrub controls before content shows.
     let mut replay_state: Option<ReplayState> = None;
@@ -517,6 +520,11 @@ pub async fn run(cfg: Config) -> Result<()> {
                     metrics_open = !metrics_open;
                     model.mark_dirty();
                 }
+                input::Action::CycleTheme => {
+                    theme_name = camouflage_renderer::theme::Theme::next_after(&theme_name).to_string();
+                    status = format!("theme: {theme_name}");
+                    model.mark_dirty();
+                }
                 input::Action::InspectorCursorUp => {
                     if inspector_open {
                         inspector_cursor = inspector_cursor.saturating_add(1)
@@ -804,6 +812,10 @@ pub async fn run(cfg: Config) -> Result<()> {
                         None
                     };
                     let draw_start = std::time::Instant::now();
+                    let theme = camouflage_renderer::theme::Theme::builtin(&theme_name)
+                        .unwrap_or_else(|| {
+                            camouflage_renderer::theme::Theme::builtin("default-dark").unwrap()
+                        });
                     draw::render(
                         &mut terminal,
                         &model,
@@ -816,6 +828,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                         search_view,
                         help_open,
                         metrics,
+                        theme,
                     )?;
                     last_frame_time_us = draw_start.elapsed().as_micros();
                     model.mark_clean();

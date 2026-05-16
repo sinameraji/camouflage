@@ -8,6 +8,7 @@ pub mod markdown;
 pub mod viewport;
 pub mod model;
 pub mod snapshot;
+pub mod theme;
 
 pub use model::{
     format_elapsed_ms, reconstruct_rows, BackgroundTask, BackgroundTaskState, PendingPermission,

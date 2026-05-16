@@ -44,6 +44,8 @@ pub enum Action {
     ToggleHelp,
     /// v0.4+: toggle the live-metrics overlay (events/sec, frame time, RSS).
     ToggleMetrics,
+    /// v0.4+: cycle to the next built-in theme.
+    CycleTheme,
 }
 
 /// Variant of `handle_key` used while a PermissionRequested is pending.
@@ -74,6 +76,7 @@ pub fn handle_key(k: Key, buf: &mut String) -> Action {
         Key::Char('\'') if buf.is_empty() => Action::BookmarkNext,
         Key::Char('?') if buf.is_empty() => Action::ToggleHelp,
         Key::Char('M') if buf.is_empty() => Action::ToggleMetrics,
+        Key::Char('T') if buf.is_empty() => Action::CycleTheme,
         Key::Char(c) => {
             buf.push(c);
             Action::None

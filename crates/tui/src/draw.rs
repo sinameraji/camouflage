@@ -146,6 +146,7 @@ pub fn render<B: Backend>(
     search: Option<SearchView<'_>>,
     help_open: bool,
     metrics: Option<MetricsView>,
+    theme: &camouflage_renderer::theme::Theme,
 ) -> Result<()> {
     terminal.draw(|f| {
         let area = f.area();
@@ -240,7 +241,7 @@ pub fn render<B: Backend>(
         let active_tools = model.tools();
         let lines: Vec<Line> = rows_taken
             .iter()
-            .map(|r| row_to_line(r, frame, active_tools))
+            .map(|r| row_to_line(r, frame, active_tools, theme))
             .collect();
         // Scroll so the bottom of the wrapped content sits on the bottom of
         // the chunk. `visual_so_far` is the total visual lines of the slice;
@@ -512,6 +513,7 @@ fn draw_help_overlay(f: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
         kv("1 / 2 / 3", "permission: allow once / session / deny", key, dim),
         kv("r", "reload (in --replay mode: restart)", key, dim),
         kv("M", "toggle live-metrics overlay", key, dim),
+        kv("T", "cycle theme", key, dim),
         kv("q · Ctrl+C", "quit", key, dim),
         Line::from(""),
         Line::from(vec![
@@ -588,17 +590,28 @@ fn row_to_line<'a>(
     r: &'a camouflage_renderer::Row,
     frame: u64,
     active_tools: &std::collections::HashMap<String, camouflage_renderer::ToolState>,
+    theme: &camouflage_renderer::theme::Theme,
 ) -> Line<'a> {
+    let spinner_color = rgb_to_color(theme.spinner);
+    let user_color = rgb_to_color(theme.user);
+    let assistant_color = rgb_to_color(theme.assistant);
+    let tool_color = rgb_to_color(theme.tool);
+    let error_color = rgb_to_color(theme.error);
+    let system_color = rgb_to_color(theme.system);
+    let marker_color = rgb_to_color(theme.marker);
+    let diff_add = rgb_to_color(theme.diff_add);
+    let diff_remove = rgb_to_color(theme.diff_remove);
+    let diff_hunk = rgb_to_color(theme.diff_hunk);
     // Assistant row that's open (active stream) but has no text yet → spinner only.
     // Tool row whose ToolState is not yet finished → spinner instead of ✓.
     let (prefix, color) = match r.kind {
-        RowKind::System => ("·".to_string(), Color::DarkGray),
-        RowKind::User => ("›".to_string(), Color::Cyan),
+        RowKind::System => ("·".to_string(), system_color),
+        RowKind::User => ("›".to_string(), user_color),
         RowKind::Assistant => {
             if r.text.is_empty() {
-                (spinner_glyph(frame).to_string(), Color::Yellow)
+                (spinner_glyph(frame).to_string(), spinner_color)
             } else {
-                (" ".to_string(), Color::White)
+                (" ".to_string(), assistant_color)
             }
         }
         RowKind::Tool => {
@@ -609,21 +622,20 @@ fn row_to_line<'a>(
                 .map(|st| !st.finished)
                 .unwrap_or(false);
             if unfinished {
-                (spinner_glyph(frame).to_string(), Color::Yellow)
+                (spinner_glyph(frame).to_string(), spinner_color)
             } else {
-                ("⚙".to_string(), Color::Magenta)
+                ("⚙".to_string(), tool_color)
             }
         }
-        RowKind::Error => ("✗".to_string(), Color::Red),
-        RowKind::Marker => ("¶".to_string(), Color::Blue),
+        RowKind::Error => ("✗".to_string(), error_color),
+        RowKind::Marker => ("¶".to_string(), marker_color),
         RowKind::Diff => {
-            // First character of text is the unified-diff marker.
             let marker = r.text.chars().next().unwrap_or(' ');
             let (glyph, c) = match marker {
-                '+' => (" ", Color::Green),
-                '-' => (" ", Color::Red),
-                '@' => (" ", Color::Cyan),
-                _ => (" ", Color::DarkGray),
+                '+' => (" ", diff_add),
+                '-' => (" ", diff_remove),
+                '@' => (" ", diff_hunk),
+                _ => (" ", system_color),
             };
             (glyph.to_string(), c)
         }
@@ -634,18 +646,18 @@ fn row_to_line<'a>(
         Span::styled(format!("{} ", prefix), Style::default().fg(color)),
     ];
     if r.kind == RowKind::Assistant && !r.text.is_empty() {
+        let code_fg = rgb_to_color(theme.code_fg);
+        let code_bg = rgb_to_color(theme.code_bg);
         for sp in parse_inline(&r.text) {
             let style = match sp.style {
-                InlineStyle::Plain => Style::default().fg(Color::White),
+                InlineStyle::Plain => Style::default().fg(assistant_color),
                 InlineStyle::Bold => Style::default()
-                    .fg(Color::White)
+                    .fg(assistant_color)
                     .add_modifier(Modifier::BOLD),
                 InlineStyle::Italic => Style::default()
-                    .fg(Color::White)
+                    .fg(assistant_color)
                     .add_modifier(Modifier::ITALIC),
-                InlineStyle::Code => Style::default()
-                    .fg(Color::Cyan)
-                    .bg(Color::Rgb(28, 33, 40)),
+                InlineStyle::Code => Style::default().fg(code_fg).bg(code_bg),
             };
             spans.push(Span::styled(sp.text, style));
         }
@@ -670,6 +682,10 @@ fn row_to_line<'a>(
         }
     }
     Line::from(spans)
+}
+
+fn rgb_to_color(rgb: camouflage_renderer::theme::Rgb) -> Color {
+    Color::Rgb(rgb.0, rgb.1, rgb.2)
 }
 
 fn short_uuid(s: &str) -> String {
