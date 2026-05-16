@@ -22,4 +22,6 @@
 {"event_type":"ViewportMarker","payload":{"label":"end of warmup"}}
 {"event_type":"UserInputSubmitted","payload":{"text":"follow-up question"}}
 {"event_type":"PermissionResponse","payload":{"request_id":"perm-1","choice":"allow_once"}}
+{"event_type":"SlashCommandsRegistered","payload":{"commands":[{"name":"compact","description":"compact the session"},{"name":"clear","description":"clear the transcript"}]}}
+{"event_type":"MentionCandidatesRegistered","payload":{"candidates":[{"token":"src/auth/login.ts","kind":"file"},{"token":"AuthGuard","kind":"symbol"}]}}
 {"event_type":"SessionEnded","payload":{}}

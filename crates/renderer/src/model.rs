@@ -87,6 +87,26 @@ pub struct RenderModel {
     /// v0.1.5+ — active background tasks shown in the ribbon above the
     /// status line. Insertion order preserved for stable display.
     background_tasks: Vec<BackgroundTask>,
+    /// v0.4.5+ — slash-commands the host advertises. The TUI shows a
+    /// picker when the input buffer starts with `/`. Last-write-wins.
+    slash_commands: Vec<SlashCmdEntry>,
+    /// v0.4.5+ — `@`-mention candidates the host advertises. The TUI
+    /// shows a picker when the input cursor is just after an `@`.
+    mention_candidates: Vec<MentionEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlashCmdEntry {
+    pub name: String,
+    pub description: String,
+    pub args_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MentionEntry {
+    pub token: String,
+    pub label: Option<String>,
+    pub kind: Option<String>,
 }
 
 /// State for an in-flight permission request. Cleared once the renderer
@@ -148,6 +168,8 @@ impl RenderModel {
             status_segments: BTreeMap::new(),
             pending_permission: None,
             background_tasks: Vec::new(),
+            slash_commands: Vec::new(),
+            mention_candidates: Vec::new(),
         }
     }
 
@@ -236,6 +258,14 @@ impl RenderModel {
     }
 
     /// Active background tasks (ribbon between transcript and status).
+    pub fn slash_commands(&self) -> &[SlashCmdEntry] {
+        &self.slash_commands
+    }
+
+    pub fn mention_candidates(&self) -> &[MentionEntry] {
+        &self.mention_candidates
+    }
+
     pub fn background_tasks(&self) -> &[BackgroundTask] {
         &self.background_tasks
     }
@@ -695,6 +725,40 @@ impl RenderModel {
                                 progress,
                             });
                         }
+                    }
+                }
+                self.dirty = true;
+            }
+            EventType::SlashCommandsRegistered => {
+                self.slash_commands.clear();
+                if let Some(arr) = ev.payload.get("commands").and_then(|v| v.as_array()) {
+                    for v in arr {
+                        let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("");
+                        if name.is_empty() {
+                            continue;
+                        }
+                        self.slash_commands.push(SlashCmdEntry {
+                            name: name.to_string(),
+                            description: v.get("description").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                            args_hint: v.get("args_hint").and_then(|x| x.as_str()).map(str::to_string),
+                        });
+                    }
+                }
+                self.dirty = true;
+            }
+            EventType::MentionCandidatesRegistered => {
+                self.mention_candidates.clear();
+                if let Some(arr) = ev.payload.get("candidates").and_then(|v| v.as_array()) {
+                    for v in arr {
+                        let token = v.get("token").and_then(|x| x.as_str()).unwrap_or("");
+                        if token.is_empty() {
+                            continue;
+                        }
+                        self.mention_candidates.push(MentionEntry {
+                            token: token.to_string(),
+                            label: v.get("label").and_then(|x| x.as_str()).map(str::to_string),
+                            kind: v.get("kind").and_then(|x| x.as_str()).map(str::to_string),
+                        });
                     }
                 }
                 self.dirty = true;

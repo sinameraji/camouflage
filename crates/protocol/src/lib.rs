@@ -70,6 +70,17 @@ pub enum EventType {
     UserInputSubmitted,
     /// v0.1.5+ — Renderer → host: user's response to a PermissionRequested.
     PermissionResponse,
+    /// v0.4.5+ — Host → renderer: registers the list of slash-commands the
+    /// host accepts (e.g. /compact, /clear, /help). The TUI shows a picker
+    /// overlay when the user types `/` at the start of an input buffer.
+    /// Selection is delivered back via the existing `UserInputSubmitted`
+    /// path (`/commandname args…`) — no new outbound event is needed.
+    SlashCommandsRegistered,
+    /// v0.4.5+ — Host → renderer: registers `@`-mention candidates (e.g.
+    /// file paths, symbol names). When the user types `@` mid-input, the
+    /// picker fuzzy-matches against these. Same submission story as
+    /// SlashCommandsRegistered.
+    MentionCandidatesRegistered,
 }
 
 impl EventType {
@@ -97,6 +108,8 @@ impl EventType {
             EventType::BackgroundTaskUpdate => "BackgroundTaskUpdate",
             EventType::UserInputSubmitted => "UserInputSubmitted",
             EventType::PermissionResponse => "PermissionResponse",
+            EventType::SlashCommandsRegistered => "SlashCommandsRegistered",
+            EventType::MentionCandidatesRegistered => "MentionCandidatesRegistered",
         }
     }
 
@@ -264,6 +277,42 @@ pub mod payloads {
         #[serde(default)]
         pub feedback: Option<String>,
     }
+
+    /// v0.4.5+ — one entry in a SlashCommandsRegistered payload.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct SlashCommand {
+        /// The literal command name *without* the leading slash, e.g. `compact`.
+        pub name: String,
+        /// One-line description shown in the picker.
+        #[serde(default)]
+        pub description: String,
+        /// Optional arg hint shown after the name, e.g. `<path>`.
+        #[serde(default)]
+        pub args_hint: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct SlashCommandsRegistered {
+        pub commands: Vec<SlashCommand>,
+    }
+
+    /// v0.4.5+ — one entry in a MentionCandidatesRegistered payload.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct MentionCandidate {
+        /// What gets inserted into the input (e.g. `src/auth/login.ts`).
+        pub token: String,
+        /// Optional human-readable label shown alongside; defaults to `token`.
+        #[serde(default)]
+        pub label: Option<String>,
+        /// Optional category tag (e.g. `file`, `symbol`, `commit`).
+        #[serde(default)]
+        pub kind: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct MentionCandidatesRegistered {
+        pub candidates: Vec<MentionCandidate>,
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -314,8 +363,10 @@ mod tests {
             EventType::BackgroundTaskUpdate,
             EventType::UserInputSubmitted,
             EventType::PermissionResponse,
+            EventType::SlashCommandsRegistered,
+            EventType::MentionCandidatesRegistered,
         ];
-        assert_eq!(types.len(), 22);
+        assert_eq!(types.len(), 24);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();

@@ -150,6 +150,8 @@ pub async fn run(cfg: Config) -> Result<()> {
     // v0.4.5: free-text feedback typed while a permission widget is shown.
     // Cleared each time a permission is resolved.
     let mut permission_feedback: String = String::new();
+    // v0.4.5: slash-picker selection cursor (within the *filtered* list).
+    let mut slash_picker_index: usize = 0;
 
     // Replay state: loaded but not played-through. We start paused at
     // position 0 so the user can scrub controls before content shows.
@@ -342,6 +344,50 @@ pub async fn run(cfg: Config) -> Result<()> {
     loop {
         // Non-blocking poll for keys before each frame.
         while let Ok(key) = key_rx.try_recv() {
+            // Slash-picker short-circuit: when the input starts with `/` and
+            // the host has registered slash commands, ↑/↓/Enter drive the
+            // picker instead of falling through to the normal handler.
+            let slash_active = input_buf.starts_with('/')
+                && !model.slash_commands().is_empty()
+                && !search_open
+                && model.pending_permission().is_none();
+            if slash_active {
+                let needle: String = input_buf.chars().skip(1).collect();
+                let matches: Vec<&camouflage_renderer::model::SlashCmdEntry> = model
+                    .slash_commands()
+                    .iter()
+                    .filter(|c| c.name.starts_with(&needle))
+                    .collect();
+                if !matches.is_empty() {
+                    match key {
+                        crate::tty::Key::Up => {
+                            slash_picker_index = slash_picker_index.saturating_sub(1);
+                            model.mark_dirty();
+                            continue;
+                        }
+                        crate::tty::Key::Down => {
+                            slash_picker_index = (slash_picker_index + 1).min(matches.len() - 1);
+                            model.mark_dirty();
+                            continue;
+                        }
+                        crate::tty::Key::Enter => {
+                            let idx = slash_picker_index.min(matches.len() - 1);
+                            input_buf = format!("/{} ", matches[idx].name);
+                            slash_picker_index = 0;
+                            model.mark_dirty();
+                            continue;
+                        }
+                        _ => { /* fall through to normal handler */ }
+                    }
+                }
+                // Reset selection any time the matches set shrinks below the
+                // current index (e.g. user typed more chars).
+                if slash_picker_index >= matches.len().max(1) {
+                    slash_picker_index = 0;
+                }
+            } else {
+                slash_picker_index = 0;
+            }
             // Priority order: search prompt → pending permission widget →
             // inspector cursor (if open) → replay controls (if --replay) →
             // normal handler.
@@ -853,6 +899,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                         theme,
                         tool_output_open,
                         &permission_feedback,
+                        slash_picker_index,
                     )?;
                     last_frame_time_us = draw_start.elapsed().as_micros();
                     model.mark_clean();

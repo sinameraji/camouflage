@@ -114,6 +114,8 @@ mod tests {
             EventType::BackgroundTaskUpdate,
             EventType::UserInputSubmitted,
             EventType::PermissionResponse,
+            EventType::SlashCommandsRegistered,
+            EventType::MentionCandidatesRegistered,
         ];
         for v in variants {
             let needle = format!("\"event_type\":\"{}\"", v.as_str());

@@ -32,7 +32,9 @@ export type EventType =
   | "BackgroundTaskUpdate"
   | "ViewportMarker"
   | "UserInputSubmitted"
-  | "PermissionResponse";
+  | "PermissionResponse"
+  | "SlashCommandsRegistered"
+  | "MentionCandidatesRegistered";
 
 export type Direction = "inbound" | "outbound";
 
@@ -111,6 +113,20 @@ export type PermissionResponse = {
   feedback?: string;
 };
 
+export type SlashCommand = {
+  name: string;
+  description?: string;
+  args_hint?: string;
+};
+export type SlashCommandsRegistered = { commands: SlashCommand[] };
+
+export type MentionCandidate = {
+  token: string;
+  label?: string;
+  kind?: string;
+};
+export type MentionCandidatesRegistered = { candidates: MentionCandidate[] };
+
 // Tagged union --------------------------------------------------------------
 
 export type Event = EnvelopeMeta &
@@ -137,6 +153,8 @@ export type Event = EnvelopeMeta &
     | { event_type: "ViewportMarker"; payload: ViewportMarker }
     | { event_type: "UserInputSubmitted"; payload: UserInputSubmitted }
     | { event_type: "PermissionResponse"; payload: PermissionResponse }
+    | { event_type: "SlashCommandsRegistered"; payload: SlashCommandsRegistered }
+    | { event_type: "MentionCandidatesRegistered"; payload: MentionCandidatesRegistered }
   );
 
 // Reader --------------------------------------------------------------------

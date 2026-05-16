@@ -149,6 +149,7 @@ pub fn render<B: Backend>(
     theme: &camouflage_renderer::theme::Theme,
     tool_output_open: bool,
     permission_feedback: &str,
+    slash_picker_index: usize,
 ) -> Result<()> {
     terminal.draw(|f| {
         let area = f.area();
@@ -494,6 +495,12 @@ pub fn render<B: Backend>(
         if tool_output_open {
             draw_tool_output_overlay(f, area, model);
         }
+        if input_buf.starts_with('/') && !model.slash_commands().is_empty()
+            && model.pending_permission().is_none()
+            && search.is_none()
+        {
+            draw_slash_picker_overlay(f, area, input_buf, model, slash_picker_index);
+        }
     })?;
     Ok(())
 }
@@ -558,6 +565,65 @@ fn draw_help_overlay(f: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
                 .borders(Borders::ALL)
                 .title(" help ")
                 .border_style(Style::default().fg(Color::Yellow)),
+        );
+    f.render_widget(widget, overlay);
+}
+
+fn draw_slash_picker_overlay(
+    f: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    input_buf: &str,
+    model: &RenderModel,
+    selected: usize,
+) {
+    let needle: String = input_buf.chars().skip(1).collect();
+    let matches: Vec<&camouflage_renderer::model::SlashCmdEntry> = model
+        .slash_commands()
+        .iter()
+        .filter(|c| c.name.starts_with(&needle))
+        .collect();
+    if matches.is_empty() {
+        return;
+    }
+    let visible = matches.len().min(8);
+    let w: u16 = 50;
+    let h: u16 = (visible as u16) + 2; // entries + border
+    if area.width < w + 2 || area.height < h + 6 {
+        return;
+    }
+    // Anchor above the input box (which is the bottom 3+ rows).
+    let bottom_height: u16 = 5; // approximate; place above the input
+    let x = area.x + 2;
+    let y = area.y.saturating_add(area.height).saturating_sub(bottom_height).saturating_sub(h);
+    let overlay = ratatui::layout::Rect { x, y, width: w, height: h };
+    f.render_widget(Clear, overlay);
+
+    let dim = Style::default().fg(Color::DarkGray);
+    let sel = Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let plain = Style::default().fg(Color::White);
+
+    let sel_idx = selected.min(matches.len() - 1);
+    let lines: Vec<Line> = matches
+        .iter()
+        .take(visible)
+        .enumerate()
+        .map(|(i, c)| {
+            let style = if i == sel_idx { sel } else { plain };
+            let hint = c.args_hint.as_deref().unwrap_or("");
+            Line::from(vec![
+                Span::styled(format!(" /{}", c.name), style),
+                Span::styled(if hint.is_empty() { "  ".to_string() } else { format!(" {}  ", hint) }, dim),
+                Span::styled(c.description.clone(), dim),
+            ])
+        })
+        .collect();
+
+    let widget = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" slash commands  ↑/↓ select  Enter insert ")
+                .border_style(Style::default().fg(Color::Cyan)),
         );
     f.render_widget(widget, overlay);
 }

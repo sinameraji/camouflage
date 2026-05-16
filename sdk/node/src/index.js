@@ -15,6 +15,7 @@ const KNOWN_TYPES = new Set([
   "PermissionRequested", "PermissionGranted", "PermissionDenied",
   "RuntimeError", "StatusUpdate", "BackgroundTaskUpdate", "ViewportMarker",
   "UserInputSubmitted", "PermissionResponse",
+  "SlashCommandsRegistered", "MentionCandidatesRegistered",
 ]);
 
 /**

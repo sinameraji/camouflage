@@ -104,6 +104,12 @@ fn validate_payload(event_type: EventType, payload: serde_json::Value) -> Result
         PermissionResponse => {
             serde_json::from_value::<payloads::PermissionResponse>(payload)?;
         }
+        SlashCommandsRegistered => {
+            serde_json::from_value::<payloads::SlashCommandsRegistered>(payload)?;
+        }
+        MentionCandidatesRegistered => {
+            serde_json::from_value::<payloads::MentionCandidatesRegistered>(payload)?;
+        }
         // Events without typed payloads — any JSON value is accepted.
         SessionStarted
         | SessionEnded
