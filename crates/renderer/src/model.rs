@@ -1,5 +1,5 @@
 use camouflage_protocol::{Event, EventType};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 /// Maximum number of rendered rows the model retains. Older rows are evicted;
 /// they remain in the persistence layer and are paged back in on scroll.
@@ -60,6 +60,9 @@ pub struct RenderModel {
     /// Reconstructed older rows, displayed *before* `rows` in the viewport.
     /// Grows as the user scrolls upward; cleared on `clear_history`.
     history: Vec<Row>,
+    /// v0.1.5+ — host-supplied status-bar segments. Renderer draws these in
+    /// a fixed conventional order plus any extras in registration order.
+    status_segments: BTreeMap<String, String>,
 }
 
 impl RenderModel {
@@ -80,6 +83,7 @@ impl RenderModel {
             tools: HashMap::new(),
             dirty: true,
             history: Vec::new(),
+            status_segments: BTreeMap::new(),
         }
     }
 
@@ -154,6 +158,11 @@ impl RenderModel {
 
     pub fn tools(&self) -> &HashMap<String, ToolState> {
         &self.tools
+    }
+
+    /// Status-bar segments as currently set by the host.
+    pub fn status_segments(&self) -> &BTreeMap<String, String> {
+        &self.status_segments
     }
 
     fn push_row(&mut self, row: Row) -> usize {
@@ -441,6 +450,25 @@ impl RenderModel {
                     tool_id: None,
                 });
             }
+            EventType::StatusUpdate => {
+                if let Some(segs) = ev.payload.get("segments").and_then(|v| v.as_object()) {
+                    for (k, v) in segs {
+                        if let Some(s) = v.as_str() {
+                            if s.is_empty() {
+                                self.status_segments.remove(k);
+                            } else {
+                                self.status_segments.insert(k.clone(), s.to_string());
+                            }
+                        }
+                    }
+                    self.dirty = true;
+                }
+            }
+            // Slice E will wire these properly; for now they don't affect the model.
+            EventType::BackgroundTaskUpdate => {}
+            // Outbound events never reach apply() in practice, but be tolerant
+            // (a replayed session log might contain them).
+            EventType::UserInputSubmitted | EventType::PermissionResponse => {}
         }
         true
     }
@@ -566,6 +594,24 @@ mod tests {
         m.clear_history();
         assert_eq!(m.combined_len(), 30);
         assert_eq!(m.history_rows().len(), 0);
+    }
+
+    #[test]
+    fn status_update_merges_and_removes_segments() {
+        let mut m = RenderModel::new();
+        m.apply(&ev(0, EventType::StatusUpdate, json!({
+            "segments": {"mode": "edit", "phase": "thinking", "tokens": "in 12k"}
+        })));
+        assert_eq!(m.status_segments().get("mode").map(|s| s.as_str()), Some("edit"));
+        assert_eq!(m.status_segments().len(), 3);
+
+        // Override and remove (empty value = remove).
+        m.apply(&ev(1, EventType::StatusUpdate, json!({
+            "segments": {"phase": "streaming", "tokens": ""}
+        })));
+        assert_eq!(m.status_segments().get("phase").map(|s| s.as_str()), Some("streaming"));
+        assert!(m.status_segments().get("tokens").is_none());
+        assert_eq!(m.status_segments().len(), 2);
     }
 
     #[test]

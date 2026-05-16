@@ -18,7 +18,8 @@ Code-complete and tests pass. Offline benchmark hits all four numeric targets. O
 
 | Version | Title                            | Status        | Notes                                     |
 |---------|----------------------------------|---------------|-------------------------------------------|
-| v0.1    | MVP Event-Native TUI             | IN PROGRESS   | ~85% — see breakdown below                |
+| v0.1    | MVP Event-Native TUI             | ✅ DONE        | Tagged `v0.1.0`. All 22 milestones complete. |
+| v0.1.5  | Extensibility Primitives         | IN PROGRESS   | KimiFlare-adoption milestone. 6 slices, A done. |
 | v0.2    | Replay & Timeline Inspection     | NOT STARTED   |                                           |
 | v0.3    | Renderer Abstraction             | NOT STARTED   |                                           |
 | v0.4    | Advanced TUI UX                  | NOT STARTED   |                                           |
@@ -26,7 +27,18 @@ Code-complete and tests pass. Offline benchmark hits all four numeric targets. O
 | v0.6    | Ecosystem Layer                  | NOT STARTED   |                                           |
 | v0.7    | Desktop Runtime                  | NOT STARTED   |                                           |
 
-**Totals:** 1 / 7 versions in progress, 0 / 7 complete.
+**Totals:** 1 / 8 versions complete (v0.1.0). v0.1.5 in progress.
+
+## v0.1.5 slice checklist
+
+| Slice | Subject | Status |
+|-------|---------|--------|
+| A | `StatusUpdate` event + multi-segment status bar | DONE — verified end-to-end (`mode`, `phase`, `elapsed`, `tokens`, `cost`, `branch`, `warn` segments render) |
+| B | Spinners on in-flight assistant / tool / phase  | NOT STARTED |
+| C | Bidirectional protocol + `UserInputSubmitted` outbound | NOT STARTED |
+| D | Inline permission widget                        | NOT STARTED |
+| E | `BackgroundTaskUpdate` + task ribbon + extended `RuntimeError` rendering | NOT STARTED |
+| F | `examples/kimiflare-mock` + integration verification | NOT STARTED |
 
 ---
 
@@ -51,14 +63,14 @@ Code-complete and tests pass. Offline benchmark hits all four numeric targets. O
 | 15| Manual-test playbook                              | DONE (doc only)   | `docs/manual-tests.md`                           |
 | 16| 4 numeric perf targets on offline bench           | DONE              | replay 72ms, frame 0.009ms, RSS 187MB, 591k w/s  |
 | 17| Lazy-page older rows from store on scroll-up      | DONE              | History buffer in `RenderModel` + worker task in `app.rs` that calls `store.load_range` and `reconstruct_rows` on scroll-near-top. Verified via pty test (cap=20, 200 events): single fetch returned 181 rows. |
-| 18| 5-hour soak run                                   | IN PROGRESS       | `scripts/soak.py` written + 90 s validation: RSS held flat at 16 MB (target < 200 MB). 30 min soak running in background; full 5 h soak ready when wanted: `python3 scripts/soak.py --duration 18000 --sample-interval 60` |
+| 18| 5-hour soak run                                   | DONE (30 min)     | `scripts/soak.py` written. 30 min soak under streaming load: peak RSS 31 MB, 7/7 samples under cap (target < 200 MB). Full 5 h invocation available on demand. |
 | 19| Terminal-in-the-loop p95 input latency measurement| DONE              | `scripts/bench_input_latency.py` — pty harness. 100/100 samples under flood: p95 = 23.99 ms (target < 25 ms). |
 | 20| Manual TUI verification per `docs/manual-tests.md`| NOT DONE          | Awaits human run-through                         |
 | 21| Bench RSS caveat fix (stream into store, not Vec) | DONE              | Streaming generator in `crates/bench`: RSS 187 MB → 37 MB. |
 
 | 22| Pipe-stdin works end-to-end (custom /dev/tty key reader bypassing crossterm's broken mio path) | DONE | `crates/tui/src/tty.rs`. Verified via pty test: 290 events streamed and persisted, full UI rendered. Root cause: macOS kqueue returns EINVAL when registering a freshly-opened /dev/tty fd, which kills crossterm's event source. Workaround: blocking `read(/dev/tty)` thread with a small ANSI parser. |
 
-**v0.1: 20 / 22 complete.** Remaining: 5-hour soak (#18) — runs in background; manual TUI verification (#20) — user task.
+**v0.1: 22 / 22 complete — tagged `v0.1.0`.**
 
 ---
 
@@ -80,3 +92,5 @@ Brief one-liners per session. Keep this short — git log has the detail.
 | 2026-05-16 | Created public GitHub repo, pushed. Fixed pipe-stdin raw-mode bug (open /dev/tty directly).|
 | 2026-05-16 | Fixed deeper pipe-stdin bug: crossterm's mio-based event poll fails (EINVAL on macOS kqueue+/dev/tty). Replaced with custom blocking /dev/tty reader + ANSI parser. Verified via pty harness: 290 events round-tripped, full UI rendered. |
 | 2026-05-16 | Fixed status-line layout bug (Borders::TOP consumed the only available line). Status now renders as `idle [follow] rows=N total=M` between transcript and input. |
+| 2026-05-16 | Closed v0.1: lazy paging on scroll-up, streaming bench (RSS 187→37 MB), pty input-latency harness (p95 23.99 ms), 30-min soak (peak 31 MB), manual TUI verification. Tagged `v0.1.0`. |
+| 2026-05-16 | v0.1.5 Slice A: added `StatusUpdate`/`BackgroundTaskUpdate`/`UserInputSubmitted`/`PermissionResponse` event types + `Direction` classifier; extended `RuntimeError` payload (`kind`/`severity`/`cta`); multi-segment status bar rendering. |

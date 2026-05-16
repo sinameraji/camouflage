@@ -61,6 +61,15 @@ pub enum EventType {
     RuntimeError,
     SessionCompacted,
     ViewportMarker,
+    /// v0.1.5+ — Host → renderer: status-bar segment key/value updates.
+    StatusUpdate,
+    /// v0.1.5+ — Host → renderer: background task lifecycle (skills index,
+    /// memory load, etc.) shown in the task ribbon above the status line.
+    BackgroundTaskUpdate,
+    /// v0.1.5+ — Renderer → host: user submitted input from the input box.
+    UserInputSubmitted,
+    /// v0.1.5+ — Renderer → host: user's response to a PermissionRequested.
+    PermissionResponse,
 }
 
 impl EventType {
@@ -84,8 +93,29 @@ impl EventType {
             EventType::RuntimeError => "RuntimeError",
             EventType::SessionCompacted => "SessionCompacted",
             EventType::ViewportMarker => "ViewportMarker",
+            EventType::StatusUpdate => "StatusUpdate",
+            EventType::BackgroundTaskUpdate => "BackgroundTaskUpdate",
+            EventType::UserInputSubmitted => "UserInputSubmitted",
+            EventType::PermissionResponse => "PermissionResponse",
         }
     }
+
+    /// Direction this event flows on the wire.
+    pub fn direction(&self) -> Direction {
+        match self {
+            EventType::UserInputSubmitted | EventType::PermissionResponse => Direction::Outbound,
+            _ => Direction::Inbound,
+        }
+    }
+}
+
+/// On-wire direction relative to the renderer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    /// Host → renderer (NDJSON read from stdin).
+    Inbound,
+    /// Renderer → host (NDJSON written to stdout).
+    Outbound,
 }
 
 pub mod payloads {
@@ -134,7 +164,105 @@ pub mod payloads {
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub struct RuntimeError {
         pub message: String,
+        #[serde(default)]
         pub source: Option<String>,
+        /// v0.1.5+ — categorises the error so the renderer picks an
+        /// appropriate visual treatment. Optional for backward compat.
+        #[serde(default)]
+        pub kind: Option<RuntimeErrorKind>,
+        #[serde(default)]
+        pub severity: Option<Severity>,
+        /// Call-to-action shown beneath the error (e.g. "type /report").
+        #[serde(default)]
+        pub cta: Option<Cta>,
+    }
+
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "snake_case")]
+    pub enum RuntimeErrorKind {
+        Generic,
+        ApiError,
+        ServiceEnded,
+        QuotaExhausted,
+    }
+
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "snake_case")]
+    pub enum Severity {
+        Info,
+        Warn,
+        Error,
+        Fatal,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct Cta {
+        pub label: String,
+        pub action_id: String,
+    }
+
+    /// v0.1.5+ — host updates one or more status-bar segments.
+    ///
+    /// Renderer maintains a key→value map. A segment with an empty value is
+    /// removed. Conventional keys (renderer treats them as well-known when
+    /// composing the status line in order):
+    ///
+    /// - `mode`     — short badge (`edit`, `plan`, `auto`)
+    /// - `phase`    — `idle`, `thinking`, `streaming`, `tool`, `error`
+    /// - `elapsed`  — already-formatted elapsed time (e.g. `1m 23s`)
+    /// - `tokens`   — e.g. `in 12k`
+    /// - `cost`     — e.g. `$0.03`
+    /// - `branch`   — git branch
+    /// - `warn`     — extra warning text (shown in yellow)
+    ///
+    /// Unknown keys are still displayed (in registration order) so hosts can
+    /// freely extend the bar.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct StatusUpdate {
+        pub segments: std::collections::BTreeMap<String, String>,
+    }
+
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "snake_case")]
+    pub enum BackgroundTaskState {
+        Running,
+        Done,
+        Error,
+    }
+
+    /// v0.1.5+ — background task lifecycle (skill indexing, memory load…).
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    pub struct BackgroundTaskUpdate {
+        pub task_id: String,
+        pub label: String,
+        pub state: BackgroundTaskState,
+        /// 0.0..=1.0 if known, else None.
+        #[serde(default)]
+        pub progress: Option<f32>,
+    }
+
+    /// v0.1.5+ — renderer → host: user submitted text from the input box.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct UserInputSubmitted {
+        pub text: String,
+    }
+
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "snake_case")]
+    pub enum PermissionChoice {
+        AllowOnce,
+        AllowSession,
+        Deny,
+    }
+
+    /// v0.1.5+ — renderer → host: response to a PermissionRequested event.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct PermissionResponse {
+        /// Matches `request_id` from the original PermissionRequested payload.
+        pub request_id: String,
+        pub choice: PermissionChoice,
+        #[serde(default)]
+        pub feedback: Option<String>,
     }
 }
 
@@ -182,14 +310,63 @@ mod tests {
             EventType::RuntimeError,
             EventType::SessionCompacted,
             EventType::ViewportMarker,
+            EventType::StatusUpdate,
+            EventType::BackgroundTaskUpdate,
+            EventType::UserInputSubmitted,
+            EventType::PermissionResponse,
         ];
-        assert_eq!(types.len(), 18);
+        assert_eq!(types.len(), 22);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();
             let back: Event = serde_json::from_str(&s).unwrap();
             assert_eq!(ev, back);
         }
+    }
+
+    #[test]
+    fn direction_classification() {
+        assert_eq!(EventType::SessionStarted.direction(), Direction::Inbound);
+        assert_eq!(EventType::StatusUpdate.direction(), Direction::Inbound);
+        assert_eq!(EventType::UserInputSubmitted.direction(), Direction::Outbound);
+        assert_eq!(EventType::PermissionResponse.direction(), Direction::Outbound);
+    }
+
+    #[test]
+    fn status_update_payload_roundtrip() {
+        let mut segs = std::collections::BTreeMap::new();
+        segs.insert("mode".to_string(), "edit".to_string());
+        segs.insert("phase".to_string(), "thinking".to_string());
+        let p = payloads::StatusUpdate { segments: segs };
+        let s = serde_json::to_string(&p).unwrap();
+        let back: payloads::StatusUpdate = serde_json::from_str(&s).unwrap();
+        assert_eq!(p, back);
+    }
+
+    #[test]
+    fn runtime_error_with_kind_roundtrip() {
+        let p = payloads::RuntimeError {
+            message: "rate limit".into(),
+            source: Some("openai".into()),
+            kind: Some(payloads::RuntimeErrorKind::QuotaExhausted),
+            severity: Some(payloads::Severity::Error),
+            cta: Some(payloads::Cta { label: "type /report".into(), action_id: "report".into() }),
+        };
+        let s = serde_json::to_string(&p).unwrap();
+        let back: payloads::RuntimeError = serde_json::from_str(&s).unwrap();
+        assert_eq!(p, back);
+    }
+
+    #[test]
+    fn runtime_error_legacy_payload_roundtrip() {
+        // A legacy RuntimeError with only message + source (no kind/severity/cta)
+        // must still deserialise — additive field guarantee.
+        let raw = r#"{"message":"oops","source":"x"}"#;
+        let p: payloads::RuntimeError = serde_json::from_str(raw).unwrap();
+        assert_eq!(p.message, "oops");
+        assert!(p.kind.is_none());
+        assert!(p.severity.is_none());
+        assert!(p.cta.is_none());
     }
 
     #[test]

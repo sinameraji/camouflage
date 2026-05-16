@@ -52,26 +52,80 @@ pub fn render<B: Backend>(
         let transcript = Paragraph::new(lines);
         f.render_widget(transcript, chunks[1]);
 
-        // Status line
+        // Status line — multi-segment, host-driven. Convention: known keys
+        // (mode, phase, elapsed, tokens, cost, branch, warn) render in that
+        // order with appropriate styling. Any other segments follow in
+        // alphabetical order. `phase` falls back to the renderer-derived
+        // `status` arg if the host hasn't set one yet.
         let follow = if viewport.auto_follow { "follow" } else { "scrolled" };
         let indicator = if !viewport.auto_follow {
             " | new output below ↓"
         } else {
             ""
         };
-        let status_line = Paragraph::new(Line::from(vec![
-            Span::styled(format!(" {} ", status), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::styled(
-                format!("[{}] live={} history={} total={}{}",
-                    follow,
-                    live.len(),
-                    history.len(),
-                    model.total_rows(),
-                    indicator,
-                ),
-                Style::default().fg(Color::DarkGray),
+        let segs = model.status_segments();
+        let mut spans: Vec<Span> = Vec::new();
+        // mode badge
+        if let Some(mode) = segs.get("mode") {
+            let color = match mode.as_str() {
+                "plan" => Color::Magenta,
+                "auto" => Color::Green,
+                _ => Color::Cyan,
+            };
+            spans.push(Span::styled(
+                format!(" {} ", mode),
+                Style::default().fg(Color::Black).bg(color).add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::raw(" "));
+        }
+        // phase — use host's if present, else fall back to the renderer-derived status
+        let phase_str = segs
+            .get("phase")
+            .cloned()
+            .unwrap_or_else(|| status.to_string());
+        spans.push(Span::styled(
+            phase_str,
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ));
+        // Conventional segments in order.
+        for key in ["elapsed", "tokens", "cost", "branch"] {
+            if let Some(v) = segs.get(key) {
+                spans.push(Span::styled(" · ", Style::default().fg(Color::DarkGray)));
+                spans.push(Span::styled(v.clone(), Style::default().fg(Color::Gray)));
+            }
+        }
+        // warn segment in yellow.
+        if let Some(w) = segs.get("warn") {
+            spans.push(Span::styled(" · ", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(
+                w.clone(),
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            ));
+        }
+        // Unknown segments (anything not in the known set) — alphabetical.
+        let known: &[&str] = &["mode", "phase", "elapsed", "tokens", "cost", "branch", "warn"];
+        for (k, v) in segs.iter() {
+            if !known.contains(&k.as_str()) {
+                spans.push(Span::styled(" · ", Style::default().fg(Color::DarkGray)));
+                spans.push(Span::styled(
+                    format!("{}={}", k, v),
+                    Style::default().fg(Color::Gray),
+                ));
+            }
+        }
+        // Renderer-internal counts at the end (dimmed).
+        spans.push(Span::styled(
+            format!(
+                "  [{}] live={} history={} total={}{}",
+                follow,
+                live.len(),
+                history.len(),
+                model.total_rows(),
+                indicator,
             ),
-        ]));
+            Style::default().fg(Color::DarkGray),
+        ));
+        let status_line = Paragraph::new(Line::from(spans));
         f.render_widget(status_line, chunks[2]);
 
         // Input
