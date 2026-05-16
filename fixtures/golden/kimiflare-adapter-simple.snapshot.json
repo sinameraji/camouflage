@@ -1,0 +1,27 @@
+{
+  "total_rows": 4,
+  "rows": [
+    {
+      "seq": 0,
+      "kind": "system",
+      "text": "session started"
+    },
+    {
+      "seq": 1,
+      "kind": "user",
+      "text": "Reply with exactly the single word: ok"
+    },
+    {
+      "seq": 2,
+      "kind": "assistant",
+      "text": "ok"
+    },
+    {
+      "seq": 5,
+      "kind": "system",
+      "text": "session ended"
+    }
+  ],
+  "status": {},
+  "tasks": []
+}

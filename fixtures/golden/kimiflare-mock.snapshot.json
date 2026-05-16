@@ -1,0 +1,56 @@
+{
+  "total_rows": 8,
+  "rows": [
+    {
+      "seq": 0,
+      "kind": "system",
+      "text": "session started"
+    },
+    {
+      "seq": 8,
+      "kind": "user",
+      "text": "investigate failing test in src/auth/login.ts"
+    },
+    {
+      "seq": 10,
+      "kind": "assistant",
+      "text": "Looking at the auth flow. I'll run the failing test to see the exact error.\n"
+    },
+    {
+      "seq": 28,
+      "kind": "tool",
+      "text": "✓ bash npm test src/auth/login.test.ts (4ms, exit=1, stdout=50B, stderr=0B)",
+      "tool_id": "t1"
+    },
+    {
+      "seq": 34,
+      "kind": "system",
+      "text": "permission requested: apply patch to src/auth/login.ts (3 lines changed) (edit)"
+    },
+    {
+      "seq": 35,
+      "kind": "system",
+      "text": "permission granted"
+    },
+    {
+      "seq": 36,
+      "kind": "error",
+      "text": "[quota] daily token budget exhausted  (type /report to file a ticket)"
+    },
+    {
+      "seq": 38,
+      "kind": "system",
+      "text": "session ended"
+    }
+  ],
+  "status": {
+    "branch": "main",
+    "cost": "$0.04",
+    "elapsed": "42s",
+    "mode": "edit",
+    "phase": "idle",
+    "tokens": "in 14k (2k cached)",
+    "warn": "ctx 82% — /compact recommended"
+  },
+  "tasks": []
+}

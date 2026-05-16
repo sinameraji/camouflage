@@ -1,0 +1,82 @@
+{
+  "total_rows": 14,
+  "rows": [
+    {
+      "seq": 0,
+      "kind": "system",
+      "text": "session started"
+    },
+    {
+      "seq": 4,
+      "kind": "user",
+      "text": "hello"
+    },
+    {
+      "seq": 5,
+      "kind": "assistant",
+      "text": "hi there"
+    },
+    {
+      "seq": 9,
+      "kind": "tool",
+      "text": "✓ bash ls (3ms, exit=0, stdout=6B, stderr=5B)",
+      "tool_id": "t1"
+    },
+    {
+      "seq": 13,
+      "kind": "system",
+      "text": "patch proposed: src/x.rs (+3 -1)"
+    },
+    {
+      "seq": 14,
+      "kind": "system",
+      "text": "patch applied: src/x.rs"
+    },
+    {
+      "seq": 15,
+      "kind": "system",
+      "text": "permission requested: apply patch (edit)"
+    },
+    {
+      "seq": 16,
+      "kind": "system",
+      "text": "permission granted"
+    },
+    {
+      "seq": 17,
+      "kind": "system",
+      "text": "permission denied"
+    },
+    {
+      "seq": 18,
+      "kind": "error",
+      "text": "oops"
+    },
+    {
+      "seq": 19,
+      "kind": "error",
+      "text": "[quota] quota  (upgrade)"
+    },
+    {
+      "seq": 20,
+      "kind": "system",
+      "text": "session compacted"
+    },
+    {
+      "seq": 21,
+      "kind": "marker",
+      "text": "end of warmup"
+    },
+    {
+      "seq": 24,
+      "kind": "system",
+      "text": "session ended"
+    }
+  ],
+  "status": {
+    "branch": "main",
+    "mode": "edit",
+    "phase": "idle"
+  },
+  "tasks": []
+}
