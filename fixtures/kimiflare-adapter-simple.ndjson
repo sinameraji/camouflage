@@ -1,0 +1,6 @@
+{"event_type":"SessionStarted","payload":{}}
+{"event_type":"UserMessageCreated","payload":{"text":"Reply with exactly the single word: ok"}}
+{"event_type":"AssistantStreamStarted","payload":{"stream_id":"s1"}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"ok"}}
+{"event_type":"AssistantMessageCompleted","payload":{"stream_id":"s1"}}
+{"event_type":"SessionEnded","payload":{}}

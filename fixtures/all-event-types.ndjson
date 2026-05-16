@@ -1,0 +1,25 @@
+{"event_type":"SessionStarted","payload":{}}
+{"event_type":"StatusUpdate","payload":{"segments":{"mode":"edit","phase":"idle","branch":"main"}}}
+{"event_type":"BackgroundTaskUpdate","payload":{"task_id":"skills","label":"indexing","state":"running","progress":0.5}}
+{"event_type":"BackgroundTaskUpdate","payload":{"task_id":"skills","label":"indexing","state":"done"}}
+{"event_type":"UserMessageCreated","payload":{"text":"hello"}}
+{"event_type":"AssistantStreamStarted","payload":{"stream_id":"s1"}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"hi "}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"there"}}
+{"event_type":"AssistantMessageCompleted","payload":{"stream_id":"s1"}}
+{"event_type":"ToolExecutionStarted","payload":{"tool_id":"t1","tool":"bash","command":"ls"}}
+{"event_type":"ToolExecutionStdout","payload":{"tool_id":"t1","chunk":"file1\n"}}
+{"event_type":"ToolExecutionStderr","payload":{"tool_id":"t1","chunk":"warn\n"}}
+{"event_type":"ToolExecutionFinished","payload":{"tool_id":"t1","exit_code":0}}
+{"event_type":"PatchProposed","payload":{"path":"src/x.rs","added":3,"removed":1}}
+{"event_type":"PatchApplied","payload":{"path":"src/x.rs"}}
+{"event_type":"PermissionRequested","payload":{"request_id":"perm-1","tool":"edit","action":"apply patch"}}
+{"event_type":"PermissionGranted","payload":{"request_id":"perm-1"}}
+{"event_type":"PermissionDenied","payload":{"request_id":"perm-2"}}
+{"event_type":"RuntimeError","payload":{"message":"oops","source":"test","kind":"generic","severity":"warn"}}
+{"event_type":"RuntimeError","payload":{"message":"quota","kind":"quota_exhausted","severity":"error","cta":{"label":"upgrade","action_id":"upgrade"}}}
+{"event_type":"SessionCompacted","payload":{"old_seq":42,"new_seq":1}}
+{"event_type":"ViewportMarker","payload":{"label":"end of warmup"}}
+{"event_type":"UserInputSubmitted","payload":{"text":"follow-up question"}}
+{"event_type":"PermissionResponse","payload":{"request_id":"perm-1","choice":"allow_once"}}
+{"event_type":"SessionEnded","payload":{}}

@@ -1,0 +1,39 @@
+{"event_type":"SessionStarted","payload":{}}
+{"event_type":"StatusUpdate","payload":{"segments":{"branch":"main","cost":"$0.00","elapsed":"0s","mode":"edit","phase":"idle","tokens":"in 8k"}}}
+{"event_type":"BackgroundTaskUpdate","payload":{"label":"indexing skills","progress":0.0,"state":"running","task_id":"skills"}}
+{"event_type":"BackgroundTaskUpdate","payload":{"label":"indexing skills","progress":0.25,"state":"running","task_id":"skills"}}
+{"event_type":"BackgroundTaskUpdate","payload":{"label":"indexing skills","progress":0.5,"state":"running","task_id":"skills"}}
+{"event_type":"BackgroundTaskUpdate","payload":{"label":"indexing skills","progress":0.75,"state":"running","task_id":"skills"}}
+{"event_type":"BackgroundTaskUpdate","payload":{"label":"indexing skills","progress":1.0,"state":"running","task_id":"skills"}}
+{"event_type":"BackgroundTaskUpdate","payload":{"label":"indexing skills","state":"done","task_id":"skills"}}
+{"event_type":"UserMessageCreated","payload":{"text":"investigate failing test in src/auth/login.ts"}}
+{"event_type":"StatusUpdate","payload":{"segments":{"elapsed":"3s","phase":"thinking"}}}
+{"event_type":"AssistantStreamStarted","payload":{"stream_id":"s1"}}
+{"event_type":"StatusUpdate","payload":{"segments":{"phase":"streaming"}}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"Looking "}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"at "}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"the "}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"auth flow. "}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"I'll "}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"run "}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"the "}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"failing "}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"test "}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"to "}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"see "}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"the "}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"exact "}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"error.\n"}}
+{"event_type":"AssistantMessageCompleted","payload":{"stream_id":"s1"}}
+{"event_type":"StatusUpdate","payload":{"segments":{"phase":"tool"}}}
+{"event_type":"ToolExecutionStarted","payload":{"command":"npm test src/auth/login.test.ts","tool":"bash","tool_id":"t1"}}
+{"event_type":"ToolExecutionStdout","payload":{"chunk":"FAIL ","tool_id":"t1"}}
+{"event_type":"ToolExecutionStdout","payload":{"chunk":"src/auth/login.test.ts\n","tool_id":"t1"}}
+{"event_type":"ToolExecutionStdout","payload":{"chunk":"Expected 200, got 401\n","tool_id":"t1"}}
+{"event_type":"ToolExecutionFinished","payload":{"exit_code":1,"tool_id":"t1"}}
+{"event_type":"StatusUpdate","payload":{"segments":{"phase":"thinking"}}}
+{"event_type":"PermissionRequested","payload":{"action":"apply patch to src/auth/login.ts (3 lines changed)","detail":"changes the token-validation branch","request_id":"perm-1","tool":"edit"}}
+{"event_type":"PermissionGranted","payload":{"request_id":"perm-1"}}
+{"event_type":"RuntimeError","payload":{"cta":{"action_id":"report","label":"type /report to file a ticket"},"kind":"quota_exhausted","message":"daily token budget exhausted","severity":"error","source":"openai"}}
+{"event_type":"StatusUpdate","payload":{"segments":{"cost":"$0.04","elapsed":"42s","phase":"idle","tokens":"in 14k (2k cached)","warn":"ctx 82% — /compact recommended"}}}
+{"event_type":"SessionEnded","payload":{}}
