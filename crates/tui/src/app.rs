@@ -1,5 +1,6 @@
 use crate::{draw, input, tty};
 use anyhow::{Context, Result};
+use camouflage_headless::emit::{spawn_writer, OutgoingEvent};
 use camouflage_headless::{run_reader, NdjsonDecoder};
 use camouflage_protocol::{Event, EventType, SCHEMA_VERSION};
 use camouflage_renderer::{reconstruct_rows, RenderModel, Row, ViewportState};
@@ -22,6 +23,7 @@ pub struct Config {
     pub replay: Option<Uuid>,
     pub fps: u32,
     pub row_cap: Option<usize>,
+    pub emit_responses: bool,
 }
 
 struct HistoryReq {
@@ -58,6 +60,16 @@ pub async fn run(cfg: Config) -> Result<()> {
 
     let start_seq = store.latest_seq(session_id).unwrap_or(-1).max(-1) + 1;
     let seq_counter = Arc::new(AtomicI64::new(start_seq));
+
+    // Outbound NDJSON emitter (renderer → host). Used for UserInputSubmitted
+    // and PermissionResponse when `--emit-responses` is set.
+    let outbound_tx: Option<mpsc::Sender<OutgoingEvent>> = if cfg.emit_responses {
+        let (tx, rx) = mpsc::channel::<OutgoingEvent>(64);
+        spawn_writer(std::io::stdout(), rx);
+        Some(tx)
+    } else {
+        None
+    };
 
     // NDJSON ingestion from stdin (pipe).
     let (ev_tx, mut ev_rx) = mpsc::channel::<Event>(4096);
@@ -154,6 +166,10 @@ pub async fn run(cfg: Config) -> Result<()> {
     let frame_period = Duration::from_secs_f64(1.0 / cfg.fps as f64);
     let mut ticker = interval(frame_period);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Spinner-driving frame counter. We need redraws even when the model isn't
+    // dirty while a spinner is on screen, so the ticker also bumps this and
+    // forces a draw if anything spinnable is active.
+    let mut frame_counter: u64 = 0;
 
     // History backfill worker. When the user scrolls past the in-memory
     // window we ask this worker for a chunk of older rows. Only one request
@@ -210,20 +226,42 @@ pub async fn run(cfg: Config) -> Result<()> {
     loop {
         // Non-blocking poll for keys before each frame.
         while let Ok(key) = key_rx.try_recv() {
-            let action = input::handle_key(key, &mut input_buf);
+            let action = if model.pending_permission().is_some() {
+                input::handle_key_permission(key)
+            } else {
+                input::handle_key(key, &mut input_buf)
+            };
             match action {
                 input::Action::Quit => return shutdown(&mut terminal, Ok(())),
                 input::Action::SubmitInput(text) => {
-                    let ev = Event {
-                        id: Uuid::new_v4(),
-                        session_id,
-                        seq: seq_counter.fetch_add(1, Ordering::Relaxed),
-                        timestamp_ms: now_ms(),
-                        schema_version: SCHEMA_VERSION,
-                        event_type: EventType::UserMessageCreated,
-                        payload: serde_json::json!({"text": text}),
-                    };
-                    let _ = persist_tx.send(ev).await;
+                    if let Some(tx) = outbound_tx.as_ref() {
+                        // Bidirectional mode: emit UserInputSubmitted to the
+                        // host. The host typically responds by sending back a
+                        // UserMessageCreated which lands on stdin.
+                        let ev = Event {
+                            id: Uuid::new_v4(),
+                            session_id,
+                            seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                            timestamp_ms: now_ms(),
+                            schema_version: SCHEMA_VERSION,
+                            event_type: EventType::UserInputSubmitted,
+                            payload: serde_json::json!({"text": text}),
+                        };
+                        let _ = tx.send(OutgoingEvent(ev)).await;
+                    } else {
+                        // Standalone mode: synthesise a local UserMessageCreated
+                        // so the user sees their message in the transcript.
+                        let ev = Event {
+                            id: Uuid::new_v4(),
+                            session_id,
+                            seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                            timestamp_ms: now_ms(),
+                            schema_version: SCHEMA_VERSION,
+                            event_type: EventType::UserMessageCreated,
+                            payload: serde_json::json!({"text": text}),
+                        };
+                        let _ = persist_tx.send(ev).await;
+                    }
                 }
                 input::Action::ScrollUp(n) => {
                     viewport.scroll_up(n as i64, model.combined_len() as i64);
@@ -247,6 +285,49 @@ pub async fn run(cfg: Config) -> Result<()> {
                     let evs = store.load_session(session_id).unwrap_or_default();
                     for ev in &evs { model.apply(ev); }
                     status = format!("replayed {} events", evs.len());
+                    model.mark_dirty();
+                }
+                input::Action::PermissionAllowOnce
+                | input::Action::PermissionAllowSession
+                | input::Action::PermissionDeny => {
+                    let (choice_str, fallback_kind) = match action {
+                        input::Action::PermissionAllowOnce => ("allow_once", EventType::PermissionGranted),
+                        input::Action::PermissionAllowSession => ("allow_session", EventType::PermissionGranted),
+                        _ => ("deny", EventType::PermissionDenied),
+                    };
+                    let request_id = model
+                        .pending_permission()
+                        .map(|p| p.request_id.clone())
+                        .unwrap_or_default();
+                    if let Some(tx) = outbound_tx.as_ref() {
+                        let ev = Event {
+                            id: Uuid::new_v4(),
+                            session_id,
+                            seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                            timestamp_ms: now_ms(),
+                            schema_version: SCHEMA_VERSION,
+                            event_type: EventType::PermissionResponse,
+                            payload: serde_json::json!({
+                                "request_id": request_id,
+                                "choice": choice_str,
+                            }),
+                        };
+                        let _ = tx.send(OutgoingEvent(ev)).await;
+                    } else {
+                        // Standalone mode: synthesise the resulting
+                        // Granted/Denied locally so the user sees feedback.
+                        let ev = Event {
+                            id: Uuid::new_v4(),
+                            session_id,
+                            seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                            timestamp_ms: now_ms(),
+                            schema_version: SCHEMA_VERSION,
+                            event_type: fallback_kind,
+                            payload: serde_json::json!({"request_id": request_id}),
+                        };
+                        let _ = persist_tx.send(ev).await;
+                    }
+                    model.clear_pending_permission();
                     model.mark_dirty();
                 }
                 input::Action::None => {
@@ -312,14 +393,28 @@ pub async fn run(cfg: Config) -> Result<()> {
                 }
             }
             _ = ticker.tick() => {
-                if model.dirty() {
-                    draw::render(&mut terminal, &model, &viewport, &input_buf, &status)?;
+                frame_counter = frame_counter.wrapping_add(1);
+                // A spinner is "alive" if any tool isn't finished OR the host's
+                // phase segment is in a spinnable state. When alive, redraw
+                // every tick so the glyph rotates even if the model is clean.
+                let any_unfinished_tool = model.tools().values().any(|t| !t.finished);
+                let phase_spins = model
+                    .status_segments()
+                    .get("phase")
+                    .map(|p| matches!(p.as_str(), "thinking" | "streaming" | "tool" | "running"))
+                    .unwrap_or(false);
+                let spinner_alive = any_unfinished_tool || phase_spins;
+                if model.dirty() || spinner_alive {
+                    draw::render(&mut terminal, &model, &viewport, &input_buf, &status, frame_counter)?;
                     model.mark_clean();
                 }
                 // Resize check (size() is cheap; no kqueue needed)
                 if let Ok((w, h)) = crossterm::terminal::size() {
-                    if w != viewport.viewport_width || h.saturating_sub(4) != viewport.viewport_height {
-                        viewport.resize(h.saturating_sub(4), w);
+                    // header(1) + status(1) + input(3) + optional task ribbon(1) = 5–6 reserved.
+                    let reserved = 5 + if model.background_tasks().is_empty() { 0 } else { 1 };
+                    let visible = h.saturating_sub(reserved);
+                    if w != viewport.viewport_width || visible != viewport.viewport_height {
+                        viewport.resize(visible, w);
                         model.mark_dirty();
                     }
                 }

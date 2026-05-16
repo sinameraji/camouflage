@@ -9,6 +9,23 @@ pub enum Action {
     JumpToLatest,
     CancelStream,
     Replay,
+    /// v0.1.5+: user resolved a pending PermissionRequested.
+    PermissionAllowOnce,
+    PermissionAllowSession,
+    PermissionDeny,
+}
+
+/// Variant of `handle_key` used while a PermissionRequested is pending.
+/// Only quit + permission-choice keys are honoured; everything else is ignored.
+pub fn handle_key_permission(k: Key) -> Action {
+    match k {
+        Key::CtrlC => Action::Quit,
+        Key::Char('1') => Action::PermissionAllowOnce,
+        Key::Char('2') => Action::PermissionAllowSession,
+        Key::Char('3') | Key::Char('?') => Action::PermissionDeny,
+        Key::Esc => Action::PermissionDeny,
+        _ => Action::None,
+    }
 }
 
 pub fn handle_key(k: Key, buf: &mut String) -> Action {

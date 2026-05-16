@@ -8,6 +8,7 @@ members = [
     "crates/headless",
     "crates/bench",
     "examples/fake-agent",
+    "examples/kimiflare-mock",
 ]
 
 [workspace.package]

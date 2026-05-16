@@ -63,6 +63,50 @@ pub struct RenderModel {
     /// v0.1.5+ — host-supplied status-bar segments. Renderer draws these in
     /// a fixed conventional order plus any extras in registration order.
     status_segments: BTreeMap<String, String>,
+    /// v0.1.5+ — most recent PermissionRequested whose response is still
+    /// pending. The TUI renders an inline modal instead of the input box.
+    pending_permission: Option<PendingPermission>,
+    /// v0.1.5+ — active background tasks shown in the ribbon above the
+    /// status line. Insertion order preserved for stable display.
+    background_tasks: Vec<BackgroundTask>,
+}
+
+/// State for an in-flight permission request. Cleared once the renderer
+/// emits a `PermissionResponse` outbound.
+#[derive(Debug, Clone)]
+pub struct PendingPermission {
+    pub request_id: String,
+    pub tool: String,
+    pub action: String,
+    pub detail: String,
+}
+
+/// A row in the background task ribbon, populated by `BackgroundTaskUpdate`
+/// events. KimiFlare uses this for skill indexing, memory loading, etc.
+#[derive(Debug, Clone)]
+pub struct BackgroundTask {
+    pub task_id: String,
+    pub label: String,
+    pub state: BackgroundTaskState,
+    pub progress: Option<f32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackgroundTaskState {
+    Running,
+    Done,
+    Error,
+}
+
+impl BackgroundTaskState {
+    fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "running" => Some(Self::Running),
+            "done" => Some(Self::Done),
+            "error" => Some(Self::Error),
+            _ => None,
+        }
+    }
 }
 
 impl RenderModel {
@@ -84,6 +128,8 @@ impl RenderModel {
             dirty: true,
             history: Vec::new(),
             status_segments: BTreeMap::new(),
+            pending_permission: None,
+            background_tasks: Vec::new(),
         }
     }
 
@@ -163,6 +209,27 @@ impl RenderModel {
     /// Status-bar segments as currently set by the host.
     pub fn status_segments(&self) -> &BTreeMap<String, String> {
         &self.status_segments
+    }
+
+    /// Currently-pending permission request, if any. The TUI renders the
+    /// modal widget while this is `Some`.
+    pub fn pending_permission(&self) -> Option<&PendingPermission> {
+        self.pending_permission.as_ref()
+    }
+
+    /// Active background tasks (ribbon between transcript and status).
+    pub fn background_tasks(&self) -> &[BackgroundTask] {
+        &self.background_tasks
+    }
+
+    /// Called by the TUI when the user has answered. The pending state clears
+    /// regardless of the choice; the outbound PermissionResponse event has
+    /// already been emitted to the host by the caller.
+    pub fn clear_pending_permission(&mut self) {
+        if self.pending_permission.is_some() {
+            self.pending_permission = None;
+            self.dirty = true;
+        }
     }
 
     fn push_row(&mut self, row: Row) -> usize {
@@ -393,14 +460,46 @@ impl RenderModel {
                 });
             }
             EventType::PermissionRequested => {
+                let request_id = ev
+                    .payload
+                    .get("request_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let tool = ev
+                    .payload
+                    .get("tool")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let action = ev
+                    .payload
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("permission requested")
+                    .to_string();
+                let detail = ev
+                    .payload
+                    .get("detail")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 self.push_row(Row {
                     seq: ev.seq,
                     kind: RowKind::System,
-                    text: "permission requested".into(),
+                    text: format!("permission requested: {} ({})", action, tool),
                     tool_id: None,
                 });
+                self.pending_permission = Some(PendingPermission {
+                    request_id,
+                    tool,
+                    action,
+                    detail,
+                });
+                self.dirty = true;
             }
             EventType::PermissionGranted => {
+                self.pending_permission = None;
                 self.push_row(Row {
                     seq: ev.seq,
                     kind: RowKind::System,
@@ -409,6 +508,7 @@ impl RenderModel {
                 });
             }
             EventType::PermissionDenied => {
+                self.pending_permission = None;
                 self.push_row(Row {
                     seq: ev.seq,
                     kind: RowKind::System,
@@ -422,10 +522,32 @@ impl RenderModel {
                     .get("message")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
+                // v0.1.5+: optional `kind`, `severity`, `cta` on the payload.
+                // The renderer composes a short row prefix from kind so the
+                // TUI can pick a visual treatment without re-parsing here.
+                let kind = ev
+                    .payload
+                    .get("kind")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("generic");
+                let cta_label = ev
+                    .payload
+                    .get("cta")
+                    .and_then(|v| v.get("label"))
+                    .and_then(|v| v.as_str());
+                let mut text = match kind {
+                    "api_error" => format!("[api] {}", msg),
+                    "service_ended" => format!("[service ended] {}", msg),
+                    "quota_exhausted" => format!("[quota] {}", msg),
+                    _ => msg.to_string(),
+                };
+                if let Some(cta) = cta_label {
+                    text.push_str(&format!("  ({})", cta));
+                }
                 self.push_row(Row {
                     seq: ev.seq,
                     kind: RowKind::Error,
-                    text: msg.to_string(),
+                    text,
                     tool_id: None,
                 });
             }
@@ -464,8 +586,54 @@ impl RenderModel {
                     self.dirty = true;
                 }
             }
-            // Slice E will wire these properly; for now they don't affect the model.
-            EventType::BackgroundTaskUpdate => {}
+            EventType::BackgroundTaskUpdate => {
+                let task_id = ev
+                    .payload
+                    .get("task_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let label = ev
+                    .payload
+                    .get("label")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let state = ev
+                    .payload
+                    .get("state")
+                    .and_then(|v| v.as_str())
+                    .and_then(BackgroundTaskState::from_str)
+                    .unwrap_or(BackgroundTaskState::Running);
+                let progress = ev
+                    .payload
+                    .get("progress")
+                    .and_then(|v| v.as_f64())
+                    .map(|f| f as f32);
+                // Done/Error → remove from ribbon. Running → upsert.
+                match state {
+                    BackgroundTaskState::Done | BackgroundTaskState::Error => {
+                        self.background_tasks.retain(|t| t.task_id != task_id);
+                    }
+                    BackgroundTaskState::Running => {
+                        if let Some(existing) =
+                            self.background_tasks.iter_mut().find(|t| t.task_id == task_id)
+                        {
+                            existing.label = label;
+                            existing.state = state;
+                            existing.progress = progress;
+                        } else {
+                            self.background_tasks.push(BackgroundTask {
+                                task_id,
+                                label,
+                                state,
+                                progress,
+                            });
+                        }
+                    }
+                }
+                self.dirty = true;
+            }
             // Outbound events never reach apply() in practice, but be tolerant
             // (a replayed session log might contain them).
             EventType::UserInputSubmitted | EventType::PermissionResponse => {}

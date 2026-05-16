@@ -19,7 +19,7 @@ Code-complete and tests pass. Offline benchmark hits all four numeric targets. O
 | Version | Title                            | Status        | Notes                                     |
 |---------|----------------------------------|---------------|-------------------------------------------|
 | v0.1    | MVP Event-Native TUI             | ✅ DONE        | Tagged `v0.1.0`. All 22 milestones complete. |
-| v0.1.5  | Extensibility Primitives         | IN PROGRESS   | KimiFlare-adoption milestone. 6 slices, A done. |
+| v0.1.5  | Extensibility Primitives         | ✅ DONE        | All 6 slices verified via `kimiflare-mock` integration run. |
 | v0.2    | Replay & Timeline Inspection     | NOT STARTED   |                                           |
 | v0.3    | Renderer Abstraction             | NOT STARTED   |                                           |
 | v0.4    | Advanced TUI UX                  | NOT STARTED   |                                           |
@@ -33,12 +33,12 @@ Code-complete and tests pass. Offline benchmark hits all four numeric targets. O
 
 | Slice | Subject | Status |
 |-------|---------|--------|
-| A | `StatusUpdate` event + multi-segment status bar | DONE — verified end-to-end (`mode`, `phase`, `elapsed`, `tokens`, `cost`, `branch`, `warn` segments render) |
-| B | Spinners on in-flight assistant / tool / phase  | NOT STARTED |
-| C | Bidirectional protocol + `UserInputSubmitted` outbound | NOT STARTED |
-| D | Inline permission widget                        | NOT STARTED |
-| E | `BackgroundTaskUpdate` + task ribbon + extended `RuntimeError` rendering | NOT STARTED |
-| F | `examples/kimiflare-mock` + integration verification | NOT STARTED |
+| A | `StatusUpdate` event + multi-segment status bar | ✅ DONE |
+| B | Spinners on in-flight assistant / tool / phase  | ✅ DONE |
+| C | Bidirectional protocol + `UserInputSubmitted` outbound | ✅ DONE — `--emit-responses` flag, NDJSON writer task in `crates/headless/src/emit.rs` |
+| D | Inline permission widget                        | ✅ DONE — `[1] allow once / [2] session / [3] deny`, emits `PermissionResponse` outbound |
+| E | `BackgroundTaskUpdate` + task ribbon + extended `RuntimeError` rendering | ✅ DONE — task ribbon row above status, error kinds prefix-formatted with CTA |
+| F | `examples/kimiflare-mock` + integration verification | ✅ DONE — pty test confirmed all surfaces, `PermissionResponse{choice:"allow_once",request_id:"perm-1"}` round-trip |
 
 ---
 
@@ -94,3 +94,4 @@ Brief one-liners per session. Keep this short — git log has the detail.
 | 2026-05-16 | Fixed status-line layout bug (Borders::TOP consumed the only available line). Status now renders as `idle [follow] rows=N total=M` between transcript and input. |
 | 2026-05-16 | Closed v0.1: lazy paging on scroll-up, streaming bench (RSS 187→37 MB), pty input-latency harness (p95 23.99 ms), 30-min soak (peak 31 MB), manual TUI verification. Tagged `v0.1.0`. |
 | 2026-05-16 | v0.1.5 Slice A: added `StatusUpdate`/`BackgroundTaskUpdate`/`UserInputSubmitted`/`PermissionResponse` event types + `Direction` classifier; extended `RuntimeError` payload (`kind`/`severity`/`cta`); multi-segment status bar rendering. |
+| 2026-05-16 | v0.1.5 Slices B–F: spinners on in-flight blocks + phase; outbound NDJSON emitter in `crates/headless`; `--emit-responses` flag; inline 3-option permission widget with bidirectional `PermissionResponse`; background-task ribbon; kind-aware error rendering with CTAs; `examples/kimiflare-mock` integration generator. v0.1.5 complete. |

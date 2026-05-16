@@ -1,8 +1,10 @@
-//! NDJSON event ingestion.
+//! NDJSON event ingestion + outbound emission.
 //!
 //! Reads newline-delimited JSON events from any AsyncBufRead source. Lines
 //! may be either full `Event` records or shorthand `{event_type, payload}`
 //! objects which we normalize (filling in `id`, `seq`, `session_id`, `timestamp_ms`).
+
+pub mod emit;
 
 use camouflage_protocol::{Event, EventType, SCHEMA_VERSION};
 use serde::Deserialize;

@@ -7,5 +7,8 @@
 pub mod viewport;
 pub mod model;
 
-pub use model::{reconstruct_rows, RenderModel, Row, RowKind, ToolState};
+pub use model::{
+    reconstruct_rows, BackgroundTask, BackgroundTaskState, PendingPermission, RenderModel, Row,
+    RowKind, ToolState,
+};
 pub use viewport::ViewportState;

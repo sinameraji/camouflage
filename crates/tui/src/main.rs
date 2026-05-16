@@ -31,6 +31,13 @@ struct Args {
     /// history paging earlier — useful for testing.
     #[arg(long)]
     row_cap: Option<usize>,
+
+    /// Emit outbound NDJSON events (UserInputSubmitted, PermissionResponse)
+    /// to stdout. Required by hosts that consume user actions back from the
+    /// renderer (e.g. KimiFlare-style adapters). Defaults to true when
+    /// --stdin-events is set.
+    #[arg(long)]
+    emit_responses: Option<bool>,
 }
 
 fn default_db_path() -> PathBuf {
@@ -59,11 +66,14 @@ fn main() -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
+    let emit_responses = args.emit_responses.unwrap_or(args.stdin_events);
+
     rt.block_on(app::run(app::Config {
         store,
         stdin_events: args.stdin_events,
         replay: args.replay,
         fps: args.fps.max(1).min(120),
         row_cap: args.row_cap,
+        emit_responses,
     }))
 }
