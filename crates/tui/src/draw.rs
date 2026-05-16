@@ -36,15 +36,15 @@ pub fn render<B: Backend>(
         ]));
         f.render_widget(header, chunks[0]);
 
-        // Transcript viewport — virtualized: pick a window of rows from the
-        // bounded model based on scroll offset.
-        let rows = model.rows();
-        let total = rows.len() as i64;
+        // Transcript viewport — virtualized over history + live rows.
+        let history = model.history_rows();
+        let live = model.rows();
+        let total = (history.len() + live.len()) as i64;
         let height = chunks[1].height as i64;
         let end = (total - viewport.scroll_offset).max(0);
         let start = (end - height).max(0);
-        let lines: Vec<Line> = rows
-            .iter()
+        let combined = history.iter().chain(live.iter());
+        let lines: Vec<Line> = combined
             .skip(start as usize)
             .take((end - start) as usize)
             .map(|r| row_to_line(r))
@@ -62,9 +62,10 @@ pub fn render<B: Backend>(
         let status_line = Paragraph::new(Line::from(vec![
             Span::styled(format!(" {} ", status), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
             Span::styled(
-                format!("[{}] rows={} total={}{}",
+                format!("[{}] live={} history={} total={}{}",
                     follow,
-                    rows.len(),
+                    live.len(),
+                    history.len(),
                     model.total_rows(),
                     indicator,
                 ),

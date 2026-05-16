@@ -26,6 +26,11 @@ struct Args {
     /// Target frame rate (frames per second).
     #[arg(long, default_value_t = 60)]
     fps: u32,
+
+    /// Override the live-buffer row cap (default 2000). Lower values force
+    /// history paging earlier — useful for testing.
+    #[arg(long)]
+    row_cap: Option<usize>,
 }
 
 fn default_db_path() -> PathBuf {
@@ -59,5 +64,6 @@ fn main() -> Result<()> {
         stdin_events: args.stdin_events,
         replay: args.replay,
         fps: args.fps.max(1).min(120),
+        row_cap: args.row_cap,
     }))
 }

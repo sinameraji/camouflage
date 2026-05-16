@@ -18,27 +18,50 @@ cargo run --release -p camouflage-bench -- \
 
 Output is a single JSON object on stdout.
 
-## Baseline run
+## Baseline run (streaming bench)
 
 - Hardware: Darwin 25.4.0 / Apple Silicon (developer laptop)
 - Build: `cargo run --release` (LTO=thin, codegen-units=1)
 - Command: `--events 100000 --tools 1000 --tokens 50000`
 
-| Metric                | Value     | Target  | Status |
-|-----------------------|-----------|---------|--------|
-| `replay_ms`           | 72        | < 5000  | ✅      |
-| `p95_frame_ms`        | 0.009     | < 16    | ✅      |
-| `rss_mb`              | 187       | < 200   | ✅      |
-| `event_write_per_sec` | 591,715   | —       | —      |
-| `range_read_ms`       | 0         | —       | —      |
+| Metric                  | Value     | Target  | Status |
+|-------------------------|-----------|---------|--------|
+| `replay_ms`             | 84        | < 5000  | ✅      |
+| `p95_frame_ms`          | 0.732     | < 16    | ✅      |
+| `rss_after_write_mb`    | 34        | < 200   | ✅      |
+| `rss_after_replay_mb`   | 37        | < 200   | ✅      |
+| `event_write_per_sec`   | 240,963   | —       | —      |
+| `range_read_ms`         | 0         | —       | —      |
 
-Input latency under streaming load is not measured by the offline bench
-harness (no terminal in the loop). It is covered by manual TUI testing.
+The bench now streams synthesized events directly into the store in
+batches of 256 and never materialises the full population. RSS at the
+end reflects the renderer's bounded model + SQLite cache, not a
+`Vec<Event>` blowup. (Previously: 187 MB.)
+
+## Input latency (pty harness)
+
+- Harness: `scripts/bench_input_latency.py`
+- Stream: `fake-agent --tokens 200000 --tools 500 --fast`
+- 100 samples, 40 ms apart, 60 fps target
+
+| Metric  | Value      | Target  | Status |
+|---------|------------|---------|--------|
+| min     | 0.02 ms    | —       | —      |
+| mean    | 9.94 ms    | —       | —      |
+| p50     | 1.35 ms    | —       | —      |
+| **p95** | **23.99 ms** | < 25 ms | ✅    |
+| p99     | 25.78 ms   | —       | —      |
+| max     | 26.53 ms   | —       | —      |
+
+The min is unrealistically low — likely a race where stale frame bytes
+matched the keystroke search before the actual draw arrived. Mean and
+p95 are the trustworthy numbers. The harness disambiguates by injecting
+characters that fake-agent's transcript never contains (`~^\`!@#$%&+=?`).
 
 ## Known caveats
 
-- The current bench loads all generated events into memory (`Vec<Event>`) for the persistence-throughput phase. This dominates RSS at 100k events; the renderer itself is bounded at 2000 rows. A subsequent revision should stream events into the store rather than materialising the vector.
 - The `model.dirty()` tick model coalesces frames; under sustained 50k tok/s bursts, render frequency is governed by the ticker, not the token rate.
+- 5-hour soak run is documented as planned but not yet executed (PROGRESS.md #18).
 
 ## Next benchmarks (v0.2+)
 

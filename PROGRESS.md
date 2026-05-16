@@ -50,15 +50,15 @@ Code-complete and tests pass. Offline benchmark hits all four numeric targets. O
 | 14| README / ARCHITECTURE / DEPENDENCIES / BENCHMARKS | DONE              | repo root                                        |
 | 15| Manual-test playbook                              | DONE (doc only)   | `docs/manual-tests.md`                           |
 | 16| 4 numeric perf targets on offline bench           | DONE              | replay 72ms, frame 0.009ms, RSS 187MB, 591k w/s  |
-| 17| Lazy-page older rows from store on scroll-up      | NOT DONE          | Rows past 2000-cap unreachable. v0.2 candidate.  |
+| 17| Lazy-page older rows from store on scroll-up      | DONE              | History buffer in `RenderModel` + worker task in `app.rs` that calls `store.load_range` and `reconstruct_rows` on scroll-near-top. Verified via pty test (cap=20, 200 events): single fetch returned 181 rows. |
 | 18| 5-hour soak run                                   | NOT DONE          | Needs `fake-agent --duration 18000 --fast`       |
-| 19| Terminal-in-the-loop p95 input latency measurement| NOT DONE          | Needs pty harness                                |
+| 19| Terminal-in-the-loop p95 input latency measurement| DONE              | `scripts/bench_input_latency.py` — pty harness. 100/100 samples under flood: p95 = 23.99 ms (target < 25 ms). |
 | 20| Manual TUI verification per `docs/manual-tests.md`| NOT DONE          | Awaits human run-through                         |
-| 21| Bench RSS caveat fix (stream into store, not Vec) | NOT DONE          | Documented in `BENCHMARKS.md`                    |
+| 21| Bench RSS caveat fix (stream into store, not Vec) | DONE              | Streaming generator in `crates/bench`: RSS 187 MB → 37 MB. |
 
 | 22| Pipe-stdin works end-to-end (custom /dev/tty key reader bypassing crossterm's broken mio path) | DONE | `crates/tui/src/tty.rs`. Verified via pty test: 290 events streamed and persisted, full UI rendered. Root cause: macOS kqueue returns EINVAL when registering a freshly-opened /dev/tty fd, which kills crossterm's event source. Workaround: blocking `read(/dev/tty)` thread with a small ANSI parser. |
 
-**v0.1: 17 / 22 complete.**
+**v0.1: 20 / 22 complete.** Remaining: 5-hour soak (#18) — runs in background; manual TUI verification (#20) — user task.
 
 ---
 

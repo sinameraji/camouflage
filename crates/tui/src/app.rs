@@ -2,7 +2,7 @@ use crate::{draw, input, tty};
 use anyhow::{Context, Result};
 use camouflage_headless::{run_reader, NdjsonDecoder};
 use camouflage_protocol::{Event, EventType, SCHEMA_VERSION};
-use camouflage_renderer::{RenderModel, ViewportState};
+use camouflage_renderer::{reconstruct_rows, RenderModel, Row, ViewportState};
 use camouflage_store::{EventStore, SqliteStore};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
@@ -21,13 +21,28 @@ pub struct Config {
     pub stdin_events: bool,
     pub replay: Option<Uuid>,
     pub fps: u32,
+    pub row_cap: Option<usize>,
+}
+
+struct HistoryReq {
+    session: Uuid,
+    from_seq: i64,
+    to_seq: i64,
+}
+
+struct HistoryResp {
+    from_seq: i64,
+    rows: Vec<Row>,
 }
 
 pub async fn run(cfg: Config) -> Result<()> {
     let store = Arc::new(cfg.store);
     let session_id = cfg.replay.unwrap_or_else(Uuid::new_v4);
 
-    let mut model = RenderModel::new();
+    let mut model = match cfg.row_cap {
+        Some(c) => RenderModel::with_cap(c),
+        None => RenderModel::new(),
+    };
     let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
     let mut viewport = ViewportState::new(session_id, height.saturating_sub(4), width);
     let mut input_buf = String::new();
@@ -140,6 +155,44 @@ pub async fn run(cfg: Config) -> Result<()> {
     let mut ticker = interval(frame_period);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
+    // History backfill worker. When the user scrolls past the in-memory
+    // window we ask this worker for a chunk of older rows. Only one request
+    // is in flight at a time (gated by `history_inflight`).
+    const HISTORY_CHUNK: i64 = 500;
+    let (history_req_tx, mut history_req_rx) = mpsc::channel::<HistoryReq>(4);
+    let (history_done_tx, mut history_done_rx) = mpsc::channel::<HistoryResp>(4);
+    {
+        let store = store.clone();
+        tokio::spawn(async move {
+            while let Some(req) = history_req_rx.recv().await {
+                let store = store.clone();
+                let events = tokio::task::spawn_blocking(move || {
+                    store.load_range(req.session, req.from_seq, req.to_seq)
+                })
+                .await;
+                let rows = match events {
+                    Ok(Ok(evs)) => reconstruct_rows(&evs),
+                    Ok(Err(e)) => {
+                        tracing::warn!(?e, "history load_range failed");
+                        Vec::new()
+                    }
+                    Err(e) => {
+                        tracing::warn!(?e, "history worker join failed");
+                        Vec::new()
+                    }
+                };
+                if history_done_tx
+                    .send(HistoryResp { from_seq: req.from_seq, rows })
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+    }
+    let mut history_inflight = false;
+
     // SessionStarted on fresh sessions.
     if cfg.replay.is_none() {
         let ev = Event {
@@ -173,7 +226,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                     let _ = persist_tx.send(ev).await;
                 }
                 input::Action::ScrollUp(n) => {
-                    viewport.scroll_up(n as i64, model.rows().len() as i64);
+                    viewport.scroll_up(n as i64, model.combined_len() as i64);
                     model.mark_dirty();
                 }
                 input::Action::ScrollDown(n) => {
@@ -182,6 +235,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                 }
                 input::Action::JumpToLatest => {
                     viewport.jump_to_latest();
+                    model.clear_history();
                     model.mark_dirty();
                 }
                 input::Action::CancelStream => {
@@ -201,8 +255,41 @@ pub async fn run(cfg: Config) -> Result<()> {
             }
         }
 
+        // Maybe request more history. Trigger when the user is scrolled
+        // near the top of what's in memory AND the model's earliest visible
+        // seq is > 0 (i.e. older events exist in the store and we haven't
+        // paged them in yet).
+        if !history_inflight {
+            if let Some(earliest_visible) = model.earliest_visible_seq() {
+                if earliest_visible > 0 {
+                    let near_top = (viewport.scroll_offset + viewport.viewport_height as i64)
+                        >= model.combined_len() as i64 - 8;
+                    if near_top {
+                        let to = earliest_visible;
+                        let from = (to - HISTORY_CHUNK).max(0);
+                        if from < to {
+                            tracing::info!(from, to, "history fetch requested");
+                            let _ = history_req_tx
+                                .send(HistoryReq { session: session_id, from_seq: from, to_seq: to })
+                                .await;
+                            history_inflight = true;
+                        }
+                    }
+                }
+            }
+        }
+
         tokio::select! {
             biased;
+            Some(resp) = history_done_rx.recv() => {
+                let n = resp.rows.len();
+                tracing::info!(from_seq = resp.from_seq, rows = n, "history fetch returned");
+                if !resp.rows.is_empty() {
+                    model.prepend_history(resp.rows);
+                }
+                history_inflight = false;
+                model.mark_dirty();
+            }
             Some(ev) = rendered_rx.recv() => {
                 model.apply(&ev);
                 status = match ev.event_type {
@@ -216,7 +303,10 @@ pub async fn run(cfg: Config) -> Result<()> {
                 let mut drained = 0;
                 while drained < 1024 {
                     match rendered_rx.try_recv() {
-                        Ok(ev2) => { model.apply(&ev2); drained += 1; }
+                        Ok(ev2) => {
+                            model.apply(&ev2);
+                            drained += 1;
+                        }
                         Err(_) => break,
                     }
                 }
