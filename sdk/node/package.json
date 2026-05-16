@@ -1,7 +1,7 @@
 {
-  "name": "camouflage-sdk",
-  "version": "0.6.0",
-  "description": "TypeScript types and helpers for the Camouflage event protocol.",
+  "name": "camouflage",
+  "version": "0.4.6",
+  "description": "Node SDK for Camouflage — the event-native rendering runtime for AI agent applications.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.js",
@@ -10,6 +10,10 @@
     ".": {
       "types": "./src/index.d.ts",
       "import": "./src/index.js"
+    },
+    "./types": {
+      "types": "./src/types.d.ts",
+      "import": "./src/types.js"
     }
   },
   "files": [
@@ -25,6 +29,7 @@
   "keywords": ["camouflage", "tui", "agent", "ai", "rendering"],
   "repository": {
     "type": "git",
-    "url": "https://github.com/sinameraji/camouflage.git"
+    "url": "https://github.com/sinameraji/camouflage.git",
+    "directory": "sdk/node"
   }
 }
