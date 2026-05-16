@@ -35,9 +35,19 @@ struct Args {
     /// Emit outbound NDJSON events (UserInputSubmitted, PermissionResponse)
     /// to stdout. Required by hosts that consume user actions back from the
     /// renderer (e.g. KimiFlare-style adapters). Defaults to true when
-    /// --stdin-events is set.
+    /// --stdin-events is set, false otherwise. Mutually exclusive with
+    /// --responses-fd.
     #[arg(long)]
     emit_responses: Option<bool>,
+
+    /// Write outbound NDJSON events to the given pre-opened file descriptor
+    /// instead of stdout. Use when stdout is needed for rendering (e.g. when
+    /// the renderer is a child of a host that wants both: TUI on stdout to
+    /// the user's terminal, control events on fd 3). The host is responsible
+    /// for opening the fd before spawning. Mutually exclusive with
+    /// --emit-responses=true.
+    #[arg(long, value_name = "FD")]
+    responses_fd: Option<i32>,
 }
 
 fn default_db_path() -> PathBuf {
@@ -66,7 +76,17 @@ fn main() -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    let emit_responses = args.emit_responses.unwrap_or(args.stdin_events);
+    // Resolve where outbound events should land:
+    //   --responses-fd N        → write to fd N (host's choice)
+    //   --emit-responses=true   → write to stdout
+    //   --emit-responses=false  → don't emit at all
+    //   default (with --stdin-events) → write to stdout
+    //   default (no flags)      → don't emit
+    let emit_responses_default = args.stdin_events;
+    let emit_responses = args.emit_responses.unwrap_or(emit_responses_default);
+    if args.responses_fd.is_some() && args.emit_responses == Some(true) {
+        anyhow::bail!("--responses-fd and --emit-responses=true are mutually exclusive");
+    }
 
     rt.block_on(app::run(app::Config {
         store,
@@ -75,5 +95,6 @@ fn main() -> Result<()> {
         fps: args.fps.max(1).min(120),
         row_cap: args.row_cap,
         emit_responses,
+        responses_fd: args.responses_fd,
     }))
 }

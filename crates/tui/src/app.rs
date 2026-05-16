@@ -24,6 +24,11 @@ pub struct Config {
     pub fps: u32,
     pub row_cap: Option<usize>,
     pub emit_responses: bool,
+    /// Optional pre-opened file descriptor for outbound NDJSON. When set,
+    /// takes precedence over `emit_responses`. Host wires this up with
+    /// e.g. `child_process.spawn(cmd, { stdio: [...,"pipe"] })` and points
+    /// the renderer at the resulting fd number.
+    pub responses_fd: Option<i32>,
 }
 
 struct HistoryReq {
@@ -176,9 +181,24 @@ pub async fn run(cfg: Config) -> Result<()> {
     let start_seq = store.latest_seq(session_id).unwrap_or(-1).max(-1) + 1;
     let seq_counter = Arc::new(AtomicI64::new(start_seq));
 
-    // Outbound NDJSON emitter (renderer → host). Used for UserInputSubmitted
-    // and PermissionResponse when `--emit-responses` is set.
-    let outbound_tx: Option<mpsc::Sender<OutgoingEvent>> = if cfg.emit_responses {
+    // Outbound NDJSON emitter (renderer → host). Three sinks possible:
+    //   --responses-fd N → writes to fd N (host owns the fd; typical when
+    //                      stdout is reserved for rendering to the user's
+    //                      terminal and we're spawned as a child process)
+    //   --emit-responses=true (or default with --stdin-events) → stdout
+    //   neither           → no outbound emission
+    let outbound_tx: Option<mpsc::Sender<OutgoingEvent>> = if let Some(fd) = cfg.responses_fd {
+        let (tx, rx) = mpsc::channel::<OutgoingEvent>(64);
+        // SAFETY: the host opened fd N before spawning us via stdio
+        // configuration. The File closes the fd on drop — that's the
+        // desired behaviour at process exit (host sees EOF on its
+        // pipe-read side). spawn_writer owns the File through the
+        // BufWriter wrapper for the task's lifetime.
+        use std::os::unix::io::FromRawFd;
+        let file = unsafe { std::fs::File::from_raw_fd(fd) };
+        spawn_writer(file, rx);
+        Some(tx)
+    } else if cfg.emit_responses {
         let (tx, rx) = mpsc::channel::<OutgoingEvent>(64);
         spawn_writer(std::io::stdout(), rx);
         Some(tx)
