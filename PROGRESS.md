@@ -8,7 +8,7 @@ Specs: [`docs/specs/MVP_BUILD_PROMPT.md`](docs/specs/MVP_BUILD_PROMPT.md), [`doc
 
 ## Current stage
 
-**v0.4 code-complete (Advanced TUI UX) — five slices A–E shipped (markdown, diff viewer, help overlay, live-metrics overlay, theme system). Pending: tag `v0.4.0`. Slash-command picker + split panes + vim motions + session tabs + `@`-picker + timeline minimap deferred to v0.4.5 (need host-protocol coordination or are independent large features).**
+**v0.5 code-complete (DevTools Layer) — four slices A–D shipped (session export, crash-replay dump, golden-snapshot regression tests, deterministic replay-check CLI). Pending: tag `v0.5.0`. Event tracing + latency inspection + per-event profiling deferred to v0.5.5.**
 
 Three tagged releases on GitHub at https://github.com/sinameraji/camouflage:
 - `v0.1.0` — event-native TUI MVP (22 milestones, four perf targets met)
@@ -29,12 +29,24 @@ Diff viewer + slash-command palette + theme system remain deferred to v0.4.
 | v0.1.5  | Extensibility Primitives         | ✅ DONE        | All 6 slices + post-tag UX polish for narrow terminals. |
 | v0.2    | Replay & Timeline Inspection     | ✅ DONE        | Replay controls, event inspector, filter, search, tool timing, bookmarks. |
 | v0.3    | Renderer Abstraction             | ✅ DONE        | Validator, fixtures, headless record, Renderer trait + Snapshot, WS broadcast, browser viewer. Tagged `v0.3.0`. |
-| v0.4    | Advanced TUI UX                  | ✅ DONE (partial) | Slices A–E: markdown rendering, diff viewer, help overlay, metrics overlay, theme system. Slash picker + split panes + vim motions + session tabs + `@`-picker + minimap → v0.4.5. |
-| v0.5    | DevTools Layer                   | NOT STARTED   |                                           |
+| v0.4    | Advanced TUI UX                  | ✅ DONE (partial) | Slices A–E: markdown rendering, diff viewer, help overlay, metrics overlay, theme system. Tagged `v0.4.0`. Slash picker + split panes + vim motions + session tabs + `@`-picker + minimap → v0.4.5. |
+| v0.5    | DevTools Layer                   | ✅ DONE (partial) | Slices A–D: camouflage-export, crash-replay dump on panic, golden-snapshot regression tests, camouflage-replay-check CLI. Event tracing + latency inspection + per-event profiling → v0.5.5. |
 | v0.6    | Ecosystem Layer                  | NOT STARTED   |                                           |
 | v0.7    | Desktop Runtime                  | NOT STARTED   |                                           |
 
-**Totals:** 5 / 8 versions code-complete (v0.1.0, v0.1.5, v0.2.0, v0.3, v0.4 partial). v0.4.5 deferred items + v0.5 / v0.6 / v0.7 remain.
+**Totals:** 6 / 8 versions code-complete (v0.1.0, v0.1.5, v0.2.0, v0.3, v0.4 partial, v0.5 partial). v0.4.5 / v0.5.5 deferred items + v0.6 / v0.7 remain.
+
+## v0.5 slice checklist
+
+| Slice | Subject | Status |
+|-------|---------|--------|
+| A | `camouflage-export` (stored session → portable NDJSON; `--list` enumerates sessions) | ✅ DONE — `ca32cee` |
+| B | Crash-replay dump on panic (last 256 events written to `crash-<ts>.ndjson`) | ✅ DONE — `acf1677` |
+| C | Golden-snapshot regression tests (per-fixture `<name>.snapshot.json` + CI gate) | ✅ DONE — `472ad38` |
+| D | `camouflage-replay-check` (deterministic NDJSON → Snapshot CLI for CI) | ✅ DONE — `812fdf8` |
+| — | Event tracing (structured trace file for offline analysis) | DEFERRED to v0.5.5 |
+| — | Latency inspection (recv → applied → drawn timing histogram) | DEFERRED to v0.5.5 |
+| — | Per-event renderer profiling | DEFERRED to v0.5.5 |
 
 ## v0.4 slice checklist
 
@@ -218,4 +230,5 @@ Brief one-liners per session. Keep this short — git log has the detail.
 | 2026-05-16 | KimiFlare adapter MVP shipped in `~/kimi-code-clone-3` on branch `camouflage-adapter` (commit `b840b80`). Added `--emit-events` one-shot mode (`src/emit-mode.ts`) cloning the `runPrintMode` template; emits 8 event types (Session/UserMessage/AssistantStream/Tool/Permission/RuntimeError) via NDJSON to stdout. Smoke-tested with a real Cloudflare turn — clean 6-event stream end-to-end. Multi-turn, bidirectional permission responses, `StatusUpdate` and `BackgroundTaskUpdate` deferred to follow-up commits. |
 | 2026-05-16 | Real-terminal adapter test surfaced 3 TUI bugs + 1 adapter gap + 2 v0.4-scheduled cosmetic gaps. Captured in new "TUI bug backlog" + "Cross-version validation notes" sections instead of fixing reactively, to keep roadmap momentum. |
 | 2026-05-16 | v0.3 code-complete: Slices A–F shipped (`b95d9cb` → `700ce3d`). New surfaces: `camouflage-validate`, `camouflage-record`, `camouflage-broadcast`, `Renderer`/`SnapshotRenderer` traits, `Snapshot` serde projection, workspace `fixtures/` + CI gate, single-file `viewer/index.html` browser viewer. Dep budget bumped to 16 (added `tokio-tungstenite` + `futures-util`). 45 workspace tests pass. Tagged `v0.3.0`. |
-| 2026-05-16 | v0.4 code-complete (partial): Slices A–E shipped (`f7e8940` → `6ee3efc`). Markdown rendering for assistant text, diff viewer with color-coded markers, `?` help overlay, `M` metrics overlay, theme system with 3 built-ins (`T` cycles). 51 workspace tests, all green. Slash-command picker + split panes + vim motions + session tabs + `@`-picker + minimap deferred to v0.4.5 (need host-protocol coordination or are large independent features). Tag `v0.4.0` pending. |
+| 2026-05-16 | v0.4 code-complete (partial): Slices A–E shipped (`f7e8940` → `6ee3efc`). Markdown rendering for assistant text, diff viewer with color-coded markers, `?` help overlay, `M` metrics overlay, theme system with 3 built-ins (`T` cycles). 51 workspace tests, all green. Slash-command picker + split panes + vim motions + session tabs + `@`-picker + minimap deferred to v0.4.5 (need host-protocol coordination or are large independent features). Tagged `v0.4.0`. |
+| 2026-05-16 | v0.5 code-complete (partial): Slices A–D shipped (`ca32cee` → `812fdf8`). `camouflage-export` (stored session → portable NDJSON, with `--list`), crash-replay dump on panic (ring buffer flushed to `crash-<ts>.ndjson`), golden-snapshot regression tests (per-fixture `<name>.snapshot.json` checked-in + integration test gate), `camouflage-replay-check` (deterministic CI helper). 63 workspace tests, all green. Event tracing + latency inspection + per-event profiling deferred to v0.5.5. Tag `v0.5.0` pending. |
