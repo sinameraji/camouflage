@@ -29,35 +29,37 @@ class CamouflageHandle extends EventEmitter {
   }
 
   /**
-   * Emit one event into the renderer. Returns synchronously; under the
+   * Send one event INTO the renderer. Returns synchronously; under the
    * hood this writes one NDJSON line to the renderer's stdin. Throws
    * if the renderer has exited.
+   *
+   * NOTE: this method is named `send` (not `emit`) to avoid shadowing
+   * EventEmitter's `emit()`, which the binding uses internally to
+   * dispatch outbound events to consumer listeners.
    *
    * @param {string} event_type
    * @param {object} [payload]
    */
-  emit(event_type, payload = {}) {
+  send(event_type, payload = {}) {
     if (this._closed) {
-      throw new Error("camouflage: emit() after close()");
+      throw new Error("camouflage: send() after close()");
     }
     if (typeof event_type !== "string" || !event_type) {
       throw new TypeError("camouflage: event_type must be a non-empty string");
     }
     const line = encode({ event_type, payload });
-    // EventEmitter.emit and our wire-emit are distinct names internally;
-    // ours uses _writeLine to avoid shadowing.
     return this._writeLine(line);
   }
 
   /**
-   * Emit a pre-built Event object. Slight efficiency win for hot paths
+   * Send a pre-built Event object. Slight efficiency win for hot paths
    * because the caller can stringify once and reuse.
    *
    * @param {{event_type: string, payload?: object}} ev
    */
-  emitEvent(ev) {
+  sendEvent(ev) {
     if (this._closed) {
-      throw new Error("camouflage: emitEvent() after close()");
+      throw new Error("camouflage: sendEvent() after close()");
     }
     return this._writeLine(encode(ev));
   }
@@ -146,7 +148,11 @@ function waitForExit(child, softTimeoutMs) {
  */
 export async function mount(opts = {}) {
   const bin = opts.bin || DEFAULT_BIN;
-  const args = ["--stdin-events", "--emit-responses", ...(opts.args || [])];
+  // `--stdin-events --emit-responses` are required for the renderer to
+  // talk our wire protocol. Set `skipDefaultArgs: true` only when wrapping
+  // a non-Camouflage binary in a test or harness.
+  const defaultArgs = opts.skipDefaultArgs ? [] : ["--stdin-events", "--emit-responses"];
+  const args = [...defaultArgs, ...(opts.args || [])];
   const stderrMode = opts.inheritStderr === false ? "pipe" : "inherit";
 
   const child = spawn(bin, args, {

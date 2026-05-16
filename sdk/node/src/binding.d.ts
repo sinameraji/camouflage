@@ -12,6 +12,10 @@ export interface MountOptions {
   /** If true (default), renderer stderr is forwarded to Node's stderr.
    *  If false, captured and exposed via the "stderr" event. */
   inheritStderr?: boolean;
+  /** When true, skip the default `--stdin-events --emit-responses` args.
+   *  Only used to point the binding at a non-Camouflage binary for tests
+   *  or specialised harnesses. */
+  skipDefaultArgs?: boolean;
 }
 
 export interface PermissionResponseEvent {
@@ -31,10 +35,10 @@ export interface ExitEvent {
 }
 
 export interface CamouflageHandle extends EventEmitter {
-  /** Emit one event into the renderer. */
-  emit(event_type: string, payload?: object): boolean;
-  /** Emit a pre-built Event object. */
-  emitEvent(ev: { event_type: string; payload?: object }): boolean;
+  /** Send one event INTO the renderer. */
+  send(event_type: string, payload?: object): boolean;
+  /** Send a pre-built Event object. */
+  sendEvent(ev: { event_type: string; payload?: object }): boolean;
   /** Gracefully close: end stdin, wait for child exit, resolve with code. */
   close(): Promise<number>;
   /** Force-kill the renderer. */
@@ -57,7 +61,7 @@ export interface CamouflageHandle extends EventEmitter {
  * @example
  *   import { mount } from "camouflage";
  *   const cam = await mount();
- *   cam.emit("SessionStarted", {});
+ *   cam.send("SessionStarted", {});
  *   cam.on("userInput", (text) => console.log("got input:", text));
  *   // ... when done:
  *   await cam.close();
