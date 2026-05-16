@@ -150,6 +150,7 @@ pub fn render<B: Backend>(
     tool_output_open: bool,
     permission_feedback: &str,
     slash_picker_index: usize,
+    mention_picker_index: usize,
 ) -> Result<()> {
     terminal.draw(|f| {
         let area = f.area();
@@ -501,6 +502,14 @@ pub fn render<B: Backend>(
         {
             draw_slash_picker_overlay(f, area, input_buf, model, slash_picker_index);
         }
+        if !model.mention_candidates().is_empty()
+            && model.pending_permission().is_none()
+            && search.is_none()
+        {
+            if let Some(partial) = mention_picker_partial(input_buf) {
+                draw_mention_picker_overlay(f, area, &partial, model, mention_picker_index);
+            }
+        }
     })?;
     Ok(())
 }
@@ -565,6 +574,79 @@ fn draw_help_overlay(f: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
                 .borders(Borders::ALL)
                 .title(" help ")
                 .border_style(Style::default().fg(Color::Yellow)),
+        );
+    f.render_widget(widget, overlay);
+}
+
+/// Mirror of the helper in app.rs — kept private so draw doesn't depend
+/// on app internals. Returns the partial text after the last `@` if the
+/// rest of the input is whitespace-free.
+fn mention_picker_partial(buf: &str) -> Option<String> {
+    let at = buf.rfind('@')?;
+    let tail = &buf[at + 1..];
+    if tail.contains(char::is_whitespace) {
+        return None;
+    }
+    Some(tail.to_string())
+}
+
+fn draw_mention_picker_overlay(
+    f: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    partial: &str,
+    model: &RenderModel,
+    selected: usize,
+) {
+    let matches: Vec<&camouflage_renderer::model::MentionEntry> = model
+        .mention_candidates()
+        .iter()
+        .filter(|m| m.token.contains(partial))
+        .collect();
+    if matches.is_empty() {
+        return;
+    }
+    let visible = matches.len().min(8);
+    let w: u16 = 60;
+    let h: u16 = (visible as u16) + 2;
+    if area.width < w + 2 || area.height < h + 6 {
+        return;
+    }
+    let bottom_height: u16 = 5;
+    let x = area.x + 2;
+    let y = area.y.saturating_add(area.height).saturating_sub(bottom_height).saturating_sub(h);
+    let overlay = ratatui::layout::Rect { x, y, width: w, height: h };
+    f.render_widget(Clear, overlay);
+
+    let dim = Style::default().fg(Color::DarkGray);
+    let sel = Style::default().fg(Color::Black).bg(Color::Magenta).add_modifier(Modifier::BOLD);
+    let plain = Style::default().fg(Color::White);
+
+    let sel_idx = selected.min(matches.len() - 1);
+    let lines: Vec<Line> = matches
+        .iter()
+        .take(visible)
+        .enumerate()
+        .map(|(i, m)| {
+            let style = if i == sel_idx { sel } else { plain };
+            let kind = m.kind.as_deref().unwrap_or("");
+            let label = m.label.as_deref().unwrap_or("");
+            Line::from(vec![
+                Span::styled(format!(" @{}", m.token), style),
+                Span::styled(
+                    if kind.is_empty() { "  ".to_string() } else { format!("  [{}]  ", kind) },
+                    dim,
+                ),
+                Span::styled(label.to_string(), dim),
+            ])
+        })
+        .collect();
+
+    let widget = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" mentions  ↑/↓ select  Enter insert ")
+                .border_style(Style::default().fg(Color::Magenta)),
         );
     f.render_widget(widget, overlay);
 }

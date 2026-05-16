@@ -152,6 +152,8 @@ pub async fn run(cfg: Config) -> Result<()> {
     let mut permission_feedback: String = String::new();
     // v0.4.5: slash-picker selection cursor (within the *filtered* list).
     let mut slash_picker_index: usize = 0;
+    // v0.4.5: @-mention picker selection cursor.
+    let mut mention_picker_index: usize = 0;
 
     // Replay state: loaded but not played-through. We start paused at
     // position 0 so the user can scrub controls before content shows.
@@ -387,6 +389,56 @@ pub async fn run(cfg: Config) -> Result<()> {
                 }
             } else {
                 slash_picker_index = 0;
+            }
+            // @-mention picker short-circuit. Active when the last
+            // whitespace-delimited token of input starts with '@' and the
+            // host has registered candidates.
+            let mention_active = !search_open
+                && model.pending_permission().is_none()
+                && !model.mention_candidates().is_empty()
+                && last_mention_partial(&input_buf).is_some();
+            if mention_active {
+                let partial = last_mention_partial(&input_buf).unwrap_or_default();
+                let matches: Vec<&camouflage_renderer::model::MentionEntry> = model
+                    .mention_candidates()
+                    .iter()
+                    .filter(|m| m.token.contains(&partial))
+                    .collect();
+                if !matches.is_empty() {
+                    match key {
+                        crate::tty::Key::Up => {
+                            mention_picker_index = mention_picker_index.saturating_sub(1);
+                            model.mark_dirty();
+                            continue;
+                        }
+                        crate::tty::Key::Down => {
+                            mention_picker_index = (mention_picker_index + 1).min(matches.len() - 1);
+                            model.mark_dirty();
+                            continue;
+                        }
+                        crate::tty::Key::Enter => {
+                            let idx = mention_picker_index.min(matches.len() - 1);
+                            // Replace the partial `@xxx` with the selected
+                            // token (still prefixed with @) + a trailing
+                            // space for readability.
+                            if let Some(at_pos) = input_buf.rfind('@') {
+                                input_buf.truncate(at_pos);
+                                input_buf.push('@');
+                                input_buf.push_str(&matches[idx].token);
+                                input_buf.push(' ');
+                            }
+                            mention_picker_index = 0;
+                            model.mark_dirty();
+                            continue;
+                        }
+                        _ => { /* fall through */ }
+                    }
+                }
+                if mention_picker_index >= matches.len().max(1) {
+                    mention_picker_index = 0;
+                }
+            } else {
+                mention_picker_index = 0;
             }
             // Priority order: search prompt → pending permission widget →
             // inspector cursor (if open) → replay controls (if --replay) →
@@ -900,6 +952,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                         tool_output_open,
                         &permission_feedback,
                         slash_picker_index,
+                        mention_picker_index,
                     )?;
                     last_frame_time_us = draw_start.elapsed().as_micros();
                     model.mark_clean();
@@ -1105,4 +1158,18 @@ pub(crate) fn crash_ring_push(ev: &camouflage_protocol::Event) {
             buf.push_back(ev.clone());
         }
     }
+}
+
+/// Returns the `@`-prefixed partial at the end of `buf`, if any.
+/// "do X with @auth" → Some("auth")
+/// "do X with @"     → Some("")
+/// "do X @auth then" → None  (trailing space breaks the match)
+/// "do X"            → None
+fn last_mention_partial(buf: &str) -> Option<String> {
+    let at = buf.rfind('@')?;
+    let tail = &buf[at + 1..];
+    if tail.contains(char::is_whitespace) {
+        return None;
+    }
+    Some(tail.to_string())
 }
