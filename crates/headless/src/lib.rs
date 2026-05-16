@@ -5,6 +5,7 @@
 //! objects which we normalize (filling in `id`, `seq`, `session_id`, `timestamp_ms`).
 
 pub mod emit;
+pub mod validate;
 
 use camouflage_protocol::{Event, EventType, SCHEMA_VERSION};
 use serde::Deserialize;
