@@ -1,5 +1,5 @@
 use anyhow::Result;
-use camouflage_renderer::{RenderModel, RowKind, ViewportState};
+use camouflage_renderer::{format_elapsed_ms, RenderModel, RowKind, ViewportState};
 use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
@@ -477,10 +477,28 @@ fn row_to_line<'a>(
         RowKind::Error => ("✗".to_string(), Color::Red),
         RowKind::Marker => ("¶".to_string(), Color::Blue),
     };
-    Line::from(vec![
+    // For an in-flight tool row, append the running elapsed time so the
+    // user can see how long the tool has been executing.
+    let mut spans: Vec<Span> = vec![
         Span::styled(format!("{} ", prefix), Style::default().fg(color)),
         Span::raw(r.text.as_str()),
-    ])
+    ];
+    if r.kind == RowKind::Tool {
+        if let Some(state) = r.tool_id.as_ref().and_then(|tid| active_tools.get(tid)) {
+            if !state.finished {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+                let elapsed = (now_ms - state.started_ms).max(0);
+                spans.push(Span::styled(
+                    format!(" ({})", format_elapsed_ms(elapsed)),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+        }
+    }
+    Line::from(spans)
 }
 
 fn short_uuid(s: &str) -> String {

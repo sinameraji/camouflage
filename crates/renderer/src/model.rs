@@ -34,6 +34,10 @@ pub struct ToolState {
     pub finished: bool,
     pub exit_code: Option<i32>,
     pub row_index_hint: Option<usize>,
+    /// v0.2+: wall-clock timestamp from the ToolExecutionStarted event.
+    pub started_ms: i64,
+    /// v0.2+: wall-clock timestamp from the ToolExecutionFinished event.
+    pub finished_ms: Option<i64>,
 }
 
 /// Bounded render model. Stores only enough state to draw the current viewport
@@ -366,6 +370,8 @@ impl RenderModel {
                         finished: false,
                         exit_code: None,
                         row_index_hint: Some(idx),
+                        started_ms: ev.timestamp_ms,
+                        finished_ms: None,
                     },
                 );
             }
@@ -407,10 +413,14 @@ impl RenderModel {
                 if let Some(state) = self.tools.get_mut(&tool_id) {
                     state.finished = true;
                     state.exit_code = exit;
+                    state.finished_ms = Some(ev.timestamp_ms);
+                    let elapsed_ms = (ev.timestamp_ms - state.started_ms).max(0);
+                    let elapsed_str = format_elapsed_ms(elapsed_ms);
                     let summary = format!(
-                        "✓ {} {} (exit={}, stdout={}B, stderr={}B)",
+                        "✓ {} {} ({}, exit={}, stdout={}B, stderr={}B)",
                         state.tool,
                         state.command,
+                        elapsed_str,
                         exit.map(|i| i.to_string()).unwrap_or_else(|| "?".into()),
                         state.stdout_bytes,
                         state.stderr_bytes,
@@ -645,6 +655,19 @@ impl RenderModel {
 impl Default for RenderModel {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Format milliseconds as a short human-friendly elapsed string:
+/// "234ms", "1.2s", "1m 23s".
+pub fn format_elapsed_ms(ms: i64) -> String {
+    if ms < 1000 {
+        format!("{ms}ms")
+    } else if ms < 60_000 {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    } else {
+        let s = ms / 1000;
+        format!("{}m {}s", s / 60, s % 60)
     }
 }
 

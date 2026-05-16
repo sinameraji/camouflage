@@ -8,7 +8,7 @@ pub mod viewport;
 pub mod model;
 
 pub use model::{
-    reconstruct_rows, BackgroundTask, BackgroundTaskState, PendingPermission, RenderModel, Row,
-    RowKind, ToolState,
+    format_elapsed_ms, reconstruct_rows, BackgroundTask, BackgroundTaskState, PendingPermission,
+    RenderModel, Row, RowKind, ToolState,
 };
 pub use viewport::ViewportState;
