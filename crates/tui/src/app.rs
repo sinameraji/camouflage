@@ -261,6 +261,11 @@ pub async fn run(cfg: Config) -> Result<()> {
     // Terminal setup. crossterm's raw mode uses tcsetattr — works regardless
     // of what stdin is.
     let mut terminal = setup_terminal().context("setup terminal")?;
+    // Wire the crash-replay ring buffer BEFORE installing the panic hook
+    // so any in-startup panic still gets a dump.
+    let _ = CRASH_RING.set(std::sync::Arc::new(std::sync::Mutex::new(
+        std::collections::VecDeque::with_capacity(CRASH_RING_CAP),
+    )));
     install_panic_hook();
 
     // Open /dev/tty for reading and start our custom key reader. We use this
@@ -711,6 +716,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                 model.mark_dirty();
             }
             Some(ev) = rendered_rx.recv() => {
+                crash_ring_push(&ev);
                 model.apply(&ev);
                 total_events += 1;
                 events_since_window += 1;
@@ -726,6 +732,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                 while drained < 1024 {
                     match rendered_rx.try_recv() {
                         Ok(ev2) => {
+                            crash_ring_push(&ev2);
                             model.apply(&ev2);
                             total_events += 1;
                             events_since_window += 1;
@@ -987,6 +994,51 @@ fn install_panic_hook() {
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
         let _ = std::io::stdout().execute(LeaveAlternateScreen);
+        // Crash-replay dump: if the shared ring buffer has been wired up,
+        // flush its contents to crash-<unix_ts>.ndjson in cwd so the user
+        // can attach a reproducer to a bug report.
+        if let Some(ring) = CRASH_RING.get() {
+            if let Ok(buf) = ring.lock() {
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let path = std::path::PathBuf::from(format!("crash-{ts}.ndjson"));
+                let mut header = format!("# camouflage crash dump\n# panic: {info}\n# events: {}\n", buf.len());
+                if let Some(ev) = buf.front() {
+                    header.push_str(&format!("# session: {}\n", ev.session_id));
+                }
+                let mut body = String::with_capacity(64 * buf.len());
+                for ev in buf.iter() {
+                    if let Ok(s) = serde_json::to_string(ev) {
+                        body.push_str(&s);
+                        body.push('\n');
+                    }
+                }
+                let combined = format!("{header}{body}");
+                let _ = std::fs::write(&path, combined);
+                eprintln!("camouflage: crash dump written to {}", path.display());
+            }
+        }
         prev(info);
     }));
+}
+
+/// Shared ring buffer of recent events for crash-replay. Populated by the
+/// event-receive hot path; flushed to disk by the panic hook.
+pub(crate) static CRASH_RING: std::sync::OnceLock<
+    std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<camouflage_protocol::Event>>>,
+> = std::sync::OnceLock::new();
+
+pub(crate) const CRASH_RING_CAP: usize = 256;
+
+pub(crate) fn crash_ring_push(ev: &camouflage_protocol::Event) {
+    if let Some(ring) = CRASH_RING.get() {
+        if let Ok(mut buf) = ring.lock() {
+            if buf.len() >= CRASH_RING_CAP {
+                buf.pop_front();
+            }
+            buf.push_back(ev.clone());
+        }
+    }
 }
