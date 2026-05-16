@@ -96,15 +96,24 @@ pub fn render<B: Backend>(
         let has_tasks = !model.background_tasks().is_empty();
         let task_line: u16 = if has_tasks { 1 } else { 0 };
         let status_text_width = status_total_width(model, viewport, status);
-        let inner_w = area.width.saturating_sub(2).max(1) as usize; // input box subtracts borders
+        let inner_w = area.width.saturating_sub(2).max(1) as usize; // box content width (subtract borders)
         let status_height: u16 = {
             let w = area.width.max(1) as usize;
             (((status_text_width + w - 1) / w).max(1).min(3)) as u16
         };
-        // Bottom box height: permission widget needs 4 (border + 2 content + border);
-        // input grows as the user types past one visible line, capped at 5 rows total.
-        let bottom_height: u16 = if model.pending_permission().is_some() {
-            4
+        // Bottom box height grows to fit wrapped content.
+        let bottom_height: u16 = if let Some(pp) = model.pending_permission() {
+            // Two logical content lines: title row + buttons row. Each may
+            // wrap on a narrow terminal; total visual lines = sum of the two.
+            let title_w = UnicodeWidthStr::width(" ⚠ permission needed: ")
+                + UnicodeWidthStr::width(pp.action.as_str())
+                + 4 + UnicodeWidthStr::width(pp.tool.as_str()); // "  (tool)"
+            let buttons_w =
+                UnicodeWidthStr::width("   [1] allow once   [2] allow for session   [3] deny   [Esc] deny");
+            let title_lines = ((title_w + inner_w - 1) / inner_w).max(1);
+            let button_lines = ((buttons_w + inner_w - 1) / inner_w).max(1);
+            let content = (title_lines + button_lines).max(2).min(6) as u16;
+            content + 2 // top + bottom border
         } else {
             let input_w = UnicodeWidthStr::width(input_buf).max(1);
             let content_lines = ((input_w + inner_w - 1) / inner_w).max(1).min(3) as u16;
@@ -318,12 +327,14 @@ pub fn render<B: Backend>(
                     Span::raw(" deny"),
                 ]),
             ];
-            let widget = Paragraph::new(lines).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("permission")
-                    .border_style(Style::default().fg(Color::Yellow)),
-            );
+            let widget = Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("permission")
+                        .border_style(Style::default().fg(Color::Yellow)),
+                );
             f.render_widget(widget, input_chunk);
         } else {
             let input = Paragraph::new(Line::from(vec![
