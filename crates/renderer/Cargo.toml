@@ -6,5 +6,6 @@ license.workspace = true
 
 [dependencies]
 camouflage-protocol = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
