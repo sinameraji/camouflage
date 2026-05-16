@@ -13,6 +13,13 @@ pub enum Action {
     PermissionAllowOnce,
     PermissionAllowSession,
     PermissionDeny,
+    /// v0.2+: replay controls (only meaningful when `--replay` is active).
+    ReplayTogglePlay,
+    ReplayStepForward,
+    ReplayStepBackward,
+    ReplayFaster,
+    ReplaySlower,
+    ReplayRestart,
 }
 
 /// Variant of `handle_key` used while a PermissionRequested is pending.
@@ -59,4 +66,23 @@ pub fn handle_key(k: Key, buf: &mut String) -> Action {
         }
         _ => Action::None,
     }
+}
+
+/// Replay-mode key handler. When `--replay` is active and the input buffer
+/// is empty, replay controls take priority over normal text entry. Returns
+/// `None` (no action) for unrecognised keys so the caller can fall through
+/// to the default handler.
+pub fn handle_key_replay(k: Key, buf: &str) -> Option<Action> {
+    if !buf.is_empty() {
+        return None;
+    }
+    Some(match k {
+        Key::Char(' ') => Action::ReplayTogglePlay,
+        Key::Right => Action::ReplayStepForward,
+        Key::Left => Action::ReplayStepBackward,
+        Key::Char('+') | Key::Char('=') => Action::ReplayFaster,
+        Key::Char('-') | Key::Char('_') => Action::ReplaySlower,
+        Key::Char('0') => Action::ReplayRestart,
+        _ => return None,
+    })
 }

@@ -37,6 +37,68 @@ struct HistoryResp {
     rows: Vec<Row>,
 }
 
+/// State for `--replay <session>`. The events vector is the full session
+/// loaded once at startup; the position is how many we've applied so far.
+/// On each frame tick we advance the position by `speed_eps * speed_mult * dt`,
+/// applying any newly-elapsed events to the render model.
+struct ReplayState {
+    events: Vec<Event>,
+    position: usize,
+    playing: bool,
+    /// Events per second at 1.0 multiplier.
+    speed_eps: f32,
+    /// User-adjustable multiplier (0.25, 0.5, 1, 2, 4, 8, 16, 64).
+    speed_mult: f32,
+    /// Fractional events carried over between ticks.
+    accumulator: f32,
+    last_tick: tokio::time::Instant,
+}
+
+impl ReplayState {
+    fn is_complete(&self) -> bool {
+        self.position >= self.events.len()
+    }
+
+    /// Apply `n` events forward, returning a count of how many were applied.
+    fn step_forward(&mut self, n: usize, model: &mut RenderModel) -> usize {
+        let mut applied = 0;
+        for _ in 0..n {
+            if self.position >= self.events.len() {
+                break;
+            }
+            model.apply(&self.events[self.position]);
+            self.position += 1;
+            applied += 1;
+        }
+        applied
+    }
+
+    /// Step backward by `n` events by rebuilding the model from scratch up to
+    /// position - n. O(N) — fine for debug/inspect use.
+    fn step_backward(&mut self, n: usize, model: &mut RenderModel) {
+        let target = self.position.saturating_sub(n);
+        *model = RenderModel::new();
+        for ev in &self.events[..target] {
+            model.apply(ev);
+        }
+        self.position = target;
+    }
+
+    fn bump_speed(&mut self, faster: bool) {
+        let levels = [0.25_f32, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 64.0];
+        let idx = levels
+            .iter()
+            .position(|&v| (v - self.speed_mult).abs() < 0.01)
+            .unwrap_or(2);
+        let new = if faster {
+            (idx + 1).min(levels.len() - 1)
+        } else {
+            idx.saturating_sub(1)
+        };
+        self.speed_mult = levels[new];
+    }
+}
+
 pub async fn run(cfg: Config) -> Result<()> {
     let store = Arc::new(cfg.store);
     let session_id = cfg.replay.unwrap_or_else(Uuid::new_v4);
@@ -50,12 +112,22 @@ pub async fn run(cfg: Config) -> Result<()> {
     let mut input_buf = String::new();
     let mut status: String = "idle".into();
 
+    // Replay state: loaded but not played-through. We start paused at
+    // position 0 so the user can scrub controls before content shows.
+    let mut replay_state: Option<ReplayState> = None;
     if let Some(sid) = cfg.replay {
         let events = store.load_session(sid).context("loading session")?;
-        for ev in &events {
-            model.apply(ev);
-        }
-        status = format!("replay: {} events", events.len());
+        let n = events.len();
+        replay_state = Some(ReplayState {
+            events,
+            position: 0,
+            playing: true,        // start auto-playing; Space pauses
+            speed_eps: 50.0,      // events per second at 1x; user can +/- adjust
+            speed_mult: 1.0,
+            accumulator: 0.0,
+            last_tick: tokio::time::Instant::now(),
+        });
+        status = format!("replay 0/{n}");
     }
 
     let start_seq = store.latest_seq(session_id).unwrap_or(-1).max(-1) + 1;
@@ -226,8 +298,14 @@ pub async fn run(cfg: Config) -> Result<()> {
     loop {
         // Non-blocking poll for keys before each frame.
         while let Ok(key) = key_rx.try_recv() {
+            // Priority order: pending permission widget → replay controls
+            // (if --replay) → normal key handler.
             let action = if model.pending_permission().is_some() {
                 input::handle_key_permission(key)
+            } else if let (Some(_), Some(act)) =
+                (replay_state.as_ref(), input::handle_key_replay(key, &input_buf))
+            {
+                act
             } else {
                 input::handle_key(key, &mut input_buf)
             };
@@ -330,9 +408,80 @@ pub async fn run(cfg: Config) -> Result<()> {
                     model.clear_pending_permission();
                     model.mark_dirty();
                 }
+                input::Action::ReplayTogglePlay => {
+                    if let Some(rs) = replay_state.as_mut() {
+                        rs.playing = !rs.playing;
+                        rs.last_tick = tokio::time::Instant::now();
+                        rs.accumulator = 0.0;
+                        status = replay_status(rs);
+                        model.mark_dirty();
+                    }
+                }
+                input::Action::ReplayStepForward => {
+                    if let Some(rs) = replay_state.as_mut() {
+                        rs.playing = false;
+                        rs.step_forward(1, &mut model);
+                        status = replay_status(rs);
+                        model.mark_dirty();
+                    }
+                }
+                input::Action::ReplayStepBackward => {
+                    if let Some(rs) = replay_state.as_mut() {
+                        rs.playing = false;
+                        rs.step_backward(1, &mut model);
+                        status = replay_status(rs);
+                        model.mark_dirty();
+                    }
+                }
+                input::Action::ReplayFaster => {
+                    if let Some(rs) = replay_state.as_mut() {
+                        rs.bump_speed(true);
+                        status = replay_status(rs);
+                        model.mark_dirty();
+                    }
+                }
+                input::Action::ReplaySlower => {
+                    if let Some(rs) = replay_state.as_mut() {
+                        rs.bump_speed(false);
+                        status = replay_status(rs);
+                        model.mark_dirty();
+                    }
+                }
+                input::Action::ReplayRestart => {
+                    if let Some(rs) = replay_state.as_mut() {
+                        rs.step_backward(rs.position, &mut model);
+                        rs.playing = false;
+                        status = replay_status(rs);
+                        model.mark_dirty();
+                    }
+                }
                 input::Action::None => {
                     model.mark_dirty();
                 }
+            }
+        }
+
+        // Advance replay playback based on elapsed wall-clock time.
+        if let Some(rs) = replay_state.as_mut() {
+            if rs.playing && !rs.is_complete() {
+                let now = tokio::time::Instant::now();
+                let dt = now.duration_since(rs.last_tick).as_secs_f32();
+                rs.last_tick = now;
+                rs.accumulator += dt * rs.speed_eps * rs.speed_mult;
+                let to_apply = rs.accumulator.floor() as usize;
+                if to_apply > 0 {
+                    rs.accumulator -= to_apply as f32;
+                    let applied = rs.step_forward(to_apply, &mut model);
+                    if applied > 0 {
+                        status = replay_status(rs);
+                    }
+                    if rs.is_complete() {
+                        rs.playing = false;
+                        status = replay_status(rs);
+                    }
+                }
+            } else {
+                rs.last_tick = tokio::time::Instant::now();
             }
         }
 
@@ -429,6 +578,23 @@ fn shutdown(
 ) -> Result<()> {
     teardown_terminal(terminal).ok();
     result
+}
+
+fn replay_status(rs: &ReplayState) -> String {
+    let state = if rs.is_complete() {
+        "end"
+    } else if rs.playing {
+        "play"
+    } else {
+        "pause"
+    };
+    format!(
+        "replay {}/{} @ {:.2}x [{}]",
+        rs.position,
+        rs.events.len(),
+        rs.speed_mult,
+        state
+    )
 }
 
 fn now_ms() -> i64 {
