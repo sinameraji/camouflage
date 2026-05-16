@@ -8,35 +8,65 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Terminal;
 use unicode_width::UnicodeWidthStr;
 
-/// Truncate a string so its display width <= `max_cols`, appending an
-/// ellipsis when truncation actually happens. Width-aware (handles wide
-/// characters via `unicode-width`).
-fn truncate_to_width(s: &str, max_cols: usize) -> String {
-    if max_cols == 0 {
-        return String::new();
+/// Compute the total display width the status line will need to draw all
+/// segments — used to decide how many vertical rows to give the status
+/// region in the layout. Mirrors the order in which the status row is
+/// actually built below.
+fn status_total_width(
+    model: &RenderModel,
+    viewport: &ViewportState,
+    status: &str,
+) -> usize {
+    let segs = model.status_segments();
+    let mut w: usize = 0;
+    if let Some(mode) = segs.get("mode") {
+        // Rendered as " {mode} " (3 + len) plus a trailing space → +1.
+        w += 3 + UnicodeWidthStr::width(mode.as_str()) + 1;
     }
-    let w = UnicodeWidthStr::width(s);
-    if w <= max_cols {
-        return s.to_string();
+    let phase_str = segs
+        .get("phase")
+        .cloned()
+        .unwrap_or_else(|| status.to_string());
+    let needs_spinner = matches!(
+        phase_str.as_str(),
+        "thinking" | "streaming" | "tool" | "running"
+    );
+    if needs_spinner {
+        w += 2; // spinner glyph + space
     }
-    let budget = max_cols.saturating_sub(1); // reserve 1 col for the …
-    let mut acc = String::new();
-    let mut used = 0usize;
-    for ch in s.chars() {
-        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-        if used + cw > budget {
-            break;
+    w += UnicodeWidthStr::width(phase_str.as_str());
+    for key in ["elapsed", "tokens", "cost", "branch"] {
+        if let Some(v) = segs.get(key) {
+            w += 3; // " · "
+            w += UnicodeWidthStr::width(v.as_str());
         }
-        acc.push(ch);
-        used += cw;
     }
-    acc.push('…');
-    acc
-}
-
-/// Sum of display widths across spans.
-fn spans_width(spans: &[Span]) -> usize {
-    spans.iter().map(|s| UnicodeWidthStr::width(s.content.as_ref())).sum()
+    if let Some(v) = segs.get("warn") {
+        w += 3;
+        w += UnicodeWidthStr::width(v.as_str());
+    }
+    let known: &[&str] = &[
+        "mode", "phase", "elapsed", "tokens", "cost", "branch", "warn",
+    ];
+    for (k, v) in segs.iter() {
+        if !known.contains(&k.as_str()) {
+            w += 3;
+            w += UnicodeWidthStr::width(k.as_str()) + 1 + UnicodeWidthStr::width(v.as_str());
+        }
+    }
+    // Counts + optional indicator.
+    let counts = format!(
+        "  [{}] live={} history={} total={}",
+        if viewport.auto_follow { "follow" } else { "scrolled" },
+        model.rows().len(),
+        model.history_rows().len(),
+        model.total_rows(),
+    );
+    w += UnicodeWidthStr::width(counts.as_str());
+    if !viewport.auto_follow {
+        w += UnicodeWidthStr::width(" | new output below ↓");
+    }
+    w
 }
 
 /// Braille-dots spinner frames. Borrowed from KimiFlare's `dots` style.
@@ -59,16 +89,25 @@ pub fn render<B: Backend>(
         // Layout regions: header / transcript / task-ribbon (optional) /
         // status / input or permission. Permission widget needs 4 rows
         // (top border + title row + button row + bottom border).
+        //
+        // Status line grows to 2 or 3 visual lines when host segments don't
+        // fit horizontally so the user can see them all. Capped at 3 to
+        // protect the transcript from being squeezed on tiny terminals.
         let has_tasks = !model.background_tasks().is_empty();
         let task_line: u16 = if has_tasks { 1 } else { 0 };
         let bottom_height: u16 = if model.pending_permission().is_some() { 4 } else { 3 };
+        let status_text_width = status_total_width(model, viewport, status);
+        let status_height: u16 = {
+            let w = area.width.max(1) as usize;
+            (((status_text_width + w - 1) / w).max(1).min(3)) as u16
+        };
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1),
                 Constraint::Min(1),
                 Constraint::Length(task_line),
-                Constraint::Length(1),
+                Constraint::Length(status_height),
                 Constraint::Length(bottom_height),
             ])
             .split(area);
@@ -199,52 +238,24 @@ pub fn render<B: Backend>(
                 ));
             }
         }
-        // Renderer-internal counts at the end (dimmed). On narrow terminals
-        // these get dropped first to protect host segments — and the "new
-        // output below" indicator stays whenever it's set, since it conveys
-        // actionable UX state.
-        let status_width = chunks[3].width as usize;
-        let used = spans_width(&spans);
-        let counts_text = format!(
-            "  [{}] live={} history={} total={}",
-            follow,
-            live.len(),
-            history.len(),
-            model.total_rows(),
-        );
-        if used + counts_text.len() + indicator.len() <= status_width {
-            spans.push(Span::styled(counts_text, Style::default().fg(Color::DarkGray)));
-        }
+        // Renderer-internal counts at the end (dimmed). With wrap enabled
+        // these naturally flow to the next visual line on narrow terminals
+        // rather than being clipped.
+        spans.push(Span::styled(
+            format!(
+                "  [{}] live={} history={} total={}",
+                follow,
+                live.len(),
+                history.len(),
+                model.total_rows(),
+            ),
+            Style::default().fg(Color::DarkGray),
+        ));
         if !indicator.is_empty() {
-            // Indicator gets priority over counts on a narrow terminal.
-            if spans_width(&spans) + indicator.len() <= status_width {
-                spans.push(Span::styled(
-                    indicator.to_string(),
-                    Style::default().fg(Color::Yellow),
-                ));
-            }
-        }
-        // Final safety net: if host segments alone overflow the line, trim
-        // the *visible* text of the last span(s) until we fit, appending an
-        // ellipsis. Walk from the back so we keep mode + phase visible.
-        while spans_width(&spans) > status_width && !spans.is_empty() {
-            let total = spans_width(&spans);
-            let overflow = total - status_width;
-            let last = spans.last_mut().unwrap();
-            let last_w = UnicodeWidthStr::width(last.content.as_ref());
-            if last_w == 0 {
-                spans.pop();
-                continue;
-            }
-            if last_w <= overflow + 1 {
-                // Drop this span entirely.
-                spans.pop();
-            } else {
-                let new_w = last_w - overflow - 1;
-                let trimmed = truncate_to_width(last.content.as_ref(), new_w + 1);
-                last.content = std::borrow::Cow::Owned(trimmed);
-                break;
-            }
+            spans.push(Span::styled(
+                indicator.to_string(),
+                Style::default().fg(Color::Yellow),
+            ));
         }
         // Task ribbon (only if there are any active tasks).
         if has_tasks {
@@ -269,7 +280,7 @@ pub fn render<B: Backend>(
             f.render_widget(ribbon, chunks[2]);
         }
 
-        let status_line = Paragraph::new(Line::from(spans));
+        let status_line = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: false });
         f.render_widget(status_line, chunks[3]);
 
         // Bottom box: either the input prompt or the pending-permission widget.
