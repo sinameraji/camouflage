@@ -16,6 +16,10 @@ path = "src/bin/camouflage_record.rs"
 name = "camouflage-broadcast"
 path = "src/bin/camouflage_broadcast.rs"
 
+[[bin]]
+name = "camouflage-export"
+path = "src/bin/camouflage_export.rs"
+
 [dependencies]
 camouflage-protocol = { workspace = true }
 camouflage-store = { workspace = true }
@@ -28,3 +32,4 @@ clap = { workspace = true }
 anyhow = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
+rusqlite = { workspace = true }
