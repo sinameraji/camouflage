@@ -131,6 +131,57 @@ static BUILTIN: std::sync::LazyLock<Vec<Theme>> = std::sync::LazyLock::new(|| {
             spinner:        Rgb(0xff, 0xb8, 0x6c),
             overlay_border: Rgb(0xbd, 0x93, 0xf9),
         }),
+        theme("nord", || Theme {
+            name: String::new(),
+            accent:         Rgb(0x88, 0xc0, 0xd0),  // frost
+            user:           Rgb(0xb4, 0x8e, 0xad),  // aurora purple
+            assistant:      Rgb(0xd8, 0xde, 0xe9),  // snow storm
+            tool:           Rgb(0x8f, 0xbc, 0xbb),  // frost cyan
+            error:          Rgb(0xbf, 0x61, 0x6a),  // aurora red
+            system:         Rgb(0x4c, 0x56, 0x6a), // polar night light
+            marker:         Rgb(0x5e, 0x81, 0xac),  // frost dark
+            diff_add:       Rgb(0xa3, 0xbe, 0x8c),
+            diff_remove:    Rgb(0xbf, 0x61, 0x6a),
+            diff_hunk:      Rgb(0x88, 0xc0, 0xd0),
+            code_fg:        Rgb(0x8f, 0xbc, 0xbb),
+            code_bg:        Rgb(0x3b, 0x42, 0x52),
+            spinner:        Rgb(0xeb, 0xcb, 0x8b),
+            overlay_border: Rgb(0x88, 0xc0, 0xd0),
+        }),
+        theme("gruvbox-dark", || Theme {
+            name: String::new(),
+            accent:         Rgb(0x83, 0xa5, 0x98),
+            user:           Rgb(0xd3, 0x86, 0x9b),
+            assistant:      Rgb(0xeb, 0xdb, 0xb2),
+            tool:           Rgb(0x83, 0xa5, 0x98),
+            error:          Rgb(0xfb, 0x49, 0x34),
+            system:         Rgb(0x92, 0x83, 0x74),
+            marker:         Rgb(0xb1, 0x62, 0x86),
+            diff_add:       Rgb(0xb8, 0xbb, 0x26),
+            diff_remove:    Rgb(0xfb, 0x49, 0x34),
+            diff_hunk:      Rgb(0x83, 0xa5, 0x98),
+            code_fg:        Rgb(0x8e, 0xc0, 0x7c),
+            code_bg:        Rgb(0x32, 0x30, 0x2f),
+            spinner:        Rgb(0xfa, 0xbd, 0x2f),
+            overlay_border: Rgb(0xfa, 0xbd, 0x2f),
+        }),
+        theme("tokyo-night", || Theme {
+            name: String::new(),
+            accent:         Rgb(0x7d, 0xcf, 0xff),
+            user:           Rgb(0xbb, 0x9a, 0xf7),
+            assistant:      Rgb(0xc0, 0xca, 0xf5),
+            tool:           Rgb(0x7d, 0xcf, 0xff),
+            error:          Rgb(0xf7, 0x76, 0x8e),
+            system:         Rgb(0x56, 0x5f, 0x89),
+            marker:         Rgb(0xbb, 0x9a, 0xf7),
+            diff_add:       Rgb(0x9e, 0xce, 0x6a),
+            diff_remove:    Rgb(0xf7, 0x76, 0x8e),
+            diff_hunk:      Rgb(0x7d, 0xcf, 0xff),
+            code_fg:        Rgb(0xe0, 0xaf, 0x68),
+            code_bg:        Rgb(0x24, 0x28, 0x3b),
+            spinner:        Rgb(0xff, 0x9e, 0x64),
+            overlay_border: Rgb(0xbb, 0x9a, 0xf7),
+        }),
     ]
 });
 
