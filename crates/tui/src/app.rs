@@ -122,6 +122,9 @@ pub async fn run(cfg: Config) -> Result<()> {
     let mut search_query: String = String::new();
     let mut search_matches: Vec<i64> = Vec::new();
     let mut search_current: usize = 0;
+    // v0.2 bookmarks — vim-style 'm' / `'` to add and cycle through.
+    let mut bookmarks: Vec<i64> = Vec::new();
+    let mut bookmark_cursor: usize = 0;
     let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
     let mut viewport = ViewportState::new(session_id, height.saturating_sub(4), width);
     let mut input_buf = String::new();
@@ -576,6 +579,39 @@ pub async fn run(cfg: Config) -> Result<()> {
                             search_query,
                             search_current + 1,
                             search_matches.len()
+                        );
+                        model.mark_dirty();
+                    }
+                }
+                input::Action::BookmarkAdd => {
+                    // Bookmark the row currently at the bottom of the visible
+                    // window (or the inspector cursor if it's open).
+                    let target = if inspector_open {
+                        inspector_focused_seq(&model, inspector_cursor)
+                    } else {
+                        model.rows().back().map(|r| r.seq).or_else(|| {
+                            model.history_rows().last().map(|r| r.seq)
+                        })
+                    };
+                    if let Some(seq) = target {
+                        if !bookmarks.contains(&seq) {
+                            bookmarks.push(seq);
+                            bookmarks.sort();
+                        }
+                        status = format!("bookmark added @ seq {} ({} total)", seq, bookmarks.len());
+                        model.mark_dirty();
+                    }
+                }
+                input::Action::BookmarkNext => {
+                    if !bookmarks.is_empty() {
+                        bookmark_cursor = (bookmark_cursor + 1) % bookmarks.len();
+                        let seq = bookmarks[bookmark_cursor];
+                        scroll_to_seq(&mut viewport, &model, seq);
+                        status = format!(
+                            "bookmark {}/{} @ seq {}",
+                            bookmark_cursor + 1,
+                            bookmarks.len(),
+                            seq
                         );
                         model.mark_dirty();
                     }

@@ -36,6 +36,10 @@ pub enum Action {
     SearchClose,
     SearchNext,
     SearchPrev,
+    /// v0.2+: bookmark the current focus seq.
+    BookmarkAdd,
+    /// v0.2+: cycle to the next bookmark.
+    BookmarkNext,
 }
 
 /// Variant of `handle_key` used while a PermissionRequested is pending.
@@ -62,6 +66,8 @@ pub fn handle_key(k: Key, buf: &mut String) -> Action {
         Key::Char('f') if buf.is_empty() => Action::CycleFilter,
         Key::Char('n') if buf.is_empty() => Action::SearchNext,
         Key::Char('N') if buf.is_empty() => Action::SearchPrev,
+        Key::Char('m') if buf.is_empty() => Action::BookmarkAdd,
+        Key::Char('\'') if buf.is_empty() => Action::BookmarkNext,
         Key::Char(c) => {
             buf.push(c);
             Action::None
