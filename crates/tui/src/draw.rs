@@ -4,7 +4,7 @@ use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Terminal;
 use unicode_width::UnicodeWidthStr;
 
@@ -83,24 +83,48 @@ pub fn render<B: Backend>(
         ]));
         f.render_widget(header, chunks[0]);
 
-        // Transcript viewport — virtualized over history + live rows.
-        // Each logical row stays on a single visual line; longer text gets
-        // truncated with an ellipsis so the bounded-memory math holds.
+        // Transcript viewport. Long rows wrap onto multiple visual lines so
+        // the full content is visible. To keep auto-follow aligned to the
+        // bottom edge we:
+        //   1) take a window of logical rows ending at `(total - scroll_offset)`,
+        //      generously sized so all visual lines fit
+        //   2) precompute the visual line count per row given the current width
+        //   3) tell the Paragraph to scroll past the leading visual lines so
+        //      the bottom-most row sits flush with the viewport bottom
         let history = model.history_rows();
         let live = model.rows();
-        let total = (history.len() + live.len()) as i64;
-        let height = chunks[1].height as i64;
-        let end = (total - viewport.scroll_offset).max(0);
-        let start = (end - height).max(0);
-        let combined = history.iter().chain(live.iter());
-        let active_tools = model.tools();
+        let total_rows = (history.len() + live.len()) as i64;
+        let viewport_h = chunks[1].height as usize;
         let transcript_width = chunks[1].width as usize;
-        let lines: Vec<Line> = combined
-            .skip(start as usize)
-            .take((end - start) as usize)
-            .map(|r| row_to_line(r, frame, active_tools, transcript_width))
+        let avail = transcript_width.saturating_sub(2).max(1); // prefix glyph + space
+        let end = (total_rows - viewport.scroll_offset).max(0) as usize;
+        // Walk backwards from `end` until we've accumulated enough visual
+        // lines to fill the viewport (plus a small safety margin).
+        let mut rows_taken: Vec<&camouflage_renderer::Row> = Vec::new();
+        let mut visual_so_far: usize = 0;
+        let combined: Vec<&camouflage_renderer::Row> =
+            history.iter().chain(live.iter()).take(end).collect();
+        for r in combined.iter().rev() {
+            rows_taken.push(*r);
+            let text_w = UnicodeWidthStr::width(r.text.as_str()).max(1);
+            visual_so_far += (text_w + avail - 1) / avail;
+            if visual_so_far >= viewport_h + 4 {
+                break;
+            }
+        }
+        rows_taken.reverse();
+        let active_tools = model.tools();
+        let lines: Vec<Line> = rows_taken
+            .iter()
+            .map(|r| row_to_line(r, frame, active_tools))
             .collect();
-        let transcript = Paragraph::new(lines);
+        // Scroll so the bottom of the wrapped content sits on the bottom of
+        // the chunk. `visual_so_far` is the total visual lines of the slice;
+        // when it exceeds the viewport, skip the leading ones.
+        let scroll_top = visual_so_far.saturating_sub(viewport_h) as u16;
+        let transcript = Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll_top, 0));
         f.render_widget(transcript, chunks[1]);
 
         // Status line — multi-segment, host-driven. Convention: known keys
@@ -297,7 +321,6 @@ fn row_to_line<'a>(
     r: &'a camouflage_renderer::Row,
     frame: u64,
     active_tools: &std::collections::HashMap<String, camouflage_renderer::ToolState>,
-    max_width: usize,
 ) -> Line<'a> {
     // Assistant row that's open (active stream) but has no text yet → spinner only.
     // Tool row whose ToolState is not yet finished → spinner instead of ✓.
@@ -327,13 +350,9 @@ fn row_to_line<'a>(
         RowKind::Error => ("✗".to_string(), Color::Red),
         RowKind::Marker => ("¶".to_string(), Color::Blue),
     };
-    // Prefix is exactly 2 visual columns ("X "). Reserve them.
-    let prefix_w = 2;
-    let text_budget = max_width.saturating_sub(prefix_w);
-    let body = truncate_to_width(r.text.as_str(), text_budget);
     Line::from(vec![
         Span::styled(format!("{} ", prefix), Style::default().fg(color)),
-        Span::raw(body),
+        Span::raw(r.text.as_str()),
     ])
 }
 
