@@ -86,6 +86,11 @@ pub struct InspectorView<'a> {
     pub json: &'a str,
 }
 
+/// Inline search prompt projection. None = closed.
+pub struct SearchView<'a> {
+    pub query: &'a str,
+}
+
 /// Row-kind filter cycled with `f`. None = show everything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowFilterKind {
@@ -121,6 +126,7 @@ pub fn render<B: Backend>(
     frame: u64,
     inspector: Option<InspectorView<'_>>,
     row_filter: Option<RowFilterKind>,
+    search: Option<SearchView<'_>>,
 ) -> Result<()> {
     terminal.draw(|f| {
         let area = f.area();
@@ -373,9 +379,26 @@ pub fn render<B: Backend>(
         let status_line = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: false });
         f.render_widget(status_line, chunks[3]);
 
-        // Bottom box: either the input prompt or the pending-permission widget.
+        // Bottom box: search prompt > permission widget > input prompt.
         let input_chunk = chunks[4];
-        if let Some(pp) = model.pending_permission() {
+        if let Some(sv) = search.as_ref() {
+            let widget = Paragraph::new(Line::from(vec![
+                Span::styled("/", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::raw(sv.query),
+                Span::styled(
+                    "   (Enter to search · Esc cancel · n/N next/prev)",
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]))
+            .wrap(Wrap { trim: false })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("search")
+                    .border_style(Style::default().fg(Color::Cyan)),
+            );
+            f.render_widget(widget, input_chunk);
+        } else if let Some(pp) = model.pending_permission() {
             let lines: Vec<Line> = vec![
                 Line::from(vec![
                     Span::styled(

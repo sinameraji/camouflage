@@ -27,6 +27,15 @@ pub enum Action {
     InspectorCursorDown,
     /// v0.2+: cycle the row-kind filter (all → errors → tools → patches → permissions → all).
     CycleFilter,
+    /// v0.2+: open the inline search prompt (Ctrl+F).
+    SearchOpen,
+    /// v0.2+: a printable character typed while the search prompt is open.
+    SearchChar(char),
+    SearchBackspace,
+    SearchSubmit,
+    SearchClose,
+    SearchNext,
+    SearchPrev,
 }
 
 /// Variant of `handle_key` used while a PermissionRequested is pending.
@@ -46,10 +55,13 @@ pub fn handle_key(k: Key, buf: &mut String) -> Action {
     match k {
         Key::CtrlC => Action::Quit,
         Key::CtrlE => Action::JumpToLatest,
+        Key::CtrlF => Action::SearchOpen,
         Key::Char('q') if buf.is_empty() => Action::Quit,
         Key::Char('r') if buf.is_empty() => Action::Replay,
         Key::Char('i') if buf.is_empty() => Action::ToggleInspector,
         Key::Char('f') if buf.is_empty() => Action::CycleFilter,
+        Key::Char('n') if buf.is_empty() => Action::SearchNext,
+        Key::Char('N') if buf.is_empty() => Action::SearchPrev,
         Key::Char(c) => {
             buf.push(c);
             Action::None
@@ -73,6 +85,18 @@ pub fn handle_key(k: Key, buf: &mut String) -> Action {
             buf.pop();
             Action::None
         }
+        _ => Action::None,
+    }
+}
+
+/// Key handler used while the search prompt is open. Captures printable
+/// chars + edit keys; Enter submits, Esc closes.
+pub fn handle_key_search(k: Key) -> Action {
+    match k {
+        Key::CtrlC | Key::Esc => Action::SearchClose,
+        Key::Enter => Action::SearchSubmit,
+        Key::Backspace => Action::SearchBackspace,
+        Key::Char(c) => Action::SearchChar(c),
         _ => Action::None,
     }
 }

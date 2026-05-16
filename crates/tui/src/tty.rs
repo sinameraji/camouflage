@@ -32,6 +32,7 @@ pub enum Key {
     End,
     CtrlC,
     CtrlE,
+    CtrlF,
 }
 
 /// Open /dev/tty for reading and return its raw fd.
@@ -100,6 +101,7 @@ impl EscParser {
             State::Ground => match b {
                 0x03 => Some(Key::CtrlC),
                 0x05 => Some(Key::CtrlE),
+                0x06 => Some(Key::CtrlF),
                 0x0d | 0x0a => Some(Key::Enter),
                 0x7f | 0x08 => Some(Key::Backspace),
                 0x1b => {

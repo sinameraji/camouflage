@@ -117,6 +117,11 @@ pub async fn run(cfg: Config) -> Result<()> {
     let mut inspector_cached_json: String = String::new();
     // v0.2 filter toolbar — cycles through row-kind subsets.
     let mut row_filter = RowFilter::All;
+    // v0.2 search — set of matching seqs + index of the current focus.
+    let mut search_open: bool = false;
+    let mut search_query: String = String::new();
+    let mut search_matches: Vec<i64> = Vec::new();
+    let mut search_current: usize = 0;
     let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
     let mut viewport = ViewportState::new(session_id, height.saturating_sub(4), width);
     let mut input_buf = String::new();
@@ -308,9 +313,12 @@ pub async fn run(cfg: Config) -> Result<()> {
     loop {
         // Non-blocking poll for keys before each frame.
         while let Ok(key) = key_rx.try_recv() {
-            // Priority order: pending permission widget → inspector cursor
-            // (if open) → replay controls (if --replay) → normal handler.
-            let action = if model.pending_permission().is_some() {
+            // Priority order: search prompt → pending permission widget →
+            // inspector cursor (if open) → replay controls (if --replay) →
+            // normal handler.
+            let action = if search_open {
+                input::handle_key_search(key)
+            } else if model.pending_permission().is_some() {
                 input::handle_key_permission(key)
             } else if inspector_open
                 && matches!(
@@ -503,6 +511,75 @@ pub async fn run(cfg: Config) -> Result<()> {
                     status = format!("filter: {}", row_filter.label());
                     model.mark_dirty();
                 }
+                input::Action::SearchOpen => {
+                    search_open = true;
+                    search_query.clear();
+                    model.mark_dirty();
+                }
+                input::Action::SearchClose => {
+                    search_open = false;
+                    model.mark_dirty();
+                }
+                input::Action::SearchChar(c) => {
+                    if search_open {
+                        search_query.push(c);
+                        model.mark_dirty();
+                    }
+                }
+                input::Action::SearchBackspace => {
+                    if search_open {
+                        search_query.pop();
+                        model.mark_dirty();
+                    }
+                }
+                input::Action::SearchSubmit => {
+                    if search_open {
+                        search_matches = run_search(&model, &search_query);
+                        search_current = 0;
+                        search_open = false;
+                        if !search_matches.is_empty() {
+                            scroll_to_seq(&mut viewport, &model, search_matches[0]);
+                            status = format!(
+                                "search '{}': 1/{}",
+                                search_query,
+                                search_matches.len()
+                            );
+                        } else {
+                            status = format!("search '{}': no matches", search_query);
+                        }
+                        model.mark_dirty();
+                    }
+                }
+                input::Action::SearchNext => {
+                    if !search_matches.is_empty() {
+                        search_current = (search_current + 1) % search_matches.len();
+                        scroll_to_seq(&mut viewport, &model, search_matches[search_current]);
+                        status = format!(
+                            "search '{}': {}/{}",
+                            search_query,
+                            search_current + 1,
+                            search_matches.len()
+                        );
+                        model.mark_dirty();
+                    }
+                }
+                input::Action::SearchPrev => {
+                    if !search_matches.is_empty() {
+                        search_current = if search_current == 0 {
+                            search_matches.len() - 1
+                        } else {
+                            search_current - 1
+                        };
+                        scroll_to_seq(&mut viewport, &model, search_matches[search_current]);
+                        status = format!(
+                            "search '{}': {}/{}",
+                            search_query,
+                            search_current + 1,
+                            search_matches.len()
+                        );
+                        model.mark_dirty();
+                    }
+                }
                 input::Action::None => {
                     model.mark_dirty();
                 }
@@ -638,6 +715,11 @@ pub async fn run(cfg: Config) -> Result<()> {
                         RowFilter::Patches => Some(draw::RowFilterKind::Patches),
                         RowFilter::Permissions => Some(draw::RowFilterKind::Permissions),
                     };
+                    let search_view = if search_open {
+                        Some(draw::SearchView { query: &search_query })
+                    } else {
+                        None
+                    };
                     draw::render(
                         &mut terminal,
                         &model,
@@ -647,6 +729,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                         frame_counter,
                         insp,
                         filter,
+                        search_view,
                     )?;
                     model.mark_clean();
                 }
@@ -702,6 +785,41 @@ impl RowFilter {
             Self::Patches => "patches",
             Self::Permissions => "permissions",
         }
+    }
+}
+
+/// Substring search across all currently-loaded rows. Returns the seqs of
+/// matching rows in order from oldest to newest. Case-insensitive.
+fn run_search(model: &RenderModel, query: &str) -> Vec<i64> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let q = query.to_lowercase();
+    let mut hits = Vec::new();
+    for r in model.history_rows().iter().chain(model.rows().iter()) {
+        if r.text.to_lowercase().contains(&q) {
+            hits.push(r.seq);
+        }
+    }
+    hits
+}
+
+/// Adjust the viewport scroll so the row matching `seq` is visible.
+fn scroll_to_seq(viewport: &mut ViewportState, model: &RenderModel, seq: i64) {
+    let mut idx_from_bottom: Option<i64> = None;
+    let mut cnt: i64 = 0;
+    for r in model.history_rows().iter().chain(model.rows().iter()).rev() {
+        if r.seq == seq {
+            idx_from_bottom = Some(cnt);
+            break;
+        }
+        cnt += 1;
+    }
+    if let Some(offset) = idx_from_bottom {
+        let total = model.combined_len() as i64;
+        let target_scroll = offset.saturating_sub(viewport.viewport_height as i64 / 2);
+        viewport.scroll_offset = target_scroll.clamp(0, (total - 1).max(0));
+        viewport.auto_follow = viewport.scroll_offset == 0;
     }
 }
 
