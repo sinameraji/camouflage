@@ -1,0 +1,30 @@
+{
+  "name": "camouflage-sdk",
+  "version": "0.6.0",
+  "description": "TypeScript types and helpers for the Camouflage event protocol.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.js",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    }
+  },
+  "files": [
+    "src/",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test src/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": ["camouflage", "tui", "agent", "ai", "rendering"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sinameraji/camouflage.git"
+  }
+}
