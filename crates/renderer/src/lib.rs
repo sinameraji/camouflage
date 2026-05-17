@@ -17,7 +17,8 @@ pub use model::{
 };
 pub use viewport::ViewportState;
 pub use snapshot::{
-    Snapshot, SnapshotPermission, SnapshotRow, SnapshotRowKind, SnapshotTask, SnapshotTaskState,
+    Snapshot, SnapshotPermission, SnapshotRow, SnapshotRowKind, SnapshotSelectList,
+    SnapshotSelectListOption, SnapshotTask, SnapshotTaskState,
 };
 
 use camouflage_protocol::Event;
@@ -80,12 +81,30 @@ impl SnapshotRenderer for RenderModel {
             action: p.action.clone(),
             detail: p.detail.clone(),
         });
+        let select_list = self.active_select_list().map(|s| SnapshotSelectList {
+            id: s.id.clone(),
+            prompt: s.prompt.clone(),
+            options: s
+                .options
+                .iter()
+                .map(|o| SnapshotSelectListOption {
+                    value: o.value.clone(),
+                    label: o.label.clone(),
+                    description: o.description.clone(),
+                })
+                .collect(),
+            selected: s.selected,
+            filter: s.filter.clone(),
+            allow_filter: s.allow_filter,
+            allow_cancel: s.allow_cancel,
+        });
         Snapshot {
             total_rows: self.total_rows(),
             rows,
             status: self.status_segments().clone(),
             tasks,
             pending_permission,
+            select_list,
         }
     }
 }

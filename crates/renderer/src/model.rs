@@ -99,6 +99,55 @@ pub struct RenderModel {
     /// first SessionStarted; subsequent ones are no-ops at the row
     /// level (still persisted by the caller).
     session_started_seen: bool,
+    /// CC-1 (v0.4.6+): currently-open SelectList instance, if any. The
+    /// renderer draws a modal overlay while this is `Some` and routes
+    /// ↑/↓/Enter/Esc/typed-chars into picker actions. Cleared when the
+    /// user submits or cancels.
+    active_select_list: Option<SelectListState>,
+}
+
+/// CC-1 — per-instance state for an open SelectList modal. Mirrors the
+/// `ShowSelectList` payload plus runtime UI state (selected index, filter
+/// buffer). Multiple SelectLists could in principle stack; this minimal
+/// implementation supports one at a time and ignores subsequent Show
+/// events until the open one is resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectListState {
+    pub id: String,
+    pub prompt: String,
+    pub options: Vec<SelectListEntry>,
+    /// Index into `options` of the currently-highlighted entry.
+    pub selected: usize,
+    /// Substring filter — typed chars accumulate here, Backspace removes.
+    /// Filtering is done at draw-time via [`SelectListState::filtered_indices`].
+    pub filter: String,
+    pub allow_filter: bool,
+    pub allow_cancel: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectListEntry {
+    pub value: String,
+    pub label: String,
+    pub description: Option<String>,
+}
+
+impl SelectListState {
+    /// Indices into `options` that match the current `filter` (substring
+    /// match on `label`, case-insensitive). When filter is empty, returns
+    /// all indices in order.
+    pub fn filtered_indices(&self) -> Vec<usize> {
+        if self.filter.is_empty() {
+            return (0..self.options.len()).collect();
+        }
+        let needle = self.filter.to_lowercase();
+        self.options
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.label.to_lowercase().contains(&needle))
+            .map(|(i, _)| i)
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,6 +226,7 @@ impl RenderModel {
             slash_commands: Vec::new(),
             mention_candidates: Vec::new(),
             session_started_seen: false,
+            active_select_list: None,
         }
     }
 
@@ -265,6 +315,25 @@ impl RenderModel {
     }
 
     /// Active background tasks (ribbon between transcript and status).
+    /// CC-1 — currently-open SelectList, if any.
+    pub fn active_select_list(&self) -> Option<&SelectListState> {
+        self.active_select_list.as_ref()
+    }
+
+    /// CC-1 — mutable access to the currently-open SelectList. Used by the
+    /// TUI to advance the selection, edit the filter, etc.
+    pub fn active_select_list_mut(&mut self) -> Option<&mut SelectListState> {
+        self.active_select_list.as_mut()
+    }
+
+    /// CC-1 — clear the currently-open SelectList (called on submit/cancel
+    /// after the response has been emitted).
+    pub fn clear_select_list(&mut self) {
+        if self.active_select_list.take().is_some() {
+            self.dirty = true;
+        }
+    }
+
     pub fn slash_commands(&self) -> &[SlashCmdEntry] {
         &self.slash_commands
     }
@@ -805,14 +874,77 @@ impl RenderModel {
             }
             // Outbound events never reach apply() in practice, but be tolerant
             // (a replayed session log might contain them).
-            EventType::UserInputSubmitted
-            | EventType::PermissionResponse
-            | EventType::SelectListResponse => {}
-            // CC-1 SelectList model state lands in the next commit. For now
-            // accept the Show event so validate + fixture roundtrip pass;
-            // the overlay is drawn from the SelectListState struct that
-            // we'll add to RenderModel in the next slice.
-            EventType::ShowSelectList => {}
+            EventType::UserInputSubmitted | EventType::PermissionResponse => {}
+            // CC-1 — when replaying a stored session, a SelectListResponse
+            // means the SelectList resolved; clear the active state so the
+            // snapshot reflects the post-resolution UI.
+            EventType::SelectListResponse => {
+                self.active_select_list = None;
+                self.dirty = true;
+            }
+            EventType::ShowSelectList => {
+                // Ignore if another SelectList is already open — the renderer
+                // is single-instance for this primitive; queueing is host
+                // concern. Hosts should resolve the pending one (cancel or
+                // wait for response) before showing another.
+                if self.active_select_list.is_some() {
+                    return false;
+                }
+                let id = ev.payload.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let prompt = ev.payload.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if id.is_empty() {
+                    return false; // malformed; host must supply an id
+                }
+                let options: Vec<SelectListEntry> = ev
+                    .payload
+                    .get("options")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|opt| {
+                                let value = opt.get("value").and_then(|v| v.as_str())?;
+                                let label = opt.get("label").and_then(|v| v.as_str())?;
+                                let description = opt
+                                    .get("description")
+                                    .and_then(|v| v.as_str())
+                                    .map(str::to_string);
+                                Some(SelectListEntry {
+                                    value: value.to_string(),
+                                    label: label.to_string(),
+                                    description,
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if options.is_empty() {
+                    return false; // nothing to pick from; no-op
+                }
+                let default = ev.payload.get("default").and_then(|v| v.as_str());
+                let selected = default
+                    .and_then(|d| options.iter().position(|o| o.value == d))
+                    .unwrap_or(0);
+                let allow_filter = ev
+                    .payload
+                    .get("allow_filter")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+                let allow_cancel = ev
+                    .payload
+                    .get("allow_cancel")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+                self.active_select_list = Some(SelectListState {
+                    id,
+                    prompt,
+                    options,
+                    selected,
+                    filter: String::new(),
+                    allow_filter,
+                    allow_cancel,
+                });
+                self.dirty = true;
+            }
         }
         true
     }

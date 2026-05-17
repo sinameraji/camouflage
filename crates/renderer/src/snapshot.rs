@@ -61,6 +61,27 @@ pub struct SnapshotPermission {
     pub detail: String,
 }
 
+/// CC-1 — projection of an active SelectList for non-Rust frontends.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotSelectListOption {
+    pub value: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotSelectList {
+    pub id: String,
+    pub prompt: String,
+    pub options: Vec<SnapshotSelectListOption>,
+    pub selected: usize,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub filter: String,
+    pub allow_filter: bool,
+    pub allow_cancel: bool,
+}
+
 /// A full UI snapshot. Renderers should treat the document as
 /// last-write-wins: every field reflects current state, not deltas.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -72,4 +93,7 @@ pub struct Snapshot {
     pub tasks: Vec<SnapshotTask>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_permission: Option<SnapshotPermission>,
+    /// CC-1 — present when a SelectList modal is currently active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub select_list: Option<SnapshotSelectList>,
 }
