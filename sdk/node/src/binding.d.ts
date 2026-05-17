@@ -61,6 +61,19 @@ export function confirm(
 ): Promise<ConfirmResponseEvent>;
 
 /**
+ * Convenience helper: show a brief inline toast. Display-only — no
+ * response.
+ */
+export function toast(
+  cam: CamouflageHandle,
+  spec: string | {
+    text: string;
+    kind?: "info" | "success" | "warn" | "error";
+    ttl_ms?: number;
+  },
+): void;
+
+/**
  * Convenience helper: emit a `ShowSelectList` and return a Promise that
  * resolves to the user's `SelectListResponseEvent` for that id. The host
  * picks the id; the helper subscribes once, filters by id, and unsubscribes

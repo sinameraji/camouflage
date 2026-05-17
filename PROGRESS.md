@@ -49,8 +49,8 @@ The full catalog conversation from 2026-05-17 lives in [`docs/specs/components-c
 | ID | Component | Status | KimiFlare consumers it unblocks | Reasoning |
 |----|-----------|--------|----------------------------------|-----------|
 | CC-1 | `SelectList` | ✅ DONE — `c7480b4 → aac4094` (camouflage) + `6556771` (kimi-code-clone-3) | session picker, checkpoint picker, theme picker, slash picker (generalised), resume picker, model picker | Highest leverage — single shape covers ~6 KimiFlare React components. Shipped in 5 commits: protocol+payloads, model+Snapshot, TUI overlay+keys+outbound emit, Node SDK helper, KimiFlare `kimiflare resume` driver. Validated end-to-end with real session data. Existing hardcoded slash picker (Phase 2.6) is structurally a special-case SelectList — generalising it (deleting `SlashCommandsRegistered` in favor of `ShowSelectList`) is a follow-up cleanup. |
-| CC-2 | `Confirm` | ⬜ TODO | "save before quit?", "delete session?", any yes/no modal | Tiny scope, covers many small modals. The existing `PermissionRequested` is structurally a special-case Confirm; we keep it as the well-known type. |
-| CC-3 | `Toast` | ⬜ TODO | "Saved", "Authenticated", brief feedback | Trivial scope, immediate visible value. No outbound event — display-only with optional TTL. |
+| CC-2 | `Confirm` | ✅ DONE — `7bc8d43` | "save before quit?", "delete session?", any yes/no modal | Tiny scope, covers many small modals. The existing `PermissionRequested` is structurally a special-case Confirm; we keep it as the well-known type. |
+| CC-3 | `Toast` | ✅ DONE — `<this commit>` | "Saved", "Authenticated", brief feedback | Trivial scope, immediate visible value. No outbound event — display-only with optional TTL. |
 | CC-4 | `Wizard` | ⬜ TODO | onboarding flow, LSP wizard, command wizard | Multi-step; composes 1+2+3. |
 | CC-5 | `Form` | ⬜ TODO | settings configuration, cloud token + endpoint configuration | Bigger; can wait for a real driver. |
 | CC-6 | `Table` | ⬜ TODO | usage stats, cost attribution, session-list with metadata | Display-oriented; optional `RowSelected` outbound for interactive use. |

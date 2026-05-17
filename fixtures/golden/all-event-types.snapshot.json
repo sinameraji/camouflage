@@ -68,7 +68,7 @@
       "text": "end of warmup"
     },
     {
-      "seq": 30,
+      "seq": 31,
       "kind": "system",
       "text": "session ended"
     }
@@ -78,5 +78,12 @@
     "mode": "edit",
     "phase": "idle"
   },
-  "tasks": []
+  "tasks": [],
+  "toasts": [
+    {
+      "text": "Saved",
+      "kind": "success",
+      "expires_ms": 1778990532456
+    }
+  ]
 }

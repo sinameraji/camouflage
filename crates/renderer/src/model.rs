@@ -106,6 +106,26 @@ pub struct RenderModel {
     active_select_list: Option<SelectListState>,
     /// CC-2 (v0.4.6+): currently-open Confirm modal, if any.
     active_confirm: Option<ConfirmState>,
+    /// CC-3 (v0.4.6+): live toasts. Each has a wall-clock expiration; the
+    /// renderer should call `prune_expired_toasts()` (or `active_toasts()`)
+    /// each frame to drop expired entries.
+    toasts: Vec<ToastState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToastKind {
+    Info,
+    Success,
+    Warn,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToastState {
+    pub text: String,
+    pub kind: ToastKind,
+    /// Milliseconds since UNIX epoch when this toast should disappear.
+    pub expires_ms: i64,
 }
 
 /// CC-2 — per-instance state for an open Confirm modal.
@@ -242,6 +262,7 @@ impl RenderModel {
             session_started_seen: false,
             active_select_list: None,
             active_confirm: None,
+            toasts: Vec::new(),
         }
     }
 
@@ -360,6 +381,31 @@ impl RenderModel {
 
     pub fn clear_confirm(&mut self) {
         if self.active_confirm.take().is_some() {
+            self.dirty = true;
+        }
+    }
+
+    /// CC-3 — toasts currently still within their TTL. Caller should
+    /// invoke this each frame; expired entries are dropped lazily.
+    pub fn active_toasts(&mut self) -> &[ToastState] {
+        self.prune_expired_toasts();
+        &self.toasts
+    }
+
+    /// CC-3 — read-only view of toasts (no pruning). Used by `snapshot()`
+    /// which takes `&self`. Callers needing a clean list should use
+    /// `active_toasts()` (which prunes) instead.
+    pub fn peek_toasts(&self) -> &[ToastState] {
+        &self.toasts
+    }
+
+    /// Drop toasts whose `expires_ms` is in the past. Sets `dirty` if
+    /// any were removed.
+    pub fn prune_expired_toasts(&mut self) {
+        let now = current_time_ms();
+        let before = self.toasts.len();
+        self.toasts.retain(|t| t.expires_ms > now);
+        if self.toasts.len() != before {
             self.dirty = true;
         }
     }
@@ -918,6 +964,37 @@ impl RenderModel {
                 self.active_confirm = None;
                 self.dirty = true;
             }
+            EventType::ShowToast => {
+                let text = ev.payload.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if text.is_empty() {
+                    return false;
+                }
+                let kind = ev
+                    .payload
+                    .get("kind")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| match s {
+                        "info" => Some(ToastKind::Info),
+                        "success" => Some(ToastKind::Success),
+                        "warn" => Some(ToastKind::Warn),
+                        "error" => Some(ToastKind::Error),
+                        _ => None,
+                    })
+                    .unwrap_or(ToastKind::Info);
+                let ttl_ms = ev
+                    .payload
+                    .get("ttl_ms")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(3000) as i64;
+                let expires_ms = current_time_ms().saturating_add(ttl_ms);
+                self.toasts.push(ToastState { text, kind, expires_ms });
+                // Cap to a sane number so a misbehaving host can't blow
+                // memory by emitting thousands of toasts.
+                if self.toasts.len() > 16 {
+                    self.toasts.remove(0);
+                }
+                self.dirty = true;
+            }
             EventType::ShowConfirm => {
                 if self.active_confirm.is_some() {
                     return false;
@@ -1066,6 +1143,15 @@ fn append_capped(buf: &mut String, chunk: &str) {
     let tail = &combined[tail_start..];
     let elided = total.saturating_sub(head.len() + tail.len());
     *buf = format!("{head}\n… {elided} bytes elided …\n{tail}");
+}
+
+/// Wall-clock time in milliseconds since UNIX epoch. Used for toast TTLs.
+fn current_time_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 /// Compact a tool's command-line into something safe to render on a single

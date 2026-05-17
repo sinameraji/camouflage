@@ -533,6 +533,12 @@ pub fn render<B: Backend>(
         if let Some(c) = model.active_confirm() {
             draw_confirm_overlay(f, area, c, theme);
         }
+        // CC-3 — toasts in the top-right. Read-only peek; the app loop
+        // calls prune_expired_toasts() each tick to drop stale entries.
+        let toasts = model.peek_toasts();
+        if !toasts.is_empty() {
+            draw_toasts(f, area, toasts, theme);
+        }
     })?;
     Ok(())
 }
@@ -820,6 +826,54 @@ fn draw_tool_output_overlay(
                 .border_style(Style::default().fg(Color::Yellow)),
         );
     f.render_widget(widget, overlay);
+}
+
+fn draw_toasts(
+    f: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    toasts: &[camouflage_renderer::model::ToastState],
+    theme: &camouflage_renderer::theme::Theme,
+) {
+    use camouflage_renderer::model::ToastKind;
+    // Newest toasts at the top of the stack. Take up to 5 to avoid
+    // dominating the screen.
+    let visible: Vec<_> = toasts.iter().rev().take(5).collect();
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let mut next_y = area.y + 1;
+    for t in visible {
+        if t.expires_ms <= now_ms { continue; }
+        let max_w = area.width.saturating_sub(4).min(60).max(20);
+        let text_w = UnicodeWidthStr::width(t.text.as_str()) as u16;
+        let inner_w = text_w.min(max_w.saturating_sub(4));
+        let w = inner_w + 4;
+        if next_y + 3 > area.y + area.height { break; }
+        if w > area.width { continue; }
+        let x = area.x + area.width.saturating_sub(w + 1);
+        let rect = ratatui::layout::Rect { x, y: next_y, width: w, height: 3 };
+        f.render_widget(Clear, rect);
+        let (label, color) = match t.kind {
+            ToastKind::Info    => (" i ", rgb_to_color(theme.accent)),
+            ToastKind::Success => (" ✓ ", rgb_to_color(theme.diff_add)),
+            ToastKind::Warn    => (" ! ", rgb_to_color(theme.spinner)),
+            ToastKind::Error   => (" ✗ ", rgb_to_color(theme.error)),
+        };
+        let widget = Paragraph::new(Line::from(vec![
+            Span::styled(label, Style::default().fg(Color::Black).bg(color).add_modifier(Modifier::BOLD)),
+            Span::raw(" "),
+            Span::styled(t.text.as_str(), Style::default().fg(rgb_to_color(theme.assistant))),
+        ]))
+        .wrap(Wrap { trim: false })
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(color)),
+        );
+        f.render_widget(widget, rect);
+        next_y += 3;
+    }
 }
 
 fn draw_confirm_overlay(

@@ -38,7 +38,8 @@ export type EventType =
   | "ShowSelectList"
   | "SelectListResponse"
   | "ShowConfirm"
-  | "ConfirmResponse";
+  | "ConfirmResponse"
+  | "ShowToast";
 
 export type Direction = "inbound" | "outbound";
 
@@ -164,6 +165,13 @@ export type ConfirmResponse = {
   cancelled?: boolean;
 };
 
+export type ToastKind = "info" | "success" | "warn" | "error";
+export type ShowToast = {
+  text: string;
+  kind?: ToastKind;
+  ttl_ms?: number;
+};
+
 // Tagged union --------------------------------------------------------------
 
 export type Event = EnvelopeMeta &
@@ -196,6 +204,7 @@ export type Event = EnvelopeMeta &
     | { event_type: "SelectListResponse"; payload: SelectListResponse }
     | { event_type: "ShowConfirm"; payload: ShowConfirm }
     | { event_type: "ConfirmResponse"; payload: ConfirmResponse }
+    | { event_type: "ShowToast"; payload: ShowToast }
   );
 
 // Reader --------------------------------------------------------------------

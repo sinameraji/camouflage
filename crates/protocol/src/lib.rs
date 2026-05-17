@@ -98,6 +98,10 @@ pub enum EventType {
     /// v0.4.6+ (CC-2) — Renderer → host: outcome of a `ShowConfirm`.
     /// Payload carries either `value: bool` or `cancelled: true`.
     ConfirmResponse,
+    /// v0.4.6+ (CC-3) — Host → renderer: show a brief inline toast.
+    /// Display-only — no outbound response. Toast auto-fades after
+    /// `ttl_ms` (defaults to 3000ms when omitted).
+    ShowToast,
 }
 
 impl EventType {
@@ -131,6 +135,7 @@ impl EventType {
             EventType::SelectListResponse => "SelectListResponse",
             EventType::ShowConfirm => "ShowConfirm",
             EventType::ConfirmResponse => "ConfirmResponse",
+            EventType::ShowToast => "ShowToast",
         }
     }
 
@@ -419,6 +424,30 @@ pub mod payloads {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         pub cancelled: bool,
     }
+
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "snake_case")]
+    pub enum ToastKind {
+        Info,
+        Success,
+        Warn,
+        Error,
+    }
+
+    /// v0.4.6+ (CC-3) — host asks the renderer to show a brief inline
+    /// toast. Display-only — no outbound response.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct ShowToast {
+        pub text: String,
+        /// Visual treatment. Defaults to `info`.
+        #[serde(default)]
+        pub kind: Option<ToastKind>,
+        /// How long the toast stays visible, in milliseconds. Defaults to
+        /// 3000 when omitted. Toast clears on its own after this elapses;
+        /// no further protocol traffic is needed.
+        #[serde(default)]
+        pub ttl_ms: Option<u32>,
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -475,8 +504,9 @@ mod tests {
             EventType::SelectListResponse,
             EventType::ShowConfirm,
             EventType::ConfirmResponse,
+            EventType::ShowToast,
         ];
-        assert_eq!(types.len(), 28);
+        assert_eq!(types.len(), 29);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();

@@ -45,6 +45,8 @@ export {
   SelectListResponse,
   ShowConfirm,
   ConfirmResponse,
+  ToastKind,
+  ShowToast,
   // Tagged union
   Event,
   // Helpers
@@ -57,6 +59,7 @@ export {
   mount,
   selectList,
   confirm,
+  toast,
   MountOptions,
   CamouflageHandle,
   PermissionResponseEvent,

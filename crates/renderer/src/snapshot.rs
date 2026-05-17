@@ -93,6 +93,26 @@ pub struct SnapshotConfirm {
     pub allow_cancel: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SnapshotToastKind {
+    Info,
+    Success,
+    Warn,
+    Error,
+}
+
+/// CC-3 — one live toast in the snapshot. Toasts auto-expire from the
+/// renderer's state; once they're gone from this list, the consumer
+/// should stop showing them too.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotToast {
+    pub text: String,
+    pub kind: SnapshotToastKind,
+    /// Milliseconds since UNIX epoch when this toast disappears.
+    pub expires_ms: i64,
+}
+
 /// A full UI snapshot. Renderers should treat the document as
 /// last-write-wins: every field reflects current state, not deltas.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -110,4 +130,7 @@ pub struct Snapshot {
     /// CC-2 — present when a Confirm modal is currently active.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confirm: Option<SnapshotConfirm>,
+    /// CC-3 — live toasts (those still within TTL).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub toasts: Vec<SnapshotToast>,
 }

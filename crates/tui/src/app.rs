@@ -1094,6 +1094,9 @@ pub async fn run(cfg: Config) -> Result<()> {
             }
             _ = ticker.tick() => {
                 frame_counter = frame_counter.wrapping_add(1);
+                // CC-3 — expire toasts whose TTL has elapsed. Cheap; the
+                // call sets dirty if it removed any entries.
+                model.prune_expired_toasts();
                 // Refresh inspector cache if the cursor moved or the row at
                 // the cursor has changed seq (e.g. due to new events).
                 if inspector_open {

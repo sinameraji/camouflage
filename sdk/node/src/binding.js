@@ -299,6 +299,19 @@ export function confirm(cam, spec) {
   });
 }
 
+/**
+ * Convenience helper: show a brief inline toast. Display-only — no
+ * response. Returns synchronously.
+ *
+ * @param {CamouflageHandle} cam
+ * @param {string | {text: string, kind?: "info"|"success"|"warn"|"error", ttl_ms?: number}} spec
+ *   Either a plain string (defaults to info, 3000ms) or a full spec object.
+ */
+export function toast(cam, spec) {
+  const payload = typeof spec === "string" ? { text: spec } : spec;
+  cam.send("ShowToast", payload);
+}
+
 function spawnError(err, bin) {
   if (err && err.code === "ENOENT") {
     return new Error(

@@ -28,4 +28,5 @@
 {"event_type":"SelectListResponse","payload":{"id":"resume-1","value":"sess-abc"}}
 {"event_type":"ShowConfirm","payload":{"id":"quit-1","prompt":"Save before quitting?","yes_label":"Save","no_label":"Discard","default":"yes"}}
 {"event_type":"ConfirmResponse","payload":{"id":"quit-1","value":true}}
+{"event_type":"ShowToast","payload":{"text":"Saved","kind":"success","ttl_ms":1500}}
 {"event_type":"SessionEnded","payload":{}}
