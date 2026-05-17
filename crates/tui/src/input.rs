@@ -85,8 +85,17 @@ pub fn handle_key(k: Key, buf: &mut String, cursor: &mut usize) -> Action {
     }
     match k {
         Key::CtrlC => Action::Quit,
+        // Ctrl+A and Ctrl+E pull double duty: when input has content,
+        // they're readline-style "cursor to line start/end". When input
+        // is empty, they fall through to their v0.2 transcript-scroll
+        // bindings (CtrlA was unused → now usable as line-start).
+        Key::CtrlA if !buf.is_empty() => { *cursor = 0; Action::None }
+        Key::CtrlE if !buf.is_empty() => { *cursor = total; Action::None }
         Key::CtrlE => Action::JumpToLatest,
         Key::CtrlF => Action::SearchOpen,
+        // CtrlA when buf empty: no useful default; no-op so it doesn't
+        // accidentally fire something else.
+        Key::CtrlA => Action::None,
         // Removed vim-style lowercase single-char shortcuts (q/r/i/f/n/N/m/').
         // They surprised users by quitting / toggling state mid-typing
         // session — the most common report being "I typed 'q' and the

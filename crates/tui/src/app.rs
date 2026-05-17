@@ -900,6 +900,13 @@ pub async fn run(cfg: Config) -> Result<()> {
             } else {
                 input::handle_key(key, &mut input_buf, &mut input_cursor)
             };
+            // Any input change (typed char, cursor move, backspace, Ctrl+W,
+            // etc.) should trigger a redraw so the picker overlay /
+            // cursor position update is visible immediately rather than
+            // waiting for the next ticker frame.
+            if matches!(action, input::Action::None) {
+                model.mark_dirty();
+            }
             match action {
                 input::Action::Quit => {
                     // Ctrl+C is now "interrupt the agent" instead of

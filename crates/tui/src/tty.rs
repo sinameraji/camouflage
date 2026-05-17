@@ -39,6 +39,8 @@ pub enum Key {
     CtrlC,
     CtrlE,
     CtrlF,
+    /// Cursor to start of line (readline convention).
+    CtrlA,
     /// Delete word before cursor (readline convention).
     CtrlW,
     /// Delete to start of line (readline convention).
@@ -113,6 +115,7 @@ impl EscParser {
     fn feed(&mut self, b: u8) -> Option<Key> {
         match self.state {
             State::Ground => match b {
+                0x01 => Some(Key::CtrlA),
                 0x03 => Some(Key::CtrlC),
                 0x05 => Some(Key::CtrlE),
                 0x06 => Some(Key::CtrlF),
