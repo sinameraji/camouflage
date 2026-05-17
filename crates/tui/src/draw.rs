@@ -145,6 +145,7 @@ pub fn render<B: Backend>(
     model: &RenderModel,
     viewport: &ViewportState,
     input_buf: &str,
+    input_cursor: usize,
     status: &str,
     frame: u64,
     inspector: Option<InspectorView<'_>>,
@@ -483,6 +484,21 @@ pub fn render<B: Backend>(
             .wrap(Wrap { trim: false })
             .block(Block::default().borders(Borders::ALL).title("input"));
             f.render_widget(input, input_chunk);
+            // Show the terminal cursor at the insertion point so the user
+            // can SEE where typing will land. Cursor position math: box
+            // top border (+1), prompt "› " is 2 cells, then char cursor
+            // mapped to visual width. For multi-line wrap we fall through
+            // to whatever ratatui draws — best-effort for now.
+            let prompt_w: u16 = 2; // "› "
+            let typed_before_cursor: String = input_buf.chars().take(input_cursor).collect();
+            let cursor_col_advance = UnicodeWidthStr::width(typed_before_cursor.as_str()) as u16;
+            let inner_w = input_chunk.width.saturating_sub(2).max(1);
+            let total_x = 1u16 + prompt_w + cursor_col_advance; // 1 = left border
+            // Wrap into multiple visual lines when the prompt overflows.
+            let cursor_line = total_x / inner_w;
+            let cursor_x = input_chunk.x + (total_x % inner_w);
+            let cursor_y = input_chunk.y + 1 + cursor_line;
+            f.set_cursor(cursor_x, cursor_y);
         }
         if help_open {
             draw_help_overlay(f, area);

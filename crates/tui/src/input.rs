@@ -77,7 +77,12 @@ pub fn handle_key_permission(k: Key, feedback: &mut String) -> Action {
     }
 }
 
-pub fn handle_key(k: Key, buf: &mut String) -> Action {
+pub fn handle_key(k: Key, buf: &mut String, cursor: &mut usize) -> Action {
+    // Normalise the cursor if it's somehow past the end (defensive).
+    let total = buf.chars().count();
+    if *cursor > total {
+        *cursor = total;
+    }
     match k {
         Key::CtrlC => Action::Quit,
         Key::CtrlE => Action::JumpToLatest,
@@ -95,7 +100,7 @@ pub fn handle_key(k: Key, buf: &mut String) -> Action {
         Key::Char('T') if buf.is_empty() => Action::CycleTheme,
         Key::Char('X') if buf.is_empty() => Action::ToggleToolOutput,
         Key::Char(c) => {
-            buf.push(c);
+            insert_at_cursor(buf, cursor, c);
             Action::None
         }
         Key::Enter => {
@@ -103,10 +108,33 @@ pub fn handle_key(k: Key, buf: &mut String) -> Action {
                 Action::None
             } else {
                 let text = std::mem::take(buf);
+                *cursor = 0;
                 Action::SubmitInput(text)
             }
         }
         Key::Esc => Action::CancelStream,
+        // Cursor navigation: when there IS text, Left/Right/Home/End move
+        // the insertion point. When the input is empty, Home falls through
+        // to "scroll to top" and End to "jump to latest" — keeping the
+        // existing v0.2 transcript-scroll keybinds usable on an empty buf.
+        Key::Left if !buf.is_empty() => {
+            if *cursor > 0 { *cursor -= 1; }
+            Action::None
+        }
+        Key::Right if !buf.is_empty() => {
+            if *cursor < total { *cursor += 1; }
+            Action::None
+        }
+        Key::WordLeft => {
+            *cursor = word_boundary_left(buf, *cursor);
+            Action::None
+        }
+        Key::WordRight => {
+            *cursor = word_boundary_right(buf, *cursor);
+            Action::None
+        }
+        Key::Home if !buf.is_empty() => { *cursor = 0; Action::None }
+        Key::End if !buf.is_empty() => { *cursor = total; Action::None }
         Key::Up => Action::ScrollUp(1),
         Key::Down => Action::ScrollDown(1),
         // Mouse wheel scrolls the transcript by a few lines per notch.
@@ -120,11 +148,59 @@ pub fn handle_key(k: Key, buf: &mut String) -> Action {
         Key::End => Action::JumpToLatest,
         Key::Home => Action::ScrollUp(u16::MAX),
         Key::Backspace => {
-            buf.pop();
+            delete_before_cursor(buf, cursor);
             Action::None
         }
         _ => Action::None,
     }
+}
+
+/// Insert character `c` at the cursor (a character index, not byte
+/// offset). Advances cursor.
+pub fn insert_at_cursor(buf: &mut String, cursor: &mut usize, c: char) {
+    let byte_idx = byte_index_of_char(buf, *cursor);
+    buf.insert(byte_idx, c);
+    *cursor += 1;
+}
+
+/// Delete the character before the cursor (Backspace). Decrements cursor.
+pub fn delete_before_cursor(buf: &mut String, cursor: &mut usize) {
+    if *cursor == 0 { return; }
+    let new_byte_idx = byte_index_of_char(buf, *cursor - 1);
+    let old_byte_idx = byte_index_of_char(buf, *cursor);
+    buf.replace_range(new_byte_idx..old_byte_idx, "");
+    *cursor -= 1;
+}
+
+/// Byte offset of the `n`-th character (or buf.len() if n is at/past end).
+fn byte_index_of_char(buf: &str, n: usize) -> usize {
+    buf.char_indices().nth(n).map(|(i, _)| i).unwrap_or(buf.len())
+}
+
+/// Word-boundary navigation. "Word" here is a maximal run of alphanumeric
+/// characters (incl. underscores); everything else is a separator.
+pub fn word_boundary_left(buf: &str, cursor: usize) -> usize {
+    if cursor == 0 { return 0; }
+    let chars: Vec<char> = buf.chars().collect();
+    let mut i = cursor;
+    // Skip separators backward
+    while i > 0 && !is_word_char(chars[i - 1]) { i -= 1; }
+    // Skip word chars backward
+    while i > 0 && is_word_char(chars[i - 1]) { i -= 1; }
+    i
+}
+
+pub fn word_boundary_right(buf: &str, cursor: usize) -> usize {
+    let chars: Vec<char> = buf.chars().collect();
+    let n = chars.len();
+    let mut i = cursor;
+    while i < n && !is_word_char(chars[i]) { i += 1; }
+    while i < n && is_word_char(chars[i]) { i += 1; }
+    i
+}
+
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
 }
 
 /// Key handler used while the search prompt is open. Captures printable

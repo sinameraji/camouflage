@@ -135,6 +135,10 @@ pub async fn run(cfg: Config) -> Result<()> {
     let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
     let mut viewport = ViewportState::new(session_id, height.saturating_sub(4), width);
     let mut input_buf = String::new();
+    // Character index of the insertion point in input_buf. Mutated by
+    // handle_key (cursor-aware: Left/Right/Home/End/WordLeft/WordRight)
+    // and by the renderer when filling input on slash/mention selection.
+    let mut input_cursor: usize = 0;
     let mut status: String = "idle".into();
 
     // v0.4: live-metrics overlay state. Tracks total events seen, a 1-second
@@ -406,6 +410,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                         crate::tty::Key::Enter => {
                             let idx = slash_picker_index.min(matches.len() - 1);
                             input_buf = format!("/{} ", matches[idx].name);
+                            input_cursor = input_buf.chars().count();
                             slash_picker_index = 0;
                             model.mark_dirty();
                             continue;
@@ -452,6 +457,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                         };
                         input_history_index = Some(next);
                         input_buf = input_history[next].clone();
+                        input_cursor = input_buf.chars().count();
                         model.mark_dirty();
                         continue;
                     }
@@ -460,11 +466,13 @@ pub async fn run(cfg: Config) -> Result<()> {
                             Some(i) if i + 1 < input_history.len() => {
                                 input_history_index = Some(i + 1);
                                 input_buf = input_history[i + 1].clone();
+                                input_cursor = input_buf.chars().count();
                             }
                             Some(_) => {
                                 // Past the last entry → back to a fresh buffer.
                                 input_history_index = None;
                                 input_buf.clear();
+                                input_cursor = 0;
                             }
                             None => { /* nothing to do */ }
                         }
@@ -809,6 +817,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                                 input_buf.push('@');
                                 input_buf.push_str(&matches[idx].token);
                                 input_buf.push(' ');
+                                input_cursor = input_buf.chars().count();
                             }
                             mention_picker_index = 0;
                             model.mark_dirty();
@@ -847,7 +856,7 @@ pub async fn run(cfg: Config) -> Result<()> {
             {
                 act
             } else {
-                input::handle_key(key, &mut input_buf)
+                input::handle_key(key, &mut input_buf, &mut input_cursor)
             };
             match action {
                 input::Action::Quit => return shutdown(&mut terminal, Ok(())),
@@ -1336,6 +1345,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                         &model,
                         &viewport,
                         &input_buf,
+                        input_cursor,
                         &status,
                         frame_counter,
                         insp,
