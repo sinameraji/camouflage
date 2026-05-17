@@ -116,6 +116,12 @@ fn validate_payload(event_type: EventType, payload: serde_json::Value) -> Result
         SelectListResponse => {
             serde_json::from_value::<payloads::SelectListResponse>(payload)?;
         }
+        ShowConfirm => {
+            serde_json::from_value::<payloads::ShowConfirm>(payload)?;
+        }
+        ConfirmResponse => {
+            serde_json::from_value::<payloads::ConfirmResponse>(payload)?;
+        }
         // Events without typed payloads — any JSON value is accepted.
         SessionStarted
         | SessionEnded

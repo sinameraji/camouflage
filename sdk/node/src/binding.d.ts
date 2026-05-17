@@ -38,6 +38,28 @@ export interface SelectListResponseEvent {
   cancelled: boolean;
 }
 
+export interface ConfirmResponseEvent {
+  id: string;
+  value?: boolean;
+  cancelled: boolean;
+}
+
+/**
+ * Convenience helper: emit a ShowConfirm and resolve to the user's
+ * ConfirmResponse for that id.
+ */
+export function confirm(
+  cam: CamouflageHandle,
+  spec: {
+    id: string;
+    prompt: string;
+    yes_label?: string;
+    no_label?: string;
+    default?: "yes" | "no";
+    allow_cancel?: boolean;
+  },
+): Promise<ConfirmResponseEvent>;
+
 /**
  * Convenience helper: emit a `ShowSelectList` and return a Promise that
  * resolves to the user's `SelectListResponseEvent` for that id. The host
@@ -89,6 +111,7 @@ export interface CamouflageHandle extends EventEmitter {
   on(event: "userInput", listener: (text: string) => void): this;
   on(event: "permissionResponse", listener: (resp: PermissionResponseEvent) => void): this;
   on(event: "selectListResponse", listener: (resp: SelectListResponseEvent) => void): this;
+  on(event: "confirmResponse", listener: (resp: ConfirmResponseEvent) => void): this;
   on(event: "event", listener: (ev: Event) => void): this;
   on(event: "invalid", listener: (info: InvalidEvent) => void): this;
   on(event: "stderr", listener: (chunk: string) => void): this;

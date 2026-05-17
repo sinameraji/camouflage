@@ -43,6 +43,8 @@ export {
   SelectListOption,
   ShowSelectList,
   SelectListResponse,
+  ShowConfirm,
+  ConfirmResponse,
   // Tagged union
   Event,
   // Helpers
@@ -54,10 +56,12 @@ export {
 export {
   mount,
   selectList,
+  confirm,
   MountOptions,
   CamouflageHandle,
   PermissionResponseEvent,
   SelectListResponseEvent,
+  ConfirmResponseEvent,
   InvalidEvent,
   ExitEvent,
 } from "./binding.js";

@@ -104,6 +104,20 @@ pub struct RenderModel {
     /// ↑/↓/Enter/Esc/typed-chars into picker actions. Cleared when the
     /// user submits or cancels.
     active_select_list: Option<SelectListState>,
+    /// CC-2 (v0.4.6+): currently-open Confirm modal, if any.
+    active_confirm: Option<ConfirmState>,
+}
+
+/// CC-2 — per-instance state for an open Confirm modal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmState {
+    pub id: String,
+    pub prompt: String,
+    pub yes_label: String,
+    pub no_label: String,
+    /// true = yes is selected, false = no.
+    pub selected_yes: bool,
+    pub allow_cancel: bool,
 }
 
 /// CC-1 — per-instance state for an open SelectList modal. Mirrors the
@@ -227,6 +241,7 @@ impl RenderModel {
             mention_candidates: Vec::new(),
             session_started_seen: false,
             active_select_list: None,
+            active_confirm: None,
         }
     }
 
@@ -330,6 +345,21 @@ impl RenderModel {
     /// after the response has been emitted).
     pub fn clear_select_list(&mut self) {
         if self.active_select_list.take().is_some() {
+            self.dirty = true;
+        }
+    }
+
+    /// CC-2 — currently-open Confirm, if any.
+    pub fn active_confirm(&self) -> Option<&ConfirmState> {
+        self.active_confirm.as_ref()
+    }
+
+    pub fn active_confirm_mut(&mut self) -> Option<&mut ConfirmState> {
+        self.active_confirm.as_mut()
+    }
+
+    pub fn clear_confirm(&mut self) {
+        if self.active_confirm.take().is_some() {
             self.dirty = true;
         }
     }
@@ -880,6 +910,54 @@ impl RenderModel {
             // snapshot reflects the post-resolution UI.
             EventType::SelectListResponse => {
                 self.active_select_list = None;
+                self.dirty = true;
+            }
+            // CC-2 — same pattern as SelectListResponse: replayed responses
+            // resolve the modal.
+            EventType::ConfirmResponse => {
+                self.active_confirm = None;
+                self.dirty = true;
+            }
+            EventType::ShowConfirm => {
+                if self.active_confirm.is_some() {
+                    return false;
+                }
+                let id = ev.payload.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let prompt = ev.payload.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if id.is_empty() {
+                    return false;
+                }
+                let yes_label = ev
+                    .payload
+                    .get("yes_label")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Yes")
+                    .to_string();
+                let no_label = ev
+                    .payload
+                    .get("no_label")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("No")
+                    .to_string();
+                let selected_yes = ev
+                    .payload
+                    .get("default")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s != "no")
+                    .unwrap_or(true);
+                let allow_cancel = ev
+                    .payload
+                    .get("allow_cancel")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+                self.active_confirm = Some(ConfirmState {
+                    id,
+                    prompt,
+                    yes_label,
+                    no_label,
+                    selected_yes,
+                    allow_cancel,
+                });
                 self.dirty = true;
             }
             EventType::ShowSelectList => {

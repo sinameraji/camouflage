@@ -234,6 +234,12 @@ export async function mount(opts = {}) {
         value: ev.payload?.value,
         cancelled: !!ev.payload?.cancelled,
       });
+    } else if (ev.event_type === "ConfirmResponse") {
+      handle.emit("confirmResponse", {
+        id: ev.payload?.id,
+        value: ev.payload?.value,
+        cancelled: !!ev.payload?.cancelled,
+      });
     }
     // Always also emit the raw Event for advanced consumers.
     handle.emit("event", ev);
@@ -270,6 +276,26 @@ export function selectList(cam, spec) {
     };
     cam.on("selectListResponse", listener);
     cam.send("ShowSelectList", spec);
+  });
+}
+
+/**
+ * Convenience helper: emit a ShowConfirm and resolve to the user's
+ * ConfirmResponse for that id.
+ *
+ * @param {CamouflageHandle} cam
+ * @param {{id: string, prompt: string, yes_label?: string, no_label?: string, default?: "yes"|"no", allow_cancel?: boolean}} spec
+ * @returns {Promise<{id: string, value?: boolean, cancelled: boolean}>}
+ */
+export function confirm(cam, spec) {
+  return new Promise((resolve) => {
+    const listener = (resp) => {
+      if (resp.id !== spec.id) return;
+      cam.off("confirmResponse", listener);
+      resolve(resp);
+    };
+    cam.on("confirmResponse", listener);
+    cam.send("ShowConfirm", spec);
   });
 }
 

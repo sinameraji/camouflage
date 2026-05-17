@@ -90,6 +90,14 @@ pub enum EventType {
     /// Payload carries either `value` (a successful pick) or
     /// `cancelled: true` (user dismissed with Esc / Ctrl+C).
     SelectListResponse,
+    /// v0.4.6+ (CC-2) — Host → renderer: show a Yes/No modal confirmation.
+    /// The user's choice comes back via `ConfirmResponse`. Lighter sibling
+    /// of `PermissionRequested` (which keeps its own type because it
+    /// carries permission-specific extras).
+    ShowConfirm,
+    /// v0.4.6+ (CC-2) — Renderer → host: outcome of a `ShowConfirm`.
+    /// Payload carries either `value: bool` or `cancelled: true`.
+    ConfirmResponse,
 }
 
 impl EventType {
@@ -121,6 +129,8 @@ impl EventType {
             EventType::MentionCandidatesRegistered => "MentionCandidatesRegistered",
             EventType::ShowSelectList => "ShowSelectList",
             EventType::SelectListResponse => "SelectListResponse",
+            EventType::ShowConfirm => "ShowConfirm",
+            EventType::ConfirmResponse => "ConfirmResponse",
         }
     }
 
@@ -129,7 +139,8 @@ impl EventType {
         match self {
             EventType::UserInputSubmitted
             | EventType::PermissionResponse
-            | EventType::SelectListResponse => Direction::Outbound,
+            | EventType::SelectListResponse
+            | EventType::ConfirmResponse => Direction::Outbound,
             _ => Direction::Inbound,
         }
     }
@@ -377,6 +388,37 @@ pub mod payloads {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         pub cancelled: bool,
     }
+
+    /// v0.4.6+ (CC-2) — host asks the renderer to show a Yes/No modal.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct ShowConfirm {
+        pub id: String,
+        pub prompt: String,
+        /// Label for the affirmative button. Default "Yes".
+        #[serde(default)]
+        pub yes_label: Option<String>,
+        /// Label for the negative button. Default "No".
+        #[serde(default)]
+        pub no_label: Option<String>,
+        /// Which button is initially selected. "yes" or "no". Default "yes".
+        #[serde(default)]
+        pub default: Option<String>,
+        /// When true, Esc / Ctrl+C dismisses without choosing (response
+        /// carries `cancelled: true`). Default true.
+        #[serde(default = "default_true")]
+        pub allow_cancel: bool,
+    }
+
+    /// v0.4.6+ (CC-2) — outbound result of `ShowConfirm`. Exactly one of
+    /// `value` (bool) or `cancelled` is set.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct ConfirmResponse {
+        pub id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub value: Option<bool>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        pub cancelled: bool,
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -431,8 +473,10 @@ mod tests {
             EventType::MentionCandidatesRegistered,
             EventType::ShowSelectList,
             EventType::SelectListResponse,
+            EventType::ShowConfirm,
+            EventType::ConfirmResponse,
         ];
-        assert_eq!(types.len(), 26);
+        assert_eq!(types.len(), 28);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();

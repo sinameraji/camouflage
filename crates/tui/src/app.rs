@@ -479,6 +479,51 @@ pub async fn run(cfg: Config) -> Result<()> {
                     continue;
                 }
             }
+            // CC-2 — Confirm short-circuit. Y/N (case-insensitive) decides
+            // immediately; ← / → toggles selection; Enter submits the
+            // currently-selected button; Esc cancels (when allow_cancel).
+            if model.active_confirm().is_some() {
+                use crate::tty::Key;
+                let (id, value, cancel): (Option<String>, Option<bool>, bool) = {
+                    let c = model.active_confirm().unwrap();
+                    match key {
+                        Key::Char('y') | Key::Char('Y') => (Some(c.id.clone()), Some(true), false),
+                        Key::Char('n') | Key::Char('N') => (Some(c.id.clone()), Some(false), false),
+                        Key::Left | Key::Right => {
+                            if let Some(cm) = model.active_confirm_mut() {
+                                cm.selected_yes = !cm.selected_yes;
+                            }
+                            model.mark_dirty();
+                            continue;
+                        }
+                        Key::Enter => (Some(c.id.clone()), Some(c.selected_yes), false),
+                        Key::Esc if c.allow_cancel => (Some(c.id.clone()), None, true),
+                        _ => continue,
+                    }
+                };
+                if let Some(id) = id {
+                    if let Some(tx) = outbound_tx.as_ref() {
+                        let payload = if cancel {
+                            serde_json::json!({ "id": id, "cancelled": true })
+                        } else {
+                            serde_json::json!({ "id": id, "value": value })
+                        };
+                        let ev = Event {
+                            id: Uuid::new_v4(),
+                            session_id,
+                            seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                            timestamp_ms: now_ms(),
+                            schema_version: SCHEMA_VERSION,
+                            event_type: EventType::ConfirmResponse,
+                            payload,
+                        };
+                        let _ = tx.send(OutgoingEvent(ev)).await;
+                    }
+                    model.clear_confirm();
+                    continue;
+                }
+                continue;
+            }
             // CC-1 — SelectList short-circuit. When a SelectList is active,
             // all input flows into it: ↑/↓ navigate filtered options,
             // Enter submits the highlighted option, Esc cancels (when

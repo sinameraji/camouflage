@@ -118,6 +118,8 @@ mod tests {
             EventType::MentionCandidatesRegistered,
             EventType::ShowSelectList,
             EventType::SelectListResponse,
+            EventType::ShowConfirm,
+            EventType::ConfirmResponse,
         ];
         for v in variants {
             let needle = format!("\"event_type\":\"{}\"", v.as_str());

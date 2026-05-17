@@ -528,6 +528,11 @@ pub fn render<B: Backend>(
         if let Some(sl) = model.active_select_list() {
             draw_select_list_overlay(f, area, sl, theme);
         }
+        // CC-2 — Confirm modal, painted last so it stacks above SelectList
+        // if both are somehow active (shouldn't happen in practice).
+        if let Some(c) = model.active_confirm() {
+            draw_confirm_overlay(f, area, c, theme);
+        }
     })?;
     Ok(())
 }
@@ -814,6 +819,68 @@ fn draw_tool_output_overlay(
                 .title(" tool output (most recent) ")
                 .border_style(Style::default().fg(Color::Yellow)),
         );
+    f.render_widget(widget, overlay);
+}
+
+fn draw_confirm_overlay(
+    f: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    c: &camouflage_renderer::model::ConfirmState,
+    theme: &camouflage_renderer::theme::Theme,
+) {
+    let prompt_w = UnicodeWidthStr::width(c.prompt.as_str()) as u16;
+    let yes_w = UnicodeWidthStr::width(c.yes_label.as_str()) as u16;
+    let no_w = UnicodeWidthStr::width(c.no_label.as_str()) as u16;
+    // " [Y] {yes} (y)   [N] {no} (n) " — approximate width
+    let buttons_w = yes_w + no_w + 24;
+    let w = prompt_w.max(buttons_w).saturating_add(4).max(36).min(area.width.saturating_sub(2));
+    let h: u16 = 5; // border + prompt + spacer + buttons + hint
+    if area.width < w + 2 || area.height < h + 2 {
+        return;
+    }
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    let overlay = ratatui::layout::Rect { x, y, width: w, height: h };
+    f.render_widget(Clear, overlay);
+
+    let dim = Style::default().fg(Color::DarkGray);
+    let head = Style::default()
+        .fg(rgb_to_color(theme.accent))
+        .add_modifier(Modifier::BOLD);
+    let sel = Style::default()
+        .fg(Color::Black)
+        .bg(rgb_to_color(theme.accent))
+        .add_modifier(Modifier::BOLD);
+    let unsel = Style::default().fg(rgb_to_color(theme.assistant));
+
+    let yes_style = if c.selected_yes { sel } else { unsel };
+    let no_style = if c.selected_yes { unsel } else { sel };
+
+    let hint = if c.allow_cancel {
+        "y/n · ←/→ toggle · Enter confirm · Esc cancel"
+    } else {
+        "y/n · ←/→ toggle · Enter confirm"
+    };
+
+    let lines: Vec<Line> = vec![
+        Line::from(vec![Span::styled(format!(" {}", c.prompt), head)]),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("   "),
+            Span::styled(format!(" {} ", c.yes_label), yes_style),
+            Span::styled("  (y)   ", dim),
+            Span::styled(format!(" {} ", c.no_label), no_style),
+            Span::styled("  (n)", dim),
+        ]),
+        Line::from(vec![Span::styled(hint, dim)]),
+    ];
+
+    let widget = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" confirm ")
+            .border_style(Style::default().fg(rgb_to_color(theme.overlay_border))),
+    );
     f.render_widget(widget, overlay);
 }
 

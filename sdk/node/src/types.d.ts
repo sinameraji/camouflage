@@ -36,7 +36,9 @@ export type EventType =
   | "SlashCommandsRegistered"
   | "MentionCandidatesRegistered"
   | "ShowSelectList"
-  | "SelectListResponse";
+  | "SelectListResponse"
+  | "ShowConfirm"
+  | "ConfirmResponse";
 
 export type Direction = "inbound" | "outbound";
 
@@ -148,6 +150,20 @@ export type SelectListResponse = {
   cancelled?: boolean;
 };
 
+export type ShowConfirm = {
+  id: string;
+  prompt: string;
+  yes_label?: string;
+  no_label?: string;
+  default?: "yes" | "no";
+  allow_cancel?: boolean;
+};
+export type ConfirmResponse = {
+  id: string;
+  value?: boolean;
+  cancelled?: boolean;
+};
+
 // Tagged union --------------------------------------------------------------
 
 export type Event = EnvelopeMeta &
@@ -178,6 +194,8 @@ export type Event = EnvelopeMeta &
     | { event_type: "MentionCandidatesRegistered"; payload: MentionCandidatesRegistered }
     | { event_type: "ShowSelectList"; payload: ShowSelectList }
     | { event_type: "SelectListResponse"; payload: SelectListResponse }
+    | { event_type: "ShowConfirm"; payload: ShowConfirm }
+    | { event_type: "ConfirmResponse"; payload: ConfirmResponse }
   );
 
 // Reader --------------------------------------------------------------------

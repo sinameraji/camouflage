@@ -17,8 +17,8 @@ pub use model::{
 };
 pub use viewport::ViewportState;
 pub use snapshot::{
-    Snapshot, SnapshotPermission, SnapshotRow, SnapshotRowKind, SnapshotSelectList,
-    SnapshotSelectListOption, SnapshotTask, SnapshotTaskState,
+    Snapshot, SnapshotConfirm, SnapshotPermission, SnapshotRow, SnapshotRowKind,
+    SnapshotSelectList, SnapshotSelectListOption, SnapshotTask, SnapshotTaskState,
 };
 
 use camouflage_protocol::Event;
@@ -98,6 +98,14 @@ impl SnapshotRenderer for RenderModel {
             allow_filter: s.allow_filter,
             allow_cancel: s.allow_cancel,
         });
+        let confirm = self.active_confirm().map(|c| SnapshotConfirm {
+            id: c.id.clone(),
+            prompt: c.prompt.clone(),
+            yes_label: c.yes_label.clone(),
+            no_label: c.no_label.clone(),
+            selected_yes: c.selected_yes,
+            allow_cancel: c.allow_cancel,
+        });
         Snapshot {
             total_rows: self.total_rows(),
             rows,
@@ -105,6 +113,7 @@ impl SnapshotRenderer for RenderModel {
             tasks,
             pending_permission,
             select_list,
+            confirm,
         }
     }
 }

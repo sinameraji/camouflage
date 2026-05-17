@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { mount, selectList } from "./index.js";
+import { mount, selectList, confirm } from "./index.js";
 
 const FAKE = join(dirname(fileURLToPath(import.meta.url)), "__fake-renderer.js");
 
@@ -102,6 +102,17 @@ test("selectList() helper round-trips via the fake echo renderer", async () => {
   const resp = await p;
   assert.equal(resp.id, "test-1");
   assert.equal(resp.value, "b");
+  assert.equal(resp.cancelled, false);
+  await cam.close();
+});
+
+test("confirm() helper round-trips via the fake echo renderer", async () => {
+  const cam = await mountFake();
+  const p = confirm(cam, { id: "quit-1", prompt: "Save?" });
+  cam.send("ConfirmResponse", { id: "quit-1", value: true });
+  const resp = await p;
+  assert.equal(resp.id, "quit-1");
+  assert.equal(resp.value, true);
   assert.equal(resp.cancelled, false);
   await cam.close();
 });

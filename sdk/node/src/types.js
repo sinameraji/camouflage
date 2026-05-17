@@ -17,6 +17,7 @@ const KNOWN_TYPES = new Set([
   "UserInputSubmitted", "PermissionResponse",
   "SlashCommandsRegistered", "MentionCandidatesRegistered",
   "ShowSelectList", "SelectListResponse",
+  "ShowConfirm", "ConfirmResponse",
 ]);
 
 /**

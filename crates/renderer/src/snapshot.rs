@@ -82,6 +82,17 @@ pub struct SnapshotSelectList {
     pub allow_cancel: bool,
 }
 
+/// CC-2 — projection of an active Confirm modal.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotConfirm {
+    pub id: String,
+    pub prompt: String,
+    pub yes_label: String,
+    pub no_label: String,
+    pub selected_yes: bool,
+    pub allow_cancel: bool,
+}
+
 /// A full UI snapshot. Renderers should treat the document as
 /// last-write-wins: every field reflects current state, not deltas.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -96,4 +107,7 @@ pub struct Snapshot {
     /// CC-1 — present when a SelectList modal is currently active.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub select_list: Option<SnapshotSelectList>,
+    /// CC-2 — present when a Confirm modal is currently active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<SnapshotConfirm>,
 }
