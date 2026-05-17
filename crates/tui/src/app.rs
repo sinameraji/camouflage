@@ -159,6 +159,11 @@ pub async fn run(cfg: Config) -> Result<()> {
     let mut slash_picker_index: usize = 0;
     // v0.4.5: @-mention picker selection cursor.
     let mut mention_picker_index: usize = 0;
+    // v0.4.6: per-session input history. Each submitted user prompt is
+    // pushed; Up/Down at the input prompt walks through them. `index` is
+    // the cursor (None = "live" buffer, not browsing history).
+    let mut input_history: Vec<String> = Vec::new();
+    let mut input_history_index: Option<usize> = None;
 
     // Replay state: loaded but not played-through. We start paused at
     // position 0 so the user can scrub controls before content shows.
@@ -410,6 +415,70 @@ pub async fn run(cfg: Config) -> Result<()> {
             } else {
                 slash_picker_index = 0;
             }
+            // Input-history walk: Up/Down when the input prompt has focus,
+            // no overlays/pickers are open, no permission is pending, no
+            // search is active, no replay scrubber is taking the key.
+            // Doesn't interfere with the existing "scroll transcript" use
+            // of Up/Down because that's bound when input_buf is empty —
+            // but if there's history, history takes priority.
+            // Compute mention_active locally so input_focused can include
+            // it (the main mention_active computation runs below for its
+            // own ↑/↓ short-circuit; cheap to evaluate twice).
+            let mention_active_for_focus = !search_open
+                && model.pending_permission().is_none()
+                && !model.mention_candidates().is_empty()
+                && last_mention_partial(&input_buf).is_some();
+            let input_focused = !search_open
+                && model.pending_permission().is_none()
+                && replay_state.is_none()
+                && !inspector_open
+                && !slash_active
+                && !mention_active_for_focus
+                && !help_open
+                && !metrics_open
+                && !tool_output_open;
+            if input_focused && !input_history.is_empty() {
+                match key {
+                    crate::tty::Key::Up => {
+                        let next = match input_history_index {
+                            None => input_history.len() - 1,
+                            Some(i) => i.saturating_sub(1),
+                        };
+                        input_history_index = Some(next);
+                        input_buf = input_history[next].clone();
+                        model.mark_dirty();
+                        continue;
+                    }
+                    crate::tty::Key::Down => {
+                        match input_history_index {
+                            Some(i) if i + 1 < input_history.len() => {
+                                input_history_index = Some(i + 1);
+                                input_buf = input_history[i + 1].clone();
+                            }
+                            Some(_) => {
+                                // Past the last entry → back to a fresh buffer.
+                                input_history_index = None;
+                                input_buf.clear();
+                            }
+                            None => { /* nothing to do */ }
+                        }
+                        model.mark_dirty();
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            // Esc closes any open overlay before anything else gets it. This
+            // makes the dismiss UX consistent: ?, M, X, T → Esc closes.
+            if matches!(key, crate::tty::Key::Esc) {
+                if help_open || metrics_open || tool_output_open {
+                    help_open = false;
+                    metrics_open = false;
+                    tool_output_open = false;
+                    model.mark_dirty();
+                    continue;
+                }
+            }
             // @-mention picker short-circuit. Active when the last
             // whitespace-delimited token of input starts with '@' and the
             // host has registered candidates.
@@ -489,6 +558,15 @@ pub async fn run(cfg: Config) -> Result<()> {
             match action {
                 input::Action::Quit => return shutdown(&mut terminal, Ok(())),
                 input::Action::SubmitInput(text) => {
+                    // Push into input history (de-duped: skip if same as most recent).
+                    if input_history.last().map(|s| s.as_str()) != Some(text.as_str()) {
+                        input_history.push(text.clone());
+                        // Cap to prevent unbounded growth in long sessions.
+                        if input_history.len() > 200 {
+                            input_history.remove(0);
+                        }
+                    }
+                    input_history_index = None;
                     if let Some(tx) = outbound_tx.as_ref() {
                         // Bidirectional mode: emit UserInputSubmitted to the
                         // host. The host typically responds by sending back a

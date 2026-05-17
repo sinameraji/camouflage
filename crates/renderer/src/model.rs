@@ -273,6 +273,21 @@ impl RenderModel {
         &self.mention_candidates
     }
 
+    /// Whether an AssistantStream is currently active (started, not yet
+    /// completed). Draw layer checks this to suppress the "empty
+    /// assistant row → spinner" branch on stale rows whose stream has
+    /// already closed but whose text happens to be empty.
+    pub fn has_active_stream(&self) -> bool {
+        self.active_stream_row.is_some()
+    }
+
+    /// Live-buffer index (within `rows()`) of the currently-active
+    /// assistant stream row, if any. Returns None when no stream is in
+    /// flight or when the row has been evicted out of the live buffer.
+    pub fn active_stream_row(&self) -> Option<usize> {
+        self.active_stream_row
+    }
+
     pub fn background_tasks(&self) -> &[BackgroundTask] {
         &self.background_tasks
     }
@@ -409,13 +424,19 @@ impl RenderModel {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let command = ev
+                let command_raw = ev
                     .payload
                     .get("command")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let display = format!("▸ {} {}", tool, command);
+                    .unwrap_or("");
+                // Strip leading/trailing whitespace and collapse newlines so
+                // hosts that pass JSON-stringified tool arguments (e.g.
+                // KimiFlare's `call.function.arguments`) don't blow up
+                // into a multi-row text dump. Full payload remains visible
+                // via the X-overlay (tool-output captured) or `i`-inspector.
+                let command_display = compact_command(command_raw);
+                let command = command_raw.to_string();
+                let display = format!("▸ {} {}", tool, command_display);
                 let idx = self.push_row(Row {
                     seq: ev.seq,
                     kind: RowKind::Tool,
@@ -828,6 +849,45 @@ fn append_capped(buf: &mut String, chunk: &str) {
     let tail = &combined[tail_start..];
     let elided = total.saturating_sub(head.len() + tail.len());
     *buf = format!("{head}\n… {elided} bytes elided …\n{tail}");
+}
+
+/// Compact a tool's command-line into something safe to render on a single
+/// row of a transcript. Collapses whitespace, escapes literal control
+/// chars that show as garbage in a TUI, and truncates to ~120 visible
+/// chars with an ellipsis. Used for the `▸ tool …` display string; the
+/// original full payload is preserved on `ToolState.command`.
+pub fn compact_command(raw: &str) -> String {
+    // Collapse any whitespace run (including \n / \r / \t) to a single
+    // space, drop other control chars. Tracks UTF-8 codepoints so we
+    // truncate on a char boundary.
+    let mut out = String::with_capacity(raw.len().min(140));
+    let mut prev_space = false;
+    let mut count: usize = 0;
+    for ch in raw.chars() {
+        if ch.is_whitespace() {
+            if !prev_space && !out.is_empty() {
+                out.push(' ');
+                count += 1;
+                prev_space = true;
+            }
+            continue;
+        }
+        if ch.is_control() {
+            continue;
+        }
+        prev_space = false;
+        if count >= 120 {
+            out.push('…');
+            return out;
+        }
+        out.push(ch);
+        count += 1;
+    }
+    // Trim trailing space we may have left while iterating.
+    if out.ends_with(' ') {
+        out.pop();
+    }
+    out
 }
 
 pub fn format_elapsed_ms(ms: i64) -> String {

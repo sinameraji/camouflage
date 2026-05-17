@@ -263,7 +263,7 @@ pub fn render<B: Backend>(
         let active_tools = model.tools();
         let lines: Vec<Line> = rows_taken
             .iter()
-            .map(|r| row_to_line(r, frame, active_tools, theme))
+            .map(|r| row_to_line(r, frame, active_tools, theme, model.has_active_stream()))
             .collect();
         // Scroll so the bottom of the wrapped content sits on the bottom of
         // the chunk. `visual_so_far` is the total visual lines of the slice;
@@ -870,6 +870,7 @@ fn row_to_line<'a>(
     frame: u64,
     active_tools: &std::collections::HashMap<String, camouflage_renderer::ToolState>,
     theme: &camouflage_renderer::theme::Theme,
+    has_active_stream: bool,
 ) -> Line<'a> {
     let spinner_color = rgb_to_color(theme.spinner);
     let user_color = rgb_to_color(theme.user);
@@ -887,7 +888,10 @@ fn row_to_line<'a>(
         RowKind::System => ("·".to_string(), system_color),
         RowKind::User => ("›".to_string(), user_color),
         RowKind::Assistant => {
-            if r.text.is_empty() {
+            // Only show the spinner on an empty assistant row when a stream
+            // is actually in flight. Without this check, completed-but-
+            // empty rows kept spinning forever in idle sessions.
+            if r.text.is_empty() && has_active_stream {
                 (spinner_glyph(spinner_frame_now()).to_string(), spinner_color)
             } else {
                 (" ".to_string(), assistant_color)
