@@ -448,6 +448,35 @@ pub async fn run(cfg: Config) -> Result<()> {
                 && !help_open
                 && !metrics_open
                 && !tool_output_open;
+            // Tab / Shift+Tab on an empty input → emit ModeChangeRequested
+            // outbound so the host (KimiFlare's ui-mode) can cycle through
+            // edit/plan/auto. Tab inside a typed buffer falls through to
+            // the form-step navigation handler downstream.
+            if input_focused && input_buf.is_empty() {
+                match key {
+                    crate::tty::Key::Tab | crate::tty::Key::BackTab => {
+                        if let Some(tx) = outbound_tx.as_ref() {
+                            let direction = if matches!(key, crate::tty::Key::BackTab) {
+                                "prev"
+                            } else {
+                                "next"
+                            };
+                            let ev = Event {
+                                id: Uuid::new_v4(),
+                                session_id,
+                                seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                                timestamp_ms: now_ms(),
+                                schema_version: SCHEMA_VERSION,
+                                event_type: EventType::ModeChangeRequested,
+                                payload: serde_json::json!({ "direction": direction }),
+                            };
+                            let _ = tx.send(OutgoingEvent(ev)).await;
+                        }
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
             if input_focused && !input_history.is_empty() {
                 match key {
                     crate::tty::Key::Up => {

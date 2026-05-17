@@ -128,6 +128,7 @@ mod tests {
             EventType::ShowWizard,
             EventType::WizardCompleted,
             EventType::WizardCancelled,
+            EventType::ModeChangeRequested,
         ];
         for v in variants {
             let needle = format!("\"event_type\":\"{}\"", v.as_str());

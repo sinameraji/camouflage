@@ -146,6 +146,9 @@ fn validate_payload(event_type: EventType, payload: serde_json::Value) -> Result
         WizardCancelled => {
             serde_json::from_value::<payloads::WizardCancelled>(payload)?;
         }
+        ModeChangeRequested => {
+            serde_json::from_value::<payloads::ModeChangeRequested>(payload)?;
+        }
         // Events without typed payloads — any JSON value is accepted.
         SessionStarted
         | SessionEnded

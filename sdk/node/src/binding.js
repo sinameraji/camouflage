@@ -273,6 +273,10 @@ export async function mount(opts = {}) {
         id: ev.payload?.id,
         at_step: ev.payload?.at_step,
       });
+    } else if (ev.event_type === "ModeChangeRequested") {
+      handle.emit("modeChangeRequested", {
+        direction: ev.payload?.direction,
+      });
     }
     // Always also emit the raw Event for advanced consumers.
     handle.emit("event", ev);

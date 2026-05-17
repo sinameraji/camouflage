@@ -124,6 +124,11 @@ pub enum EventType {
     WizardCompleted,
     /// v0.4.6+ (CC-4) — Renderer → host: user cancelled mid-wizard.
     WizardCancelled,
+    /// v0.4.7+ — Renderer → host: user pressed Tab/Shift+Tab on an empty
+    /// input. Hosts that want mode cycling (e.g. KimiFlare's
+    /// edit/plan/auto) handle this and emit a StatusUpdate to reflect
+    /// the new mode. Payload: { direction: "next" | "prev" }.
+    ModeChangeRequested,
 }
 
 impl EventType {
@@ -165,6 +170,7 @@ impl EventType {
             EventType::ShowWizard => "ShowWizard",
             EventType::WizardCompleted => "WizardCompleted",
             EventType::WizardCancelled => "WizardCancelled",
+            EventType::ModeChangeRequested => "ModeChangeRequested",
         }
     }
 
@@ -177,7 +183,8 @@ impl EventType {
             | EventType::ConfirmResponse
             | EventType::FormResponse
             | EventType::WizardCompleted
-            | EventType::WizardCancelled => Direction::Outbound,
+            | EventType::WizardCancelled
+            | EventType::ModeChangeRequested => Direction::Outbound,
             _ => Direction::Inbound,
         }
     }
@@ -642,6 +649,22 @@ pub mod payloads {
         /// 0-based index of the step the user was on when they cancelled.
         pub at_step: usize,
     }
+
+    /// v0.4.7+ — outbound. User pressed Tab (direction=next) or
+    /// Shift+Tab (direction=prev) on an empty input. The host decides
+    /// what that means and updates the `mode` status segment to reflect
+    /// the new mode.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct ModeChangeRequested {
+        pub direction: ModeChangeDirection,
+    }
+
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "snake_case")]
+    pub enum ModeChangeDirection {
+        Next,
+        Prev,
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -706,8 +729,9 @@ mod tests {
             EventType::ShowWizard,
             EventType::WizardCompleted,
             EventType::WizardCancelled,
+            EventType::ModeChangeRequested,
         ];
-        assert_eq!(types.len(), 36);
+        assert_eq!(types.len(), 37);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();

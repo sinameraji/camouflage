@@ -46,7 +46,8 @@ export type EventType =
   | "FormResponse"
   | "ShowWizard"
   | "WizardCompleted"
-  | "WizardCancelled";
+  | "WizardCancelled"
+  | "ModeChangeRequested";
 
 export type Direction = "inbound" | "outbound";
 
@@ -248,6 +249,10 @@ export type WizardCancelled = {
   at_step: number;
 };
 
+export type ModeChangeRequested = {
+  direction: "next" | "prev";
+};
+
 // Tagged union --------------------------------------------------------------
 
 export type Event = EnvelopeMeta &
@@ -288,6 +293,7 @@ export type Event = EnvelopeMeta &
     | { event_type: "ShowWizard"; payload: ShowWizard }
     | { event_type: "WizardCompleted"; payload: WizardCompleted }
     | { event_type: "WizardCancelled"; payload: WizardCancelled }
+    | { event_type: "ModeChangeRequested"; payload: ModeChangeRequested }
   );
 
 // Reader --------------------------------------------------------------------

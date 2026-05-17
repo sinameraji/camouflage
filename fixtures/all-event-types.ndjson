@@ -36,4 +36,5 @@
 {"event_type":"ShowWizard","payload":{"id":"onboard","title":"Onboarding","steps":[{"kind":"confirm","id":"agree","prompt":"Accept terms?"},{"kind":"form","id":"creds","fields":[{"name":"email","label":"Email"}]}]}}
 {"event_type":"WizardCompleted","payload":{"id":"onboard","results":{"agree":true,"creds":{"email":"x@y.z"}}}}
 {"event_type":"WizardCancelled","payload":{"id":"onboard-2","at_step":1}}
+{"event_type":"ModeChangeRequested","payload":{"direction":"next"}}
 {"event_type":"SessionEnded","payload":{}}
