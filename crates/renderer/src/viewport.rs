@@ -11,6 +11,13 @@ pub struct ViewportState {
     pub auto_follow: bool,
     pub visible_start_seq: i64,
     pub visible_end_seq: i64,
+    /// "Pin to where you scrolled to" snapshot of `total_rows` at the
+    /// moment the user first scrolled away from the bottom. While set,
+    /// the visible window is anchored to `frozen_total - scroll_offset`
+    /// rather than `current_total - scroll_offset`, so new streaming
+    /// rows don't push the user's reading position around. Cleared on
+    /// scroll-to-bottom or jump-to-latest.
+    pub frozen_total: Option<i64>,
 }
 
 impl ViewportState {
@@ -23,6 +30,7 @@ impl ViewportState {
             auto_follow: true,
             visible_start_seq: 0,
             visible_end_seq: 0,
+            frozen_total: None,
         }
     }
 
@@ -38,7 +46,15 @@ impl ViewportState {
     /// unscrollable. The draw layer handles a "scrolled past the top"
     /// state gracefully (just shows fewer rows).
     pub fn scroll_up(&mut self, lines: i64, total_rows: i64) {
-        let max_up = total_rows.max(0);
+        // Freeze the current total the first time the user scrolls
+        // away from the bottom. The cap then stays anchored to that
+        // snapshot — new rows arriving mid-scroll don't shift what's
+        // visible (fixes "I can't read the model's earlier output
+        // because each new token bumps it down").
+        if self.frozen_total.is_none() {
+            self.frozen_total = Some(total_rows);
+        }
+        let max_up = self.frozen_total.unwrap_or(total_rows).max(0);
         self.scroll_offset = (self.scroll_offset + lines).min(max_up);
         if self.scroll_offset > 0 {
             self.auto_follow = false;
@@ -50,6 +66,7 @@ impl ViewportState {
         self.scroll_offset = (self.scroll_offset - lines).max(0);
         if self.scroll_offset == 0 {
             self.auto_follow = true;
+            self.frozen_total = None;
         }
     }
 
@@ -57,6 +74,7 @@ impl ViewportState {
     pub fn jump_to_latest(&mut self) {
         self.scroll_offset = 0;
         self.auto_follow = true;
+        self.frozen_total = None;
     }
 
     /// True iff currently pinned to the bottom.

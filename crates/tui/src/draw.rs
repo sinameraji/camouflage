@@ -234,7 +234,13 @@ pub fn render<B: Backend>(
         let viewport_h = chunks[1].height as usize;
         let transcript_width = chunks[1].width as usize;
         let avail = transcript_width.saturating_sub(2).max(1); // prefix glyph + space
-        let end = (total_rows - viewport.scroll_offset).max(0) as usize;
+        // When the viewport is "frozen" at a scroll position, anchor the
+        // window to the snapshot taken at scroll-time so new streaming
+        // rows don't push the user's view.
+        let anchor = viewport.frozen_total.unwrap_or(total_rows);
+        let end = (anchor - viewport.scroll_offset)
+            .max(0)
+            .min(total_rows) as usize;
         // Walk backwards from `end` until we've accumulated enough visual
         // lines to fill the viewport (plus a small safety margin).
         let mut rows_taken: Vec<&camouflage_renderer::Row> = Vec::new();
