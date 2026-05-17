@@ -4,6 +4,121 @@
 
 Specs: [`docs/specs/MVP_BUILD_PROMPT.md`](docs/specs/MVP_BUILD_PROMPT.md), [`docs/specs/PRODUCT_SPEC_AND_ROADMAP.md`](docs/specs/PRODUCT_SPEC_AND_ROADMAP.md).
 
+## File layout (read in this order)
+
+1. **Open work** — the long forward-looking checklist. Everything NOT yet done lives here. Each item has an ID, a one-line title, a status, the reasoning/why, and where to look. Pick from the top of the list to work next.
+2. **Current stage** — one-paragraph elevator pitch of where the codebase is right now.
+3. **Tagged releases** — what's shipped and where to find it on GitHub.
+4. **Per-version slice checklists** — backward-looking record of what each version contained.
+5. **Session log** — one-liners per work session for archeology.
+
+When a new item surfaces in a conversation (bug report, feature idea, decision), add it to **Open work** immediately with a fresh ID and the reasoning, so it can't get lost.
+
+When an item ships, flip its status to ✅ DONE and add the commit hash; leave it in place rather than deleting (so the document remains a complete history of decisions, not just current state).
+
+---
+
+## Open work
+
+Items below are **not yet done**. Pick the highest-priority one (top of each section) when starting work. Add new items at the bottom of the relevant section as they're discovered.
+
+Status legend: ⬜ TODO · ⏳ IN PROGRESS · ✅ DONE (kept in place for archeology) · ⏸ DEFERRED (intentionally on hold, reason given)
+
+### TUI bugs surfaced by real `--ui camouflage` testing (2026-05-17)
+
+These came out of running `kimiflare --ui camouflage --dangerously-allow-all -p "..."` end-to-end against a real Cloudflare turn. They're real, reproducible, and block daily use.
+
+| ID | Status | Bug | Reasoning / details | Where |
+|----|--------|-----|---------------------|-------|
+| TBR-1 | ✅ DONE — `dc861bc` | Tool execution rows show raw JSON-stringified arguments spanning many visual lines | `KimiFlare's call.function.arguments is a JSON string. Model put it directly into the row text. Fix: compact_command() helper truncates to 120 chars with ellipsis, collapses whitespace, strips control chars. Full payload retained on ToolState.command for X-overlay.` | `crates/renderer/src/model.rs` |
+| TBR-2 | ✅ DONE — `dc861bc` | Spinners keep spinning on stale empty assistant rows after the stream completed | `row_to_line drew a spinner on any empty Assistant row regardless of whether the stream was active. Fix: row_to_line takes has_active_stream; model exposes has_active_stream() / active_stream_row().` | `crates/renderer/src/{model,tui/src/draw}.rs` |
+| TBR-3 | ✅ DONE — `dc861bc` | Help/metrics/tool-output overlays only closeable via their toggle key (Shift+? is awful UX) | `Esc should close any open overlay. Currently Esc maps to CancelStream globally. Fix: pre-handler intercepts Esc when an overlay is open and closes it instead.` | `crates/tui/src/app.rs` |
+| TBR-4 | ✅ DONE — `dc861bc` | Up/Down arrows in input prompt don't recall prior submitted prompts | `Standard readline expectation. Added input_history Vec capped at 200; SubmitInput pushes; Up/Down walks history when input is focused and no overlay/picker/permission/replay is taking the key.` | `crates/tui/src/app.rs` |
+| TBR-5 | ⬜ TODO | Slash picker (`/`) does nothing when typed | `KimiFlare adapter does not yet emit SlashCommandsRegistered. The TUI picker overlay exists (Phase 2.6, commit 48fb2c7) but only triggers when commands are registered. Adapter fix: enumerate KimiFlare's 28 slash commands (src/commands/builtins.ts) and emit on session start.` | `~/kimi-code-clone-3/src/{ui-mode,emit-mode}.ts` |
+| TBR-6 | ⬜ TODO | Can't scroll up to see entire session — earlier rows disappear | `Possibly the live-buffer 2000-row cap kicked in mid-session AND lazy paging from store isn't loading the older rows back. Need to repro and check: (a) is the renderer persisting events to the store under --ui camouflage, (b) does the scroll-up history paging fire, (c) does prepend_history correctly insert the older rows. Could also be a viewport math edge case.` | `crates/renderer/src/{model,viewport}.rs`, `crates/tui/src/app.rs` history worker |
+| TBR-7 | ⬜ TODO | "Formatting looks off" — needs a more specific repro | `User's screenshot shows markdown rendering working on most assistant text but tool-arg rows still dominated the screen. With TBR-1 fixed this should be much less bad. Ask user to retest and screenshot any remaining issues.` | n/a |
+
+### Components catalog (the missing UI primitives layer)
+
+Recognized 2026-05-17. Today Camouflage exposes a fixed set of widgets (StatusBar, TaskRibbon, PermissionWidget, overlays for help/metrics/tools/slash/mention). Hosts that need richer UI (session picker, checkpoint picker, multi-step wizard, settings form) currently have no way to ask the renderer to show one. This is the missing primitives layer that makes Camouflage a *UI library* (like shadcn/ui for terminals) rather than just an event-driven transcript renderer.
+
+Design: each component is one inbound event (`Show<Component>`) carrying a unique `id`, plus an optional outbound response event (`<Component>Response`) keyed by the same id. Renderer owns layout/theme; host owns the data and the eventual handling of the response.
+
+The full catalog conversation from 2026-05-17 lives in [`docs/specs/components-catalog.md`](docs/specs/components-catalog.md) (to be created in the next slice). Quick reference of components in priority order:
+
+| ID | Component | Status | KimiFlare consumers it unblocks | Reasoning |
+|----|-----------|--------|----------------------------------|-----------|
+| CC-1 | `SelectList` | ⬜ TODO (next) | session picker, checkpoint picker, theme picker, slash picker (generalised), resume picker, model picker | Highest leverage — single shape covers ~6 KimiFlare React components. The current hardcoded slash picker (Phase 2.6) is a special-case SelectList; generalising it is most of the work. First real driver: KimiFlare's resume picker. |
+| CC-2 | `Confirm` | ⬜ TODO | "save before quit?", "delete session?", any yes/no modal | Tiny scope, covers many small modals. The existing `PermissionRequested` is structurally a special-case Confirm; we keep it as the well-known type. |
+| CC-3 | `Toast` | ⬜ TODO | "Saved", "Authenticated", brief feedback | Trivial scope, immediate visible value. No outbound event — display-only with optional TTL. |
+| CC-4 | `Wizard` | ⬜ TODO | onboarding flow, LSP wizard, command wizard | Multi-step; composes 1+2+3. |
+| CC-5 | `Form` | ⬜ TODO | settings configuration, cloud token + endpoint configuration | Bigger; can wait for a real driver. |
+| CC-6 | `Table` | ⬜ TODO | usage stats, cost attribution, session-list with metadata | Display-oriented; optional `RowSelected` outbound for interactive use. |
+| CC-7 | `KeyValueView` | ⬜ TODO | "session details" inspector pane, welcome screen | Display-oriented. |
+
+Each component ships as a self-contained slice (one commit series): protocol event(s) → model state → renderer overlay → Snapshot projection field → Node SDK types update → KimiFlare adapter wires it against an actual component being replaced. The KimiFlare wiring is what proves the design.
+
+### KimiFlare adapter follow-ups (on `~/kimi-code-clone-3` `camouflage-adapter` branch)
+
+| ID | Status | Item | Reasoning |
+|----|--------|------|-----------|
+| ADP-1 | ⬜ TODO | Emit `SlashCommandsRegistered` listing KimiFlare's 28 slash commands | Unblocks TBR-5. Source list in `~/kimi-code-clone-3/src/commands/builtins.ts`. |
+| ADP-2 | ⬜ TODO | Wire `--ui camouflage` to use a SelectList for the resume picker (first CC-1 driver) | After CC-1 ships, replace KimiFlare's `src/ui/resume-picker.tsx` with a `ShowSelectList` emit + `SelectListResponse` handler. Validates the catalog design. |
+| ADP-3 | ⬜ TODO | KimiFlare → npm-published `camouflage` package | Currently uses `file:../camouflage/sdk/node` for local development. Switch to a real npm version once we publish. |
+| ADP-4 | ⏸ DEFERRED | Cost segment in `StatusUpdate` (mode/phase/elapsed/tokens/cost/branch) | Requires KimiFlare's cost-attribution machinery (complex; lives in `src/cost-attribution/`). Land after CC-1 → CC-3 demonstrate the catalog works. |
+| ADP-5 | ⏸ DEFERRED | Mode cycling (`edit` / `plan` / `auto` + Shift+Tab) | Hardcoded to "edit" in `runUiMode`. Needs a host-protocol addition (`ModeChanged` event) and KimiFlare's mode controller. |
+
+### v0.5.5 (DevTools follow-ups)
+
+| ID | Status | Item | Reasoning |
+|----|--------|------|-----------|
+| DT-1 | ⬜ TODO | Event tracing — structured trace file for offline analysis | Jaeger-compatible JSON output of every event with timing. |
+| DT-2 | ⬜ TODO | Latency inspection — recv → applied → drawn timing histogram | Surfaced in metrics overlay or a separate report. |
+| DT-3 | ⬜ TODO | Per-event renderer profiling | Time-per-event-kind histograms. |
+
+### v0.6.5 (Ecosystem follow-ups)
+
+| ID | Status | Item | Reasoning |
+|----|--------|------|-----------|
+| ECO-1 | ⬜ TODO | Integration adapters bundle | Reference adapters for non-KimiFlare hosts (e.g., a Python adapter, Go adapter). |
+| ECO-2 | ⬜ TODO | Renderer plugin API | Allow hosts to register custom event types + custom render handlers. Possibly subsumed by the components catalog. |
+| ECO-3 | ⬜ TODO | Benchmark suite extensions + CI benchmark runner | Track perf regressions on every push. |
+| ECO-4 | ⬜ TODO | Migration guide (Ink → Camouflage) | Step-by-step "how to replace Ink" doc. Should reference the KimiFlare adapter's Option-B migration as the worked example. |
+| ECO-5 | ⬜ TODO | Migration guide (Electron/webviews → Camouflage) | Same pattern, different starting point. |
+| ECO-6 | ⬜ TODO | Publish `camouflage` to npm + prebuilt binary downloads via `postinstall` | Currently consumers need `cargo install` and a manual PATH entry. Need GitHub Actions per-platform builds + release uploads. |
+
+### v0.4.5+ (deferred Advanced TUI UX items)
+
+| ID | Status | Item | Reasoning |
+|----|--------|------|-----------|
+| UX-1 | ⬜ TODO | Split panes | Side-by-side transcript/inspector or two sessions. |
+| UX-2 | ⬜ TODO | Vim motions | hjkl, w/b/e in inspector mode. |
+| UX-3 | ⬜ TODO | Session tabs | Multiple sessions in one TUI; tab switcher. |
+| UX-4 | ⬜ TODO | Sticky tool panels | Pin a tool's output to the bottom of the transcript. |
+| UX-5 | ⬜ TODO | Timeline minimap | Compressed event-density view in a sidebar. |
+| UX-6 | ⬜ TODO | Stream profiler | Visual representation of event throughput per turn. |
+| UX-7 | ⬜ TODO | Hierarchical help menu | Replaces flat help overlay with categorized navigation. |
+| UX-8 | ⬜ TODO | Queued-prompts row | Visible "you have N prompts queued" row above input. |
+| UX-9 | ⬜ TODO | Repeated-call warning on tool rows | "agent called the same tool 5x in a row" hint. |
+| UX-10 | ⬜ TODO | Port KimiFlare's remaining 7 themes (we have 6 of 13) | Catppuccin Latte/Mocha, Everforest dark/light, Kanagawa, One Dark, Solarized dark/light. Data entry. |
+
+### v0.7 (Desktop Runtime — entire version still untouched)
+
+| ID | Status | Item |
+|----|--------|------|
+| DR-1 | ⬜ TODO | Native desktop shell |
+| DR-2 | ⬜ TODO | GPU rendering exploration |
+| DR-3 | ⬜ TODO | Detached replay viewer (extends `viewer/index.html` to load `.ndjson` files via drag-drop or URL param) |
+| DR-4 | ⬜ TODO | Session archive browser |
+| DR-5 | ⬜ TODO | Remote stream synchronization |
+| DR-6 | ⬜ TODO | Persistent local session library |
+
+### Maintenance / housekeeping
+
+| ID | Status | Item |
+|----|--------|------|
+| MN-1 | ⬜ TODO | 5-hour soak run (`scripts/soak.py` is ready; 30 min validated; full 18000 s when idle laptop available) |
+
 ---
 
 ## Current stage
@@ -197,40 +312,34 @@ v0.3 added `tokio-tungstenite` + `futures-util` for the WebSocket transport. The
 - **When a new milestone surfaces**, append it to the appropriate version's checklist with status `NOT DONE`.
 - **Commit this file** alongside the code changes that move it forward — git history then explains "how" while this file explains "what's left."
 
-## What's left
+## Historical "What's left" (superseded by Open work above; kept for archeology)
 
-Per the spec roadmap, in order:
+The original headline-scope table from when v0.3–v0.7 were unstarted:
 
-| Version | Title | Headline scope |
+| Version | Title | Original headline scope |
 |---------|-------|----------------|
 | v0.3 | Renderer Abstraction | Renderer protocol, websocket transport, headless runtime mode, browser replay viewer, event schema validator, event fixture system |
-| v0.4 | Advanced TUI UX | Split panes, vim motions, **command palette**, **diff viewer**, sticky tool panels, session tabs, timeline minimap, live metrics, stream profiler, theme system, slash-command picker, `@`-mention picker, help menu |
+| v0.4 | Advanced TUI UX | Split panes, vim motions, command palette, diff viewer, sticky tool panels, session tabs, timeline minimap, live metrics, stream profiler, theme system, slash-command picker, `@`-mention picker, help menu |
 | v0.5 | DevTools Layer | Event tracing, timeline debugging, performance profiling, renderer profiling, latency inspection, event validation, crash replay, deterministic replay, regression fixtures, session export/import |
 | v0.6 | Ecosystem Layer | Node SDK, Rust SDK, protocol docs, integration adapters, renderer plugin API, benchmark suite, schema validation tooling, CI benchmark runner, migration guide from Ink, migration guide from Electron/webviews |
 | v0.7 | Desktop Runtime | Native desktop shell, GPU rendering exploration, detached replay viewer, session archive browser, advanced profiling, remote stream synchronization, persistent local session library |
 
-Off-roadmap but high-value:
+For the current state of these items, see **Open work** at the top of this file — each version's deferred items have their own ID prefix (DT-N, ECO-N, UX-N, DR-N, etc.) and explicit reasoning.
 
-- **KimiFlare adapter (`~/kimi-code-clone-3`, branch `camouflage-adapter`)** — MVP shipped 2026-05-16 (`b840b80` in that repo). One-shot `--emit-events` mode emits 8 event types via NDJSON. Validated end-to-end with a real Cloudflare turn through `camouflage-tui --stdin-events`. Follow-up slices, in priority order:
-  - **Emit `ToolExecutionStdout` chunks** so tool output is visible in the transcript (currently shows `stdout=0B`). [adapter gap from 2026-05-16 test]
-  - **Multi-turn mode** — stdin reader for `UserInputSubmitted` to drive follow-up prompts into new `runAgentTurn` calls.
-  - **Bidirectional permission flow** — route stdin `PermissionResponse` into the pending `askPermission` promise instead of the current auto-allow / auto-deny.
-  - **`StatusUpdate` + `BackgroundTaskUpdate` emission** — needs a different tap point inside `app.tsx::sharedCallbacks` since the headless `runAgentTurn` doesn't surface phase/usage in that shape.
-- **5-hour soak** — the script (`scripts/soak.py`) is ready; 30 min has been validated. Run the full 18000 s when an idle laptop is available.
-
-## TUI bug backlog (from adapter testing) — CLEARED
+## Original TUI bug backlog (superseded by Open work above)
 
 | #   | Bug | Status |
 |-----|-----|--------|
-| TB1 | "session started" row appears twice on session boot | ✅ FIXED — `55e4958` (model deduplicates SessionStarted via `session_started_seen` flag) |
-| TB2 | Status bar phase stays `streaming` after `SessionEnded` | ✅ FIXED — `55e4958` (SessionEnded apply path sets `phase=idle` in status_segments) |
-| TB3 | Spinners animate while user scrolls | ✅ FIXED — `55e4958` (spinner glyph now derived from wall-clock `ms/80`, not per-redraw counter) |
+| TB1 | "session started" row appears twice on session boot | ✅ FIXED — `55e4958` |
+| TB2 | Status bar phase stays `streaming` after `SessionEnded` | ✅ FIXED — `55e4958` |
+| TB3 | Spinners animate while user scrolls | ✅ FIXED — `55e4958` |
 
 ## Cross-version validation notes
 
-Evidence collected from the 2026-05-16 adapter test that confirms scope decisions for later versions — record here so we don't relitigate at version-cut time.
+Evidence collected during real testing that informs scope decisions — record here so we don't relitigate at version-cut time.
 
-- **v0.4 (Advanced TUI UX) — markdown rendering and diff viewer confirmed as critical.** Assistant text rendered with literal `**bold**`, raw backticks, and no paragraph wrap. Long unbroken token sequences cluster into walls of text. Confirms diff/markdown/theme work belongs *exactly* where the roadmap puts it — do not pull forward into v0.3.
+- **2026-05-16 — v0.4 (Advanced TUI UX) markdown rendering and diff viewer confirmed as critical.** Assistant text rendered with literal `**bold**`, raw backticks, and no paragraph wrap. Long unbroken token sequences cluster into walls of text. Confirmed diff/markdown/theme work belongs in v0.4 — shipped in Slices A/B/E.
+- **2026-05-17 — Components catalog gap recognized as the real blocker for Ink replacement.** Adapter completeness (Phase 1) + TUI features (Phase 2) close the gap on the *fixed-shape* surfaces (status bar, tool rows, permission widget) but not on *arbitrary host-defined UI* (session pickers, checkpoint pickers, wizards, etc.). Conclusion: Camouflage needs a primitives layer (`ShowSelectList`, `ShowConfirm`, `ShowWizard`, …) — see Open work → "Components catalog (the missing UI primitives layer)".
 
 ## Session log
 
@@ -256,3 +365,4 @@ Brief one-liners per session. Keep this short — git log has the detail.
 | 2026-05-16 | v0.6 code-complete (partial): Slices A–C shipped (`40fc880` + Node SDK). New `camouflage` Rust facade crate (re-exports + prelude), exhaustive `docs/protocol.md` event reference, Node SDK at `sdk/node/` (ESM + TS types + NDJSON reader + validate + encode, 5 tests passing). 66 Rust workspace tests + 5 Node tests, all green. Integration adapters + plugin API + benchmark CI + migration guides deferred to v0.6.5. Tagged `v0.6.0`. |
 | 2026-05-17 | Ink-replacement-ready milestone shipped (tagged `v0.4.5`). Three-phase push: (1) KimiFlare adapter completeness — 5 slices in `~/kimi-code-clone-3` `camouflage-adapter` branch (`8fc1093` → `a8c9108`): tool stdout/stderr emission, multi-turn mode, StatusUpdate (mode/phase/elapsed/tokens/branch), bidirectional permission flow, BackgroundTaskUpdate. (2) Camouflage TUI features — 4 slices on main (`2ced5a4` → `cbcd655`): expandable tool overlay (X), permission feedback input, slash-command picker (with new `SlashCommandsRegistered` event), `@`-mention picker (with new `MentionCandidatesRegistered` event). (3) TUI bug backlog cleared (`55e4958`): TB1/TB2/TB3 all fixed. +3 themes (nord/gruvbox-dark/tokyo-night). Protocol EventType variants 22 → 24. KimiFlare can now realistically swap Ink for Camouflage. |
 | 2026-05-17 | Node SDK shipped — `camouflage` npm package (rename from `camouflage-sdk`). Five-commit series on main (`ebf748d` → `d826f89`) wraps the Rust renderer in a Node-native API: `mount() → send() / on() / close()`, hides all subprocess management and NDJSON plumbing. New `--responses-fd` flag on camouflage-tui (`97af9dd`) lets the renderer write outbound NDJSON to a separate fd so stdout can be reserved for rendering to the user's terminal. KimiFlare's `--ui camouflage` mode (`2f1c7de` on `camouflage-adapter`) is the first consumer: `kimiflare --ui camouflage -p "..."` spawns the renderer in-process, user types follow-ups directly in the TUI, permissions round-trip without a single visible pipe. This is the integration shape that paves the way to deleting Ink entirely (Option B). |
+| 2026-05-17 | Real `--ui camouflage` test surfaced 7 bugs (TBR-1..7). TBR-1..4 fixed in `dc861bc` (compact tool commands, suppress stale spinners, Esc closes overlays, Up/Down input history). TBR-5..7 still open (see Open work). Same testing surfaced the components-catalog gap: Camouflage has fixed-shape UI but no primitives for arbitrary host-defined UI like session pickers / wizards / forms / tables. Adopted catalog approach (declarative `Show<Component>` events with `id`-keyed responses); 7 components prioritised (CC-1 SelectList highest). PROGRESS.md restructured to put forward-looking "Open work" at the top with per-item IDs / reasoning / where-to-look so conversations don't get lost. |
