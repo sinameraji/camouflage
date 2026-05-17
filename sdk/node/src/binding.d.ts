@@ -98,6 +98,33 @@ export function keyValueView(
   },
 ): void;
 
+export interface FormResponseEvent {
+  id: string;
+  values?: Record<string, string>;
+  cancelled: boolean;
+}
+
+/**
+ * Convenience helper: show a multi-field form and resolve to the user's
+ * FormResponse for that id.
+ */
+export function form(
+  cam: CamouflageHandle,
+  spec: {
+    id: string;
+    title?: string;
+    fields: {
+      name: string;
+      label: string;
+      kind?: "text" | "password";
+      default?: string;
+      placeholder?: string;
+      required?: boolean;
+    }[];
+    allow_cancel?: boolean;
+  },
+): Promise<FormResponseEvent>;
+
 /**
  * Convenience helper: emit a `ShowSelectList` and return a Promise that
  * resolves to the user's `SelectListResponseEvent` for that id. The host
@@ -150,6 +177,7 @@ export interface CamouflageHandle extends EventEmitter {
   on(event: "permissionResponse", listener: (resp: PermissionResponseEvent) => void): this;
   on(event: "selectListResponse", listener: (resp: SelectListResponseEvent) => void): this;
   on(event: "confirmResponse", listener: (resp: ConfirmResponseEvent) => void): this;
+  on(event: "formResponse", listener: (resp: FormResponseEvent) => void): this;
   on(event: "event", listener: (ev: Event) => void): this;
   on(event: "invalid", listener: (info: InvalidEvent) => void): this;
   on(event: "stderr", listener: (chunk: string) => void): this;

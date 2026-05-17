@@ -109,6 +109,12 @@ pub enum EventType {
     /// v0.4.6+ (CC-7) — Host → renderer: show a label/value list (session
     /// details, welcome screen, "about" panel). Display-only.
     ShowKeyValueView,
+    /// v0.4.6+ (CC-5) — Host → renderer: show a multi-field form modal.
+    /// User submits → FormResponse with field values, or cancels → same
+    /// event with `cancelled: true`.
+    ShowForm,
+    /// v0.4.6+ (CC-5) — Renderer → host: outcome of a `ShowForm`.
+    FormResponse,
 }
 
 impl EventType {
@@ -145,6 +151,8 @@ impl EventType {
             EventType::ShowToast => "ShowToast",
             EventType::ShowTable => "ShowTable",
             EventType::ShowKeyValueView => "ShowKeyValueView",
+            EventType::ShowForm => "ShowForm",
+            EventType::FormResponse => "FormResponse",
         }
     }
 
@@ -154,7 +162,8 @@ impl EventType {
             EventType::UserInputSubmitted
             | EventType::PermissionResponse
             | EventType::SelectListResponse
-            | EventType::ConfirmResponse => Direction::Outbound,
+            | EventType::ConfirmResponse
+            | EventType::FormResponse => Direction::Outbound,
             _ => Direction::Inbound,
         }
     }
@@ -504,6 +513,48 @@ pub mod payloads {
         pub title: Option<String>,
         pub items: Vec<KeyValueItem>,
     }
+
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "snake_case")]
+    pub enum FormFieldKind {
+        Text,
+        Password,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct FormField {
+        pub name: String,
+        pub label: String,
+        #[serde(default)]
+        pub kind: Option<FormFieldKind>,
+        #[serde(default)]
+        pub default: Option<String>,
+        #[serde(default)]
+        pub placeholder: Option<String>,
+        #[serde(default)]
+        pub required: bool,
+    }
+
+    /// v0.4.6+ (CC-5) — show a multi-field form modal.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct ShowForm {
+        pub id: String,
+        #[serde(default)]
+        pub title: Option<String>,
+        pub fields: Vec<FormField>,
+        #[serde(default = "default_true")]
+        pub allow_cancel: bool,
+    }
+
+    /// v0.4.6+ (CC-5) — outbound result of `ShowForm`.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct FormResponse {
+        pub id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub values: Option<std::collections::BTreeMap<String, String>>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        pub cancelled: bool,
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -563,8 +614,10 @@ mod tests {
             EventType::ShowToast,
             EventType::ShowTable,
             EventType::ShowKeyValueView,
+            EventType::ShowForm,
+            EventType::FormResponse,
         ];
-        assert_eq!(types.len(), 31);
+        assert_eq!(types.len(), 33);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();

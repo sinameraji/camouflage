@@ -19,6 +19,7 @@ const KNOWN_TYPES = new Set([
   "ShowSelectList", "SelectListResponse",
   "ShowConfirm", "ConfirmResponse",
   "ShowToast", "ShowTable", "ShowKeyValueView",
+  "ShowForm", "FormResponse",
 ]);
 
 /**

@@ -68,7 +68,7 @@
       "text": "end of warmup"
     },
     {
-      "seq": 33,
+      "seq": 35,
       "kind": "system",
       "text": "session ended"
     }
@@ -83,7 +83,7 @@
     {
       "text": "Saved",
       "kind": "success",
-      "expires_ms": 1778991859092
+      "expires_ms": 1778992690896
     }
   ],
   "table": {

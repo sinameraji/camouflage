@@ -240,6 +240,12 @@ export async function mount(opts = {}) {
         value: ev.payload?.value,
         cancelled: !!ev.payload?.cancelled,
       });
+    } else if (ev.event_type === "FormResponse") {
+      handle.emit("formResponse", {
+        id: ev.payload?.id,
+        values: ev.payload?.values,
+        cancelled: !!ev.payload?.cancelled,
+      });
     }
     // Always also emit the raw Event for advanced consumers.
     handle.emit("event", ev);
@@ -330,6 +336,26 @@ export function table(cam, spec) {
  */
 export function keyValueView(cam, spec) {
   cam.send("ShowKeyValueView", spec);
+}
+
+/**
+ * Convenience helper: show a multi-field form and resolve to the user's
+ * FormResponse for that id.
+ *
+ * @param {CamouflageHandle} cam
+ * @param {{id: string, title?: string, fields: object[], allow_cancel?: boolean}} spec
+ * @returns {Promise<{id: string, values?: Record<string, string>, cancelled: boolean}>}
+ */
+export function form(cam, spec) {
+  return new Promise((resolve) => {
+    const listener = (resp) => {
+      if (resp.id !== spec.id) return;
+      cam.off("formResponse", listener);
+      resolve(resp);
+    };
+    cam.on("formResponse", listener);
+    cam.send("ShowForm", spec);
+  });
 }
 
 function spawnError(err, bin) {

@@ -52,6 +52,10 @@ export {
   ShowTable,
   KeyValueItem,
   ShowKeyValueView,
+  FormFieldKind,
+  FormField,
+  ShowForm,
+  FormResponse,
   // Tagged union
   Event,
   // Helpers
@@ -67,11 +71,13 @@ export {
   toast,
   table,
   keyValueView,
+  form,
   MountOptions,
   CamouflageHandle,
   PermissionResponseEvent,
   SelectListResponseEvent,
   ConfirmResponseEvent,
+  FormResponseEvent,
   InvalidEvent,
   ExitEvent,
 } from "./binding.js";

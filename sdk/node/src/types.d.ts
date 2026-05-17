@@ -41,7 +41,9 @@ export type EventType =
   | "ConfirmResponse"
   | "ShowToast"
   | "ShowTable"
-  | "ShowKeyValueView";
+  | "ShowKeyValueView"
+  | "ShowForm"
+  | "FormResponse";
 
 export type Direction = "inbound" | "outbound";
 
@@ -195,6 +197,27 @@ export type ShowKeyValueView = {
   items: KeyValueItem[];
 };
 
+export type FormFieldKind = "text" | "password";
+export type FormField = {
+  name: string;
+  label: string;
+  kind?: FormFieldKind;
+  default?: string;
+  placeholder?: string;
+  required?: boolean;
+};
+export type ShowForm = {
+  id: string;
+  title?: string;
+  fields: FormField[];
+  allow_cancel?: boolean;
+};
+export type FormResponse = {
+  id: string;
+  values?: Record<string, string>;
+  cancelled?: boolean;
+};
+
 // Tagged union --------------------------------------------------------------
 
 export type Event = EnvelopeMeta &
@@ -230,6 +253,8 @@ export type Event = EnvelopeMeta &
     | { event_type: "ShowToast"; payload: ShowToast }
     | { event_type: "ShowTable"; payload: ShowTable }
     | { event_type: "ShowKeyValueView"; payload: ShowKeyValueView }
+    | { event_type: "ShowForm"; payload: ShowForm }
+    | { event_type: "FormResponse"; payload: FormResponse }
   );
 
 // Reader --------------------------------------------------------------------

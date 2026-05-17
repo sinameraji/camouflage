@@ -548,6 +548,11 @@ pub fn render<B: Backend>(
         if let Some(k) = model.active_kv() {
             draw_kv_overlay(f, area, k, theme);
         }
+        // CC-5 — Form modal. Painted last so it stacks on top of any
+        // display-only modal (Form is interactive).
+        if let Some(form) = model.active_form() {
+            draw_form_overlay(f, area, form, theme);
+        }
     })?;
     Ok(())
 }
@@ -834,6 +839,98 @@ fn draw_tool_output_overlay(
                 .title(" tool output (most recent) ")
                 .border_style(Style::default().fg(Color::Yellow)),
         );
+    f.render_widget(widget, overlay);
+}
+
+fn draw_form_overlay(
+    f: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    form: &camouflage_renderer::model::FormState,
+    theme: &camouflage_renderer::theme::Theme,
+) {
+    use camouflage_renderer::model::FormFieldKind;
+    let label_w = form
+        .fields
+        .iter()
+        .map(|f| UnicodeWidthStr::width(f.label.as_str()))
+        .max()
+        .unwrap_or(8);
+    let value_w_target: usize = 32;
+    let w = ((label_w + value_w_target + 6) as u16).max(40).min(area.width.saturating_sub(2));
+    let h: u16 = (form.fields.len() as u16) + 4 + if form.title.is_some() { 1 } else { 0 };
+    if area.width < w + 2 || area.height < h + 2 {
+        return;
+    }
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    let overlay = ratatui::layout::Rect { x, y, width: w, height: h };
+    f.render_widget(Clear, overlay);
+
+    let dim = Style::default().fg(Color::DarkGray);
+    let head = Style::default()
+        .fg(rgb_to_color(theme.accent))
+        .add_modifier(Modifier::BOLD);
+    let label_style = Style::default().fg(rgb_to_color(theme.system));
+    let value_style = Style::default().fg(rgb_to_color(theme.assistant));
+    let focused_marker = Style::default()
+        .fg(rgb_to_color(theme.accent))
+        .add_modifier(Modifier::BOLD);
+
+    let mut lines: Vec<Line> = Vec::new();
+    if let Some(t) = form.title.as_deref() {
+        lines.push(Line::from(vec![Span::styled(format!(" {}", t), head)]));
+    }
+    for (i, field) in form.fields.iter().enumerate() {
+        let is_focused = i == form.focused;
+        let marker = if is_focused { "▸" } else { " " };
+        let pad = label_w.saturating_sub(UnicodeWidthStr::width(field.label.as_str()));
+        let display_value = match field.kind {
+            FormFieldKind::Password => "•".repeat(field.value.chars().count()),
+            FormFieldKind::Text => field.value.clone(),
+        };
+        let shown = if display_value.is_empty() {
+            field
+                .placeholder
+                .as_deref()
+                .map(|p| p.to_string())
+                .unwrap_or_else(String::new)
+        } else {
+            display_value.clone()
+        };
+        let style_for_value = if display_value.is_empty() && field.placeholder.is_some() {
+            dim
+        } else if is_focused {
+            value_style.add_modifier(Modifier::UNDERLINED)
+        } else {
+            value_style
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!(" {} ", marker), focused_marker),
+            Span::styled(field.label.clone(), label_style),
+            Span::raw(" ".repeat(pad)),
+            Span::styled("   ", dim),
+            Span::styled(shown, style_for_value),
+            if field.required {
+                Span::styled(" *", Style::default().fg(rgb_to_color(theme.error)))
+            } else {
+                Span::raw("")
+            },
+        ]));
+    }
+    let hint = if form.allow_cancel {
+        "↑/↓ navigate · Enter next/submit · Esc cancel"
+    } else {
+        "↑/↓ navigate · Enter next/submit"
+    };
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![Span::styled(hint, dim)]));
+
+    let widget = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" form ")
+            .border_style(Style::default().fg(rgb_to_color(theme.overlay_border))),
+    );
     f.render_widget(widget, overlay);
 }
 

@@ -52,9 +52,9 @@ The full catalog conversation from 2026-05-17 lives in [`docs/specs/components-c
 | CC-2 | `Confirm` | ✅ DONE — `7bc8d43` | "save before quit?", "delete session?", any yes/no modal | Tiny scope, covers many small modals. The existing `PermissionRequested` is structurally a special-case Confirm; we keep it as the well-known type. |
 | CC-3 | `Toast` | ✅ DONE — `8f3f0d4` | "Saved", "Authenticated", brief feedback | Trivial scope, immediate visible value. No outbound event — display-only with optional TTL. |
 | CC-4 | `Wizard` | ⬜ TODO | onboarding flow, LSP wizard, command wizard | Multi-step; composes 1+2+3. |
-| CC-5 | `Form` | ⬜ TODO | settings configuration, cloud token + endpoint configuration | Bigger; can wait for a real driver. |
+| CC-5 | `Form` | ✅ DONE — `<this commit>` (text + password fields; Up/Down or Tab to navigate; boolean / select fields are follow-ups) | settings configuration, cloud token + endpoint configuration | Bigger; can wait for a real driver. |
 | CC-6 | `Table` | ✅ DONE — `e4c1d25` (display-only modal; selectable rows + inline mode are follow-ups) | usage stats, cost attribution, session-list with metadata | Display-oriented; optional `RowSelected` outbound for interactive use. |
-| CC-7 | `KeyValueView` | ✅ DONE — `<this commit>` (display-only modal) | "session details" inspector pane, welcome screen | Display-oriented. |
+| CC-7 | `KeyValueView` | ✅ DONE — `348de66` (display-only modal) | "session details" inspector pane, welcome screen | Display-oriented. |
 
 Each component ships as a self-contained slice (one commit series): protocol event(s) → model state → renderer overlay → Snapshot projection field → Node SDK types update → KimiFlare adapter wires it against an actual component being replaced. The KimiFlare wiring is what proves the design.
 

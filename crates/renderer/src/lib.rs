@@ -17,10 +17,10 @@ pub use model::{
 };
 pub use viewport::ViewportState;
 pub use snapshot::{
-    Snapshot, SnapshotConfirm, SnapshotKeyValueItem, SnapshotKeyValueView, SnapshotPermission,
-    SnapshotRow, SnapshotRowKind, SnapshotSelectList, SnapshotSelectListOption, SnapshotTable,
-    SnapshotTableAlign, SnapshotTableColumn, SnapshotTask, SnapshotTaskState, SnapshotToast,
-    SnapshotToastKind,
+    Snapshot, SnapshotConfirm, SnapshotForm, SnapshotFormField, SnapshotFormFieldKind,
+    SnapshotKeyValueItem, SnapshotKeyValueView, SnapshotPermission, SnapshotRow, SnapshotRowKind,
+    SnapshotSelectList, SnapshotSelectListOption, SnapshotTable, SnapshotTableAlign,
+    SnapshotTableColumn, SnapshotTask, SnapshotTaskState, SnapshotToast, SnapshotToastKind,
 };
 
 use camouflage_protocol::Event;
@@ -157,6 +157,26 @@ impl SnapshotRenderer for RenderModel {
                 })
                 .collect(),
         });
+        let form = self.active_form().map(|f| SnapshotForm {
+            id: f.id.clone(),
+            title: f.title.clone(),
+            focused: f.focused,
+            allow_cancel: f.allow_cancel,
+            fields: f
+                .fields
+                .iter()
+                .map(|field| SnapshotFormField {
+                    name: field.name.clone(),
+                    label: field.label.clone(),
+                    kind: match field.kind {
+                        model::FormFieldKind::Text => SnapshotFormFieldKind::Text,
+                        model::FormFieldKind::Password => SnapshotFormFieldKind::Password,
+                    },
+                    value: field.value.clone(),
+                    required: field.required,
+                })
+                .collect(),
+        });
         Snapshot {
             total_rows: self.total_rows(),
             rows,
@@ -168,6 +188,7 @@ impl SnapshotRenderer for RenderModel {
             toasts,
             table,
             key_value_view,
+            form,
         }
     }
 }

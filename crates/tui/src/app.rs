@@ -490,6 +490,95 @@ pub async fn run(cfg: Config) -> Result<()> {
                     continue;
                 }
             }
+            // CC-5 — Form short-circuit. Tab cycles fields; Shift+Tab
+            // (Backtab) goes backward; Enter on last field submits;
+            // Backspace edits; printable chars append; Esc cancels (when
+            // allow_cancel).
+            if model.active_form().is_some() {
+                use crate::tty::Key;
+                let (id, submit_values, cancel): (Option<String>, Option<std::collections::BTreeMap<String, String>>, bool) = {
+                    let f = model.active_form().unwrap();
+                    match key {
+                        // Down or Tab-char → next field; Up → previous field.
+                        Key::Down | Key::Char('\t') => {
+                            if let Some(fm) = model.active_form_mut() {
+                                fm.focused = (fm.focused + 1) % fm.fields.len();
+                            }
+                            model.mark_dirty();
+                            continue;
+                        }
+                        Key::Up => {
+                            if let Some(fm) = model.active_form_mut() {
+                                fm.focused = if fm.focused == 0 {
+                                    fm.fields.len() - 1
+                                } else {
+                                    fm.focused - 1
+                                };
+                            }
+                            model.mark_dirty();
+                            continue;
+                        }
+                        Key::Enter => {
+                            // Submit if on last field, else advance.
+                            if f.focused + 1 < f.fields.len() {
+                                if let Some(fm) = model.active_form_mut() {
+                                    fm.focused += 1;
+                                }
+                                model.mark_dirty();
+                                continue;
+                            }
+                            let values: std::collections::BTreeMap<String, String> = f
+                                .fields
+                                .iter()
+                                .map(|fld| (fld.name.clone(), fld.value.clone()))
+                                .collect();
+                            (Some(f.id.clone()), Some(values), false)
+                        }
+                        Key::Esc if f.allow_cancel => (Some(f.id.clone()), None, true),
+                        Key::Backspace => {
+                            if let Some(fm) = model.active_form_mut() {
+                                if let Some(field) = fm.fields.get_mut(fm.focused) {
+                                    field.value.pop();
+                                }
+                            }
+                            model.mark_dirty();
+                            continue;
+                        }
+                        Key::Char(c) => {
+                            if let Some(fm) = model.active_form_mut() {
+                                if let Some(field) = fm.fields.get_mut(fm.focused) {
+                                    field.value.push(c);
+                                }
+                            }
+                            model.mark_dirty();
+                            continue;
+                        }
+                        _ => continue,
+                    }
+                };
+                if let Some(id) = id {
+                    if let Some(tx) = outbound_tx.as_ref() {
+                        let payload = if cancel {
+                            serde_json::json!({ "id": id, "cancelled": true })
+                        } else {
+                            serde_json::json!({ "id": id, "values": submit_values })
+                        };
+                        let ev = Event {
+                            id: Uuid::new_v4(),
+                            session_id,
+                            seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                            timestamp_ms: now_ms(),
+                            schema_version: SCHEMA_VERSION,
+                            event_type: EventType::FormResponse,
+                            payload,
+                        };
+                        let _ = tx.send(OutgoingEvent(ev)).await;
+                    }
+                    model.clear_form();
+                    continue;
+                }
+                continue;
+            }
             // CC-2 — Confirm short-circuit. Y/N (case-insensitive) decides
             // immediately; ← / → toggles selection; Enter submits the
             // currently-selected button; Esc cancels (when allow_cancel).

@@ -154,6 +154,33 @@ pub struct SnapshotKeyValueView {
     pub items: Vec<SnapshotKeyValueItem>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SnapshotFormFieldKind {
+    Text,
+    Password,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotFormField {
+    pub name: String,
+    pub label: String,
+    pub kind: SnapshotFormFieldKind,
+    pub value: String,
+    pub required: bool,
+}
+
+/// CC-5 — projection of an active Form modal.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotForm {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub fields: Vec<SnapshotFormField>,
+    pub focused: usize,
+    pub allow_cancel: bool,
+}
+
 /// A full UI snapshot. Renderers should treat the document as
 /// last-write-wins: every field reflects current state, not deltas.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -180,4 +207,7 @@ pub struct Snapshot {
     /// CC-7 — present when a KeyValueView modal is currently active.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_value_view: Option<SnapshotKeyValueView>,
+    /// CC-5 — present when a Form modal is currently active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form: Option<SnapshotForm>,
 }

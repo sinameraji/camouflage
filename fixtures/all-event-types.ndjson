@@ -31,4 +31,6 @@
 {"event_type":"ShowToast","payload":{"text":"Saved","kind":"success","ttl_ms":1500}}
 {"event_type":"ShowTable","payload":{"id":"usage-1","title":"Cost — last 7 days","columns":[{"name":"day","label":"Day"},{"name":"cost","label":"Cost ($)","align":"right"}],"rows":[{"day":"Mon","cost":"0.04"},{"day":"Tue","cost":"0.07"}]}}
 {"event_type":"ShowKeyValueView","payload":{"id":"session-1","title":"Session details","items":[{"label":"Started","value":"2h ago"},{"label":"Model","value":"kimi-k2.6"}]}}
+{"event_type":"ShowForm","payload":{"id":"settings","title":"Settings","fields":[{"name":"endpoint","label":"API endpoint","default":"https://api.example.com"},{"name":"token","label":"API token","kind":"password","required":true}]}}
+{"event_type":"FormResponse","payload":{"id":"settings","values":{"endpoint":"https://api.example.com","token":"hidden"}}}
 {"event_type":"SessionEnded","payload":{}}

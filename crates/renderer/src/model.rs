@@ -115,6 +115,35 @@ pub struct RenderModel {
     active_table: Option<TableState>,
     /// CC-7 (v0.4.6+): currently-open KeyValueView modal. Display-only.
     active_kv: Option<KeyValueViewState>,
+    /// CC-5 (v0.4.6+): currently-open Form modal.
+    active_form: Option<FormState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormFieldKind {
+    Text,
+    Password,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormField {
+    pub name: String,
+    pub label: String,
+    pub kind: FormFieldKind,
+    pub placeholder: Option<String>,
+    pub required: bool,
+    /// Current value (host's `default` seeds this; user keystrokes mutate it).
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormState {
+    pub id: String,
+    pub title: Option<String>,
+    pub fields: Vec<FormField>,
+    /// Index of the focused field within `fields`.
+    pub focused: usize,
+    pub allow_cancel: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -307,6 +336,7 @@ impl RenderModel {
             toasts: Vec::new(),
             active_table: None,
             active_kv: None,
+            active_form: None,
         }
     }
 
@@ -460,6 +490,14 @@ impl RenderModel {
 
     pub fn clear_kv(&mut self) {
         if self.active_kv.take().is_some() {
+            self.dirty = true;
+        }
+    }
+
+    pub fn active_form(&self) -> Option<&FormState> { self.active_form.as_ref() }
+    pub fn active_form_mut(&mut self) -> Option<&mut FormState> { self.active_form.as_mut() }
+    pub fn clear_form(&mut self) {
+        if self.active_form.take().is_some() {
             self.dirty = true;
         }
     }
@@ -1027,6 +1065,63 @@ impl RenderModel {
             // resolve the modal.
             EventType::ConfirmResponse => {
                 self.active_confirm = None;
+                self.dirty = true;
+            }
+            EventType::ShowForm => {
+                if self.active_form.is_some() {
+                    return false;
+                }
+                let id = ev.payload.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if id.is_empty() {
+                    return false;
+                }
+                let title = ev.payload.get("title").and_then(|v| v.as_str()).map(str::to_string);
+                let allow_cancel = ev
+                    .payload
+                    .get("allow_cancel")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+                let fields: Vec<FormField> = ev
+                    .payload
+                    .get("fields")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|f| {
+                                let name = f.get("name").and_then(|v| v.as_str())?.to_string();
+                                let label = f.get("label").and_then(|v| v.as_str())?.to_string();
+                                let kind = match f.get("kind").and_then(|v| v.as_str()) {
+                                    Some("password") => FormFieldKind::Password,
+                                    _ => FormFieldKind::Text,
+                                };
+                                let value = f
+                                    .get("default")
+                                    .and_then(|v| v.as_str())
+                                    .map(str::to_string)
+                                    .unwrap_or_default();
+                                let placeholder = f
+                                    .get("placeholder")
+                                    .and_then(|v| v.as_str())
+                                    .map(str::to_string);
+                                let required = f
+                                    .get("required")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                Some(FormField { name, label, kind, placeholder, required, value })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if fields.is_empty() {
+                    return false;
+                }
+                self.active_form = Some(FormState {
+                    id, title, fields, focused: 0, allow_cancel,
+                });
+                self.dirty = true;
+            }
+            EventType::FormResponse => {
+                self.active_form = None;
                 self.dirty = true;
             }
             EventType::ShowKeyValueView => {
