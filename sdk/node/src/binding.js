@@ -42,13 +42,27 @@ class CamouflageHandle extends EventEmitter {
    */
   send(event_type, payload = {}) {
     if (this._closed) {
-      throw new Error("camouflage: send() after close()");
+      // Forgiving: when the renderer has already exited (user pressed
+      // `q`, child crashed, etc.), `send()` no-ops silently and returns
+      // false. Throwing here would kill the host process during normal
+      // cleanup (the finally block typically tries to send a final
+      // StatusUpdate + SessionEnded). Consumers that care can check
+      // the boolean return or listen for the "exit" event.
+      return false;
     }
     if (typeof event_type !== "string" || !event_type) {
       throw new TypeError("camouflage: event_type must be a non-empty string");
     }
     const line = encode({ event_type, payload });
-    return this._writeLine(line);
+    try {
+      return this._writeLine(line);
+    } catch (err) {
+      // EPIPE / write-on-closed-stream race: same idea — swallow.
+      if (err && (err.code === "EPIPE" || /writable/i.test(String(err.message)))) {
+        return false;
+      }
+      throw err;
+    }
   }
 
   /**
@@ -59,14 +73,17 @@ class CamouflageHandle extends EventEmitter {
    */
   sendEvent(ev) {
     if (this._closed) {
-      throw new Error("camouflage: sendEvent() after close()");
+      return false;
     }
     return this._writeLine(encode(ev));
   }
 
   _writeLine(line) {
     if (!this._stdin.writable) {
-      throw new Error("camouflage: renderer stdin is no longer writable");
+      // Stream closed mid-flight (child exited between our last check
+      // and now). Same forgiving policy as send(): no-op and return.
+      this._closed = true;
+      return false;
     }
     return this._stdin.write(line + "\n");
   }
