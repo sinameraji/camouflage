@@ -56,6 +56,11 @@ export {
   FormField,
   ShowForm,
   FormResponse,
+  WizardStep,
+  ShowWizard,
+  WizardStepResult,
+  WizardCompleted,
+  WizardCancelled,
   // Tagged union
   Event,
   // Helpers
@@ -72,12 +77,16 @@ export {
   table,
   keyValueView,
   form,
+  wizard,
   MountOptions,
   CamouflageHandle,
   PermissionResponseEvent,
   SelectListResponseEvent,
   ConfirmResponseEvent,
   FormResponseEvent,
+  WizardCompletedEvent,
+  WizardCancelledEvent,
+  WizardResolved,
   InvalidEvent,
   ExitEvent,
 } from "./binding.js";

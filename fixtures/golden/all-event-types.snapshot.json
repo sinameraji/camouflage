@@ -68,7 +68,7 @@
       "text": "end of warmup"
     },
     {
-      "seq": 35,
+      "seq": 38,
       "kind": "system",
       "text": "session ended"
     }
@@ -79,11 +79,19 @@
     "phase": "idle"
   },
   "tasks": [],
+  "confirm": {
+    "id": "agree",
+    "prompt": "Accept terms?",
+    "yes_label": "Yes",
+    "no_label": "No",
+    "selected_yes": true,
+    "allow_cancel": true
+  },
   "toasts": [
     {
       "text": "Saved",
       "kind": "success",
-      "expires_ms": 1778992690896
+      "expires_ms": 1778993322303
     }
   ],
   "table": {

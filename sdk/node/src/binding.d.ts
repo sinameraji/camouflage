@@ -125,6 +125,39 @@ export function form(
   },
 ): Promise<FormResponseEvent>;
 
+export interface WizardCompletedEvent {
+  id: string;
+  results: Record<string, unknown>;
+}
+
+export interface WizardCancelledEvent {
+  id: string;
+  at_step: number;
+}
+
+export type WizardResolved =
+  | (WizardCompletedEvent & { cancelled?: undefined })
+  | (WizardCancelledEvent & { cancelled: true });
+
+/**
+ * Convenience helper: show a multi-step wizard. Resolves to either
+ * `{ id, results }` (completion) or `{ id, cancelled: true, at_step }`
+ * (user cancelled).
+ */
+export function wizard(
+  cam: CamouflageHandle,
+  spec: {
+    id: string;
+    title?: string;
+    steps: (
+      | { kind: "select"; id: string; prompt: string; options: { value: string; label: string; description?: string }[]; default?: string }
+      | { kind: "confirm"; id: string; prompt: string; yes_label?: string; no_label?: string }
+      | { kind: "form"; id: string; title?: string; fields: { name: string; label: string; kind?: "text" | "password"; default?: string; placeholder?: string; required?: boolean }[] }
+    )[];
+    allow_cancel?: boolean;
+  },
+): Promise<WizardResolved>;
+
 /**
  * Convenience helper: emit a `ShowSelectList` and return a Promise that
  * resolves to the user's `SelectListResponseEvent` for that id. The host
@@ -178,6 +211,8 @@ export interface CamouflageHandle extends EventEmitter {
   on(event: "selectListResponse", listener: (resp: SelectListResponseEvent) => void): this;
   on(event: "confirmResponse", listener: (resp: ConfirmResponseEvent) => void): this;
   on(event: "formResponse", listener: (resp: FormResponseEvent) => void): this;
+  on(event: "wizardCompleted", listener: (resp: WizardCompletedEvent) => void): this;
+  on(event: "wizardCancelled", listener: (resp: WizardCancelledEvent) => void): this;
   on(event: "event", listener: (ev: Event) => void): this;
   on(event: "invalid", listener: (info: InvalidEvent) => void): this;
   on(event: "stderr", listener: (chunk: string) => void): this;

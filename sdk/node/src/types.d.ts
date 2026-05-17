@@ -43,7 +43,10 @@ export type EventType =
   | "ShowTable"
   | "ShowKeyValueView"
   | "ShowForm"
-  | "FormResponse";
+  | "FormResponse"
+  | "ShowWizard"
+  | "WizardCompleted"
+  | "WizardCancelled";
 
 export type Direction = "inbound" | "outbound";
 
@@ -218,6 +221,33 @@ export type FormResponse = {
   cancelled?: boolean;
 };
 
+export type WizardStep =
+  | { kind: "select"; id: string; prompt: string; options: SelectListOption[]; default?: string }
+  | { kind: "confirm"; id: string; prompt: string; yes_label?: string; no_label?: string }
+  | { kind: "form"; id: string; title?: string; fields: FormField[] };
+
+export type ShowWizard = {
+  id: string;
+  title?: string;
+  steps: WizardStep[];
+  allow_cancel?: boolean;
+};
+
+export type WizardStepResult =
+  | string                       // from a select step
+  | boolean                      // from a confirm step
+  | Record<string, string>;      // from a form step
+
+export type WizardCompleted = {
+  id: string;
+  results: Record<string, WizardStepResult>;
+};
+
+export type WizardCancelled = {
+  id: string;
+  at_step: number;
+};
+
 // Tagged union --------------------------------------------------------------
 
 export type Event = EnvelopeMeta &
@@ -255,6 +285,9 @@ export type Event = EnvelopeMeta &
     | { event_type: "ShowKeyValueView"; payload: ShowKeyValueView }
     | { event_type: "ShowForm"; payload: ShowForm }
     | { event_type: "FormResponse"; payload: FormResponse }
+    | { event_type: "ShowWizard"; payload: ShowWizard }
+    | { event_type: "WizardCompleted"; payload: WizardCompleted }
+    | { event_type: "WizardCancelled"; payload: WizardCancelled }
   );
 
 // Reader --------------------------------------------------------------------

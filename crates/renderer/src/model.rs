@@ -117,6 +117,52 @@ pub struct RenderModel {
     active_kv: Option<KeyValueViewState>,
     /// CC-5 (v0.4.6+): currently-open Form modal.
     active_form: Option<FormState>,
+    /// CC-4 (v0.4.6+): currently-running Wizard, if any. When set, the
+    /// wizard owns the current sub-modal (select/confirm/form is being
+    /// shown on its behalf). Responses to that sub-modal are intercepted
+    /// by the app layer and routed back into `wizard_advance_*`.
+    active_wizard: Option<WizardState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WizardStepSpec {
+    Select { id: String, prompt: String, options: Vec<SelectListEntry>, default: Option<String> },
+    Confirm { id: String, prompt: String, yes_label: String, no_label: String },
+    Form { id: String, title: Option<String>, fields: Vec<FormField> },
+}
+
+impl WizardStepSpec {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Select { id, .. } | Self::Confirm { id, .. } | Self::Form { id, .. } => id,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WizardStepResult {
+    Select(String),
+    Confirm(bool),
+    Form(BTreeMap<String, String>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WizardState {
+    pub id: String,
+    pub title: Option<String>,
+    pub steps: Vec<WizardStepSpec>,
+    pub current: usize,
+    pub results: BTreeMap<String, WizardStepResult>,
+    pub allow_cancel: bool,
+}
+
+/// Outcome of `wizard_advance_*` calls. The app loop reacts:
+/// `Continued` → keep going; `Completed { results }` → emit
+/// `WizardCompleted` and clear the wizard.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WizardAdvance {
+    Continued,
+    Completed(BTreeMap<String, WizardStepResult>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -337,6 +383,7 @@ impl RenderModel {
             active_table: None,
             active_kv: None,
             active_form: None,
+            active_wizard: None,
         }
     }
 
@@ -499,6 +546,39 @@ impl RenderModel {
     pub fn clear_form(&mut self) {
         if self.active_form.take().is_some() {
             self.dirty = true;
+        }
+    }
+
+    pub fn active_wizard(&self) -> Option<&WizardState> { self.active_wizard.as_ref() }
+    pub fn clear_wizard(&mut self) {
+        if self.active_wizard.take().is_some() {
+            self.dirty = true;
+        }
+    }
+
+    /// CC-4 — id of the wizard's current step's sub-modal, if a wizard
+    /// is active. The app loop uses this to detect that an incoming
+    /// SelectList/Confirm/Form response belongs to a wizard step.
+    pub fn wizard_current_step_id(&self) -> Option<&str> {
+        let w = self.active_wizard.as_ref()?;
+        w.steps.get(w.current).map(|s| s.id())
+    }
+
+    /// CC-4 — record the current step's result and advance. Returns
+    /// `Completed { results }` when the wizard finishes (caller emits
+    /// `WizardCompleted` and clears via `clear_wizard()`).
+    pub fn wizard_advance(&mut self, result: WizardStepResult) -> Option<WizardAdvance> {
+        let w = self.active_wizard.as_mut()?;
+        let step_id = w.steps.get(w.current)?.id().to_string();
+        w.results.insert(step_id, result);
+        w.current += 1;
+        if w.current >= w.steps.len() {
+            let results = std::mem::take(&mut w.results);
+            Some(WizardAdvance::Completed(results))
+        } else {
+            // Install next step's sub-modal.
+            install_wizard_step(self);
+            Some(WizardAdvance::Continued)
         }
     }
 
@@ -1067,6 +1147,41 @@ impl RenderModel {
                 self.active_confirm = None;
                 self.dirty = true;
             }
+            EventType::ShowWizard => {
+                if self.active_wizard.is_some() {
+                    return false;
+                }
+                let id = ev.payload.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if id.is_empty() {
+                    return false;
+                }
+                let title = ev.payload.get("title").and_then(|v| v.as_str()).map(str::to_string);
+                let allow_cancel = ev
+                    .payload
+                    .get("allow_cancel")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+                let steps: Vec<WizardStepSpec> = ev
+                    .payload
+                    .get("steps")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter().filter_map(parse_wizard_step).collect()
+                    })
+                    .unwrap_or_default();
+                if steps.is_empty() {
+                    return false;
+                }
+                self.active_wizard = Some(WizardState {
+                    id, title, steps, current: 0, results: BTreeMap::new(), allow_cancel,
+                });
+                install_wizard_step(self);
+                self.dirty = true;
+            }
+            EventType::WizardCompleted | EventType::WizardCancelled => {
+                self.active_wizard = None;
+                self.dirty = true;
+            }
             EventType::ShowForm => {
                 if self.active_form.is_some() {
                     return false;
@@ -1385,6 +1500,92 @@ fn append_capped(buf: &mut String, chunk: &str) {
     let tail = &combined[tail_start..];
     let elided = total.saturating_sub(head.len() + tail.len());
     *buf = format!("{head}\n… {elided} bytes elided …\n{tail}");
+}
+
+/// CC-4 — parse one entry of `ShowWizard.steps` into a typed step spec.
+fn parse_wizard_step(v: &serde_json::Value) -> Option<WizardStepSpec> {
+    let kind = v.get("kind").and_then(|x| x.as_str())?;
+    let id = v.get("id").and_then(|x| x.as_str())?.to_string();
+    match kind {
+        "select" => {
+            let prompt = v.get("prompt").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let options = v.get("options").and_then(|x| x.as_array()).map(|arr| {
+                arr.iter()
+                    .filter_map(|opt| {
+                        let value = opt.get("value").and_then(|x| x.as_str())?.to_string();
+                        let label = opt.get("label").and_then(|x| x.as_str())?.to_string();
+                        let description = opt.get("description").and_then(|x| x.as_str()).map(str::to_string);
+                        Some(SelectListEntry { value, label, description })
+                    })
+                    .collect()
+            }).unwrap_or_default();
+            let default = v.get("default").and_then(|x| x.as_str()).map(str::to_string);
+            Some(WizardStepSpec::Select { id, prompt, options, default })
+        }
+        "confirm" => {
+            let prompt = v.get("prompt").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let yes_label = v.get("yes_label").and_then(|x| x.as_str()).unwrap_or("Yes").to_string();
+            let no_label = v.get("no_label").and_then(|x| x.as_str()).unwrap_or("No").to_string();
+            Some(WizardStepSpec::Confirm { id, prompt, yes_label, no_label })
+        }
+        "form" => {
+            let title = v.get("title").and_then(|x| x.as_str()).map(str::to_string);
+            let fields = v.get("fields").and_then(|x| x.as_array()).map(|arr| {
+                arr.iter().filter_map(|f| {
+                    let name = f.get("name").and_then(|x| x.as_str())?.to_string();
+                    let label = f.get("label").and_then(|x| x.as_str())?.to_string();
+                    let kind = match f.get("kind").and_then(|x| x.as_str()) {
+                        Some("password") => FormFieldKind::Password,
+                        _ => FormFieldKind::Text,
+                    };
+                    let value = f.get("default").and_then(|x| x.as_str()).map(str::to_string).unwrap_or_default();
+                    let placeholder = f.get("placeholder").and_then(|x| x.as_str()).map(str::to_string);
+                    let required = f.get("required").and_then(|x| x.as_bool()).unwrap_or(false);
+                    Some(FormField { name, label, kind, placeholder, required, value })
+                }).collect()
+            }).unwrap_or_default();
+            Some(WizardStepSpec::Form { id, title, fields })
+        }
+        _ => None,
+    }
+}
+
+/// CC-4 — install the wizard's current step as the appropriate
+/// sub-modal. Caller must have set up `active_wizard` first.
+fn install_wizard_step(m: &mut RenderModel) {
+    let Some(w) = m.active_wizard.as_ref() else { return };
+    let Some(step) = w.steps.get(w.current) else { return };
+    // Clear any sub-modal that might be lingering.
+    m.active_select_list = None;
+    m.active_confirm = None;
+    m.active_form = None;
+    match step.clone() {
+        WizardStepSpec::Select { id, prompt, options, default } => {
+            let selected = default
+                .as_ref()
+                .and_then(|d| options.iter().position(|o| &o.value == d))
+                .unwrap_or(0);
+            m.active_select_list = Some(SelectListState {
+                id, prompt, options, selected,
+                filter: String::new(),
+                allow_filter: true,
+                allow_cancel: w.allow_cancel,
+            });
+        }
+        WizardStepSpec::Confirm { id, prompt, yes_label, no_label } => {
+            m.active_confirm = Some(ConfirmState {
+                id, prompt, yes_label, no_label,
+                selected_yes: true,
+                allow_cancel: w.allow_cancel,
+            });
+        }
+        WizardStepSpec::Form { id, title, fields } => {
+            m.active_form = Some(FormState {
+                id, title, fields, focused: 0,
+                allow_cancel: w.allow_cancel,
+            });
+        }
+    }
 }
 
 /// Render a JSON cell value as a display string. Strings pass through,

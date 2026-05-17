@@ -246,6 +246,16 @@ export async function mount(opts = {}) {
         values: ev.payload?.values,
         cancelled: !!ev.payload?.cancelled,
       });
+    } else if (ev.event_type === "WizardCompleted") {
+      handle.emit("wizardCompleted", {
+        id: ev.payload?.id,
+        results: ev.payload?.results ?? {},
+      });
+    } else if (ev.event_type === "WizardCancelled") {
+      handle.emit("wizardCancelled", {
+        id: ev.payload?.id,
+        at_step: ev.payload?.at_step,
+      });
     }
     // Always also emit the raw Event for advanced consumers.
     handle.emit("event", ev);
@@ -355,6 +365,38 @@ export function form(cam, spec) {
     };
     cam.on("formResponse", listener);
     cam.send("ShowForm", spec);
+  });
+}
+
+/**
+ * Convenience helper: emit a ShowWizard and resolve to the user's
+ * completion or cancellation. Resolves with either:
+ *   { id, results }           — all steps completed
+ *   { id, cancelled: true, at_step }   — user cancelled
+ *
+ * @param {CamouflageHandle} cam
+ * @param {{id: string, title?: string, steps: object[], allow_cancel?: boolean}} spec
+ * @returns {Promise<{id: string, results?: Record<string, any>, cancelled?: boolean, at_step?: number}>}
+ */
+export function wizard(cam, spec) {
+  return new Promise((resolve) => {
+    const onCompleted = (resp) => {
+      if (resp.id !== spec.id) return;
+      cleanup();
+      resolve(resp);
+    };
+    const onCancelled = (resp) => {
+      if (resp.id !== spec.id) return;
+      cleanup();
+      resolve({ id: resp.id, cancelled: true, at_step: resp.at_step });
+    };
+    const cleanup = () => {
+      cam.off("wizardCompleted", onCompleted);
+      cam.off("wizardCancelled", onCancelled);
+    };
+    cam.on("wizardCompleted", onCompleted);
+    cam.on("wizardCancelled", onCancelled);
+    cam.send("ShowWizard", spec);
   });
 }
 

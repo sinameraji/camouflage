@@ -115,6 +115,15 @@ pub enum EventType {
     ShowForm,
     /// v0.4.6+ (CC-5) — Renderer → host: outcome of a `ShowForm`.
     FormResponse,
+    /// v0.4.6+ (CC-4) — Host → renderer: multi-step flow that composes
+    /// Select / Confirm / Form into a guided wizard. Renderer drives each
+    /// step in order; per-step results accumulate; final results come
+    /// back as `WizardCompleted`. Cancel anywhere → `WizardCancelled`.
+    ShowWizard,
+    /// v0.4.6+ (CC-4) — Renderer → host: all steps completed.
+    WizardCompleted,
+    /// v0.4.6+ (CC-4) — Renderer → host: user cancelled mid-wizard.
+    WizardCancelled,
 }
 
 impl EventType {
@@ -153,6 +162,9 @@ impl EventType {
             EventType::ShowKeyValueView => "ShowKeyValueView",
             EventType::ShowForm => "ShowForm",
             EventType::FormResponse => "FormResponse",
+            EventType::ShowWizard => "ShowWizard",
+            EventType::WizardCompleted => "WizardCompleted",
+            EventType::WizardCancelled => "WizardCancelled",
         }
     }
 
@@ -163,7 +175,9 @@ impl EventType {
             | EventType::PermissionResponse
             | EventType::SelectListResponse
             | EventType::ConfirmResponse
-            | EventType::FormResponse => Direction::Outbound,
+            | EventType::FormResponse
+            | EventType::WizardCompleted
+            | EventType::WizardCancelled => Direction::Outbound,
             _ => Direction::Inbound,
         }
     }
@@ -555,6 +569,79 @@ pub mod payloads {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         pub cancelled: bool,
     }
+
+    /// v0.4.6+ (CC-4) — one step of a Wizard. Tagged union on `kind`.
+    /// Each variant carries the per-step payload that the renderer uses
+    /// to install the appropriate sub-modal (SelectList / Confirm / Form).
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    pub enum WizardStep {
+        Select(WizardSelectStep),
+        Confirm(WizardConfirmStep),
+        Form(WizardFormStep),
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct WizardSelectStep {
+        pub id: String,
+        pub prompt: String,
+        pub options: Vec<SelectListOption>,
+        #[serde(default)]
+        pub default: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct WizardConfirmStep {
+        pub id: String,
+        pub prompt: String,
+        #[serde(default)]
+        pub yes_label: Option<String>,
+        #[serde(default)]
+        pub no_label: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct WizardFormStep {
+        pub id: String,
+        #[serde(default)]
+        pub title: Option<String>,
+        pub fields: Vec<FormField>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct ShowWizard {
+        pub id: String,
+        #[serde(default)]
+        pub title: Option<String>,
+        pub steps: Vec<WizardStep>,
+        #[serde(default = "default_true")]
+        pub allow_cancel: bool,
+    }
+
+    /// v0.4.6+ (CC-4) — per-step result value carried back in
+    /// `WizardCompleted.results`. String for select; bool for confirm;
+    /// JSON object for form.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(untagged)]
+    pub enum WizardStepResult {
+        Select(String),
+        Confirm(bool),
+        Form(std::collections::BTreeMap<String, String>),
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct WizardCompleted {
+        pub id: String,
+        /// Step id → result for each completed step.
+        pub results: std::collections::BTreeMap<String, WizardStepResult>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct WizardCancelled {
+        pub id: String,
+        /// 0-based index of the step the user was on when they cancelled.
+        pub at_step: usize,
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -616,8 +703,11 @@ mod tests {
             EventType::ShowKeyValueView,
             EventType::ShowForm,
             EventType::FormResponse,
+            EventType::ShowWizard,
+            EventType::WizardCompleted,
+            EventType::WizardCancelled,
         ];
-        assert_eq!(types.len(), 33);
+        assert_eq!(types.len(), 36);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();

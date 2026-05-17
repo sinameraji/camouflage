@@ -557,6 +557,20 @@ pub async fn run(cfg: Config) -> Result<()> {
                     }
                 };
                 if let Some(id) = id {
+                    let wizard_step = model.wizard_current_step_id().map(str::to_string);
+                    let owned_by_wizard = wizard_step.as_deref() == Some(id.as_str());
+                    if owned_by_wizard {
+                        model.clear_form();
+                        if cancel {
+                            emit_wizard_cancelled(&outbound_tx, &mut model, session_id, &seq_counter).await;
+                        } else if let Some(v) = submit_values {
+                            advance_wizard_after(
+                                &outbound_tx, &mut model, session_id, &seq_counter,
+                                camouflage_renderer::model::WizardStepResult::Form(v),
+                            ).await;
+                        }
+                        continue;
+                    }
                     if let Some(tx) = outbound_tx.as_ref() {
                         let payload = if cancel {
                             serde_json::json!({ "id": id, "cancelled": true })
@@ -602,6 +616,23 @@ pub async fn run(cfg: Config) -> Result<()> {
                     }
                 };
                 if let Some(id) = id {
+                    // CC-4 — if a wizard owns this step, intercept the
+                    // response into the wizard's advance path instead of
+                    // emitting ConfirmResponse externally.
+                    let wizard_step = model.wizard_current_step_id().map(str::to_string);
+                    let owned_by_wizard = wizard_step.as_deref() == Some(id.as_str());
+                    if owned_by_wizard {
+                        model.clear_confirm();
+                        if cancel {
+                            emit_wizard_cancelled(&outbound_tx, &mut model, session_id, &seq_counter).await;
+                        } else if let Some(v) = value {
+                            advance_wizard_after(
+                                &outbound_tx, &mut model, session_id, &seq_counter,
+                                camouflage_renderer::model::WizardStepResult::Confirm(v),
+                            ).await;
+                        }
+                        continue;
+                    }
                     if let Some(tx) = outbound_tx.as_ref() {
                         let payload = if cancel {
                             serde_json::json!({ "id": id, "cancelled": true })
@@ -695,6 +726,20 @@ pub async fn run(cfg: Config) -> Result<()> {
                     continue;
                 }
                 if let Some(id) = id {
+                    let wizard_step = model.wizard_current_step_id().map(str::to_string);
+                    let owned_by_wizard = wizard_step.as_deref() == Some(id.as_str());
+                    if owned_by_wizard {
+                        model.clear_select_list();
+                        if cancel {
+                            emit_wizard_cancelled(&outbound_tx, &mut model, session_id, &seq_counter).await;
+                        } else if let Some(v) = value_to_emit {
+                            advance_wizard_after(
+                                &outbound_tx, &mut model, session_id, &seq_counter,
+                                camouflage_renderer::model::WizardStepResult::Select(v),
+                            ).await;
+                        }
+                        continue;
+                    }
                     // Build + send SelectListResponse, then clear the modal.
                     if let Some(tx) = outbound_tx.as_ref() {
                         let payload = if cancel {
@@ -1498,6 +1543,83 @@ pub(crate) fn crash_ring_push(ev: &camouflage_protocol::Event) {
             buf.push_back(ev.clone());
         }
     }
+}
+
+/// CC-4 — record a wizard step result, advance, and either emit
+/// WizardCompleted (with accumulated results) or let the next step's
+/// sub-modal take over.
+async fn advance_wizard_after(
+    outbound_tx: &Option<mpsc::Sender<OutgoingEvent>>,
+    model: &mut RenderModel,
+    session_id: Uuid,
+    seq_counter: &Arc<AtomicI64>,
+    result: camouflage_renderer::model::WizardStepResult,
+) {
+    use camouflage_renderer::model::WizardAdvance;
+    let wizard_id = model.active_wizard().map(|w| w.id.clone());
+    let advance = model.wizard_advance(result);
+    if let (Some(wizard_id), Some(WizardAdvance::Completed(results))) = (wizard_id, advance) {
+        // Serialize results: each step id → JSON value (string / bool / object).
+        let mut results_json = serde_json::Map::new();
+        for (step_id, r) in results {
+            use camouflage_renderer::model::WizardStepResult as R;
+            let v = match r {
+                R::Select(s) => serde_json::Value::String(s),
+                R::Confirm(b) => serde_json::Value::Bool(b),
+                R::Form(map) => {
+                    let mut obj = serde_json::Map::new();
+                    for (k, v) in map { obj.insert(k, serde_json::Value::String(v)); }
+                    serde_json::Value::Object(obj)
+                }
+            };
+            results_json.insert(step_id, v);
+        }
+        model.clear_wizard();
+        if let Some(tx) = outbound_tx.as_ref() {
+            let ev = Event {
+                id: Uuid::new_v4(),
+                session_id,
+                seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                timestamp_ms: now_ms(),
+                schema_version: SCHEMA_VERSION,
+                event_type: EventType::WizardCompleted,
+                payload: serde_json::json!({
+                    "id": wizard_id,
+                    "results": serde_json::Value::Object(results_json),
+                }),
+            };
+            let _ = tx.send(OutgoingEvent(ev)).await;
+        }
+    }
+    model.mark_dirty();
+}
+
+/// CC-4 — user cancelled a wizard step. Emit WizardCancelled with the
+/// current step index, then clear the wizard.
+async fn emit_wizard_cancelled(
+    outbound_tx: &Option<mpsc::Sender<OutgoingEvent>>,
+    model: &mut RenderModel,
+    session_id: Uuid,
+    seq_counter: &Arc<AtomicI64>,
+) {
+    let (wizard_id, at_step) = match model.active_wizard() {
+        Some(w) => (w.id.clone(), w.current),
+        None => return,
+    };
+    model.clear_wizard();
+    if let Some(tx) = outbound_tx.as_ref() {
+        let ev = Event {
+            id: Uuid::new_v4(),
+            session_id,
+            seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+            timestamp_ms: now_ms(),
+            schema_version: SCHEMA_VERSION,
+            event_type: EventType::WizardCancelled,
+            payload: serde_json::json!({ "id": wizard_id, "at_step": at_step }),
+        };
+        let _ = tx.send(OutgoingEvent(ev)).await;
+    }
+    model.mark_dirty();
 }
 
 /// Returns the `@`-prefixed partial at the end of `buf`, if any.

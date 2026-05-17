@@ -137,6 +137,15 @@ fn validate_payload(event_type: EventType, payload: serde_json::Value) -> Result
         FormResponse => {
             serde_json::from_value::<payloads::FormResponse>(payload)?;
         }
+        ShowWizard => {
+            serde_json::from_value::<payloads::ShowWizard>(payload)?;
+        }
+        WizardCompleted => {
+            serde_json::from_value::<payloads::WizardCompleted>(payload)?;
+        }
+        WizardCancelled => {
+            serde_json::from_value::<payloads::WizardCancelled>(payload)?;
+        }
         // Events without typed payloads — any JSON value is accepted.
         SessionStarted
         | SessionEnded

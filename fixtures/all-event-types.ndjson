@@ -33,4 +33,7 @@
 {"event_type":"ShowKeyValueView","payload":{"id":"session-1","title":"Session details","items":[{"label":"Started","value":"2h ago"},{"label":"Model","value":"kimi-k2.6"}]}}
 {"event_type":"ShowForm","payload":{"id":"settings","title":"Settings","fields":[{"name":"endpoint","label":"API endpoint","default":"https://api.example.com"},{"name":"token","label":"API token","kind":"password","required":true}]}}
 {"event_type":"FormResponse","payload":{"id":"settings","values":{"endpoint":"https://api.example.com","token":"hidden"}}}
+{"event_type":"ShowWizard","payload":{"id":"onboard","title":"Onboarding","steps":[{"kind":"confirm","id":"agree","prompt":"Accept terms?"},{"kind":"form","id":"creds","fields":[{"name":"email","label":"Email"}]}]}}
+{"event_type":"WizardCompleted","payload":{"id":"onboard","results":{"agree":true,"creds":{"email":"x@y.z"}}}}
+{"event_type":"WizardCancelled","payload":{"id":"onboard-2","at_step":1}}
 {"event_type":"SessionEnded","payload":{}}
