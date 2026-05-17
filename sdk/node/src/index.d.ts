@@ -53,9 +53,11 @@ export {
 
 export {
   mount,
+  selectList,
   MountOptions,
   CamouflageHandle,
   PermissionResponseEvent,
+  SelectListResponseEvent,
   InvalidEvent,
   ExitEvent,
 } from "./binding.js";

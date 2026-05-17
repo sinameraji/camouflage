@@ -228,6 +228,12 @@ export async function mount(opts = {}) {
         choice: ev.payload?.choice,
         feedback: ev.payload?.feedback,
       });
+    } else if (ev.event_type === "SelectListResponse") {
+      handle.emit("selectListResponse", {
+        id: ev.payload?.id,
+        value: ev.payload?.value,
+        cancelled: !!ev.payload?.cancelled,
+      });
     }
     // Always also emit the raw Event for advanced consumers.
     handle.emit("event", ev);
@@ -244,6 +250,27 @@ export async function mount(opts = {}) {
   });
 
   return handle;
+}
+
+/**
+ * Convenience helper: emit a ShowSelectList and resolve to the user's
+ * SelectListResponse for that id. Subscribes once, unsubscribes after
+ * the response arrives.
+ *
+ * @param {CamouflageHandle} cam
+ * @param {{id: string, prompt: string, options: object[], default?: string, allow_filter?: boolean, allow_cancel?: boolean}} spec
+ * @returns {Promise<{id: string, value?: string, cancelled: boolean}>}
+ */
+export function selectList(cam, spec) {
+  return new Promise((resolve) => {
+    const listener = (resp) => {
+      if (resp.id !== spec.id) return;
+      cam.off("selectListResponse", listener);
+      resolve(resp);
+    };
+    cam.on("selectListResponse", listener);
+    cam.send("ShowSelectList", spec);
+  });
 }
 
 function spawnError(err, bin) {

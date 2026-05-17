@@ -32,6 +32,39 @@ export interface PermissionResponseEvent {
   feedback?: string;
 }
 
+export interface SelectListResponseEvent {
+  id: string;
+  value?: string;
+  cancelled: boolean;
+}
+
+/**
+ * Convenience helper: emit a `ShowSelectList` and return a Promise that
+ * resolves to the user's `SelectListResponseEvent` for that id. The host
+ * picks the id; the helper subscribes once, filters by id, and unsubscribes
+ * automatically.
+ *
+ * @example
+ *   const choice = await selectList(cam, {
+ *     id: "resume-picker",
+ *     prompt: "Resume which session?",
+ *     options: [{ value: "a", label: "Session A" }],
+ *   });
+ *   if (choice.cancelled) return;
+ *   console.log("user picked:", choice.value);
+ */
+export function selectList(
+  cam: CamouflageHandle,
+  spec: {
+    id: string;
+    prompt: string;
+    options: { value: string; label: string; description?: string }[];
+    default?: string;
+    allow_filter?: boolean;
+    allow_cancel?: boolean;
+  },
+): Promise<SelectListResponseEvent>;
+
 export interface InvalidEvent {
   line: string;
   error: string;
@@ -55,6 +88,7 @@ export interface CamouflageHandle extends EventEmitter {
   // Typed event subscriptions (EventEmitter overrides):
   on(event: "userInput", listener: (text: string) => void): this;
   on(event: "permissionResponse", listener: (resp: PermissionResponseEvent) => void): this;
+  on(event: "selectListResponse", listener: (resp: SelectListResponseEvent) => void): this;
   on(event: "event", listener: (ev: Event) => void): this;
   on(event: "invalid", listener: (info: InvalidEvent) => void): this;
   on(event: "stderr", listener: (chunk: string) => void): this;

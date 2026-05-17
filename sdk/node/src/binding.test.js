@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { mount } from "./index.js";
+import { mount, selectList } from "./index.js";
 
 const FAKE = join(dirname(fileURLToPath(import.meta.url)), "__fake-renderer.js");
 
@@ -82,6 +82,28 @@ test("close() resolves with the child's exit code", async () => {
   const cam = await mountFake();
   const code = await cam.close();
   assert.equal(code, 0);
+});
+
+test("selectList() helper round-trips via the fake echo renderer", async () => {
+  // The fake echoes any inbound NDJSON back on stdout. Sending a ShowSelectList
+  // makes the fake "respond" with that exact event — not a real
+  // SelectListResponse. To simulate the real flow we instead send the response
+  // directly: the helper subscribes to selectListResponse before sending
+  // ShowSelectList, so any matching SelectListResponse echoed back resolves it.
+  const cam = await mountFake();
+  // Don't await — race the helper against a manually-sent response.
+  const p = selectList(cam, {
+    id: "test-1",
+    prompt: "Pick one",
+    options: [{ value: "a", label: "A" }, { value: "b", label: "B" }],
+  });
+  // Echo what'll be parsed as the response.
+  cam.send("SelectListResponse", { id: "test-1", value: "b" });
+  const resp = await p;
+  assert.equal(resp.id, "test-1");
+  assert.equal(resp.value, "b");
+  assert.equal(resp.cancelled, false);
+  await cam.close();
 });
 
 test("send() rejects bad event_type argument", async () => {
