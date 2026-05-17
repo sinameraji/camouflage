@@ -81,6 +81,15 @@ pub enum EventType {
     /// picker fuzzy-matches against these. Same submission story as
     /// SlashCommandsRegistered.
     MentionCandidatesRegistered,
+    /// v0.4.6+ (CC-1) — Host → renderer: render a modal SelectList. The
+    /// first of the "components catalog" primitives (see
+    /// `docs/specs/components-catalog.md`). User's pick is reported back
+    /// via `SelectListResponse` keyed by the same `id`.
+    ShowSelectList,
+    /// v0.4.6+ (CC-1) — Renderer → host: outcome of a `ShowSelectList`.
+    /// Payload carries either `value` (a successful pick) or
+    /// `cancelled: true` (user dismissed with Esc / Ctrl+C).
+    SelectListResponse,
 }
 
 impl EventType {
@@ -110,13 +119,17 @@ impl EventType {
             EventType::PermissionResponse => "PermissionResponse",
             EventType::SlashCommandsRegistered => "SlashCommandsRegistered",
             EventType::MentionCandidatesRegistered => "MentionCandidatesRegistered",
+            EventType::ShowSelectList => "ShowSelectList",
+            EventType::SelectListResponse => "SelectListResponse",
         }
     }
 
     /// Direction this event flows on the wire.
     pub fn direction(&self) -> Direction {
         match self {
-            EventType::UserInputSubmitted | EventType::PermissionResponse => Direction::Outbound,
+            EventType::UserInputSubmitted
+            | EventType::PermissionResponse
+            | EventType::SelectListResponse => Direction::Outbound,
             _ => Direction::Inbound,
         }
     }
@@ -313,6 +326,57 @@ pub mod payloads {
     pub struct MentionCandidatesRegistered {
         pub candidates: Vec<MentionCandidate>,
     }
+
+    /// v0.4.6+ (CC-1) — one option in a `ShowSelectList`.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct SelectListOption {
+        /// Stable opaque token returned to the host in `SelectListResponse`.
+        /// Hosts typically use a session id, file path, command name, etc.
+        pub value: String,
+        /// Human-readable label shown in the picker.
+        pub label: String,
+        /// Optional one-line description shown dimmed to the right of `label`.
+        #[serde(default)]
+        pub description: Option<String>,
+    }
+
+    /// v0.4.6+ (CC-1) — host asks the renderer to show a modal select list.
+    /// See `docs/specs/components-catalog.md` for the full design.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct ShowSelectList {
+        /// Host-chosen unique id. Reported back in `SelectListResponse` so
+        /// the host can correlate the response with the request. Multiple
+        /// SelectLists can stack — each has its own id.
+        pub id: String,
+        /// Prompt shown above the option list (e.g. "Resume which session?").
+        pub prompt: String,
+        pub options: Vec<SelectListOption>,
+        /// Initial selection (must match an option `value`). Defaults to
+        /// the first option when omitted or unmatched.
+        #[serde(default)]
+        pub default: Option<String>,
+        /// When true, the user can type characters to filter the visible
+        /// list by substring match on `label`. Default true.
+        #[serde(default = "default_true")]
+        pub allow_filter: bool,
+        /// When true, Esc / Ctrl+C dismisses without selecting (response
+        /// carries `cancelled: true`). Default true.
+        #[serde(default = "default_true")]
+        pub allow_cancel: bool,
+    }
+
+    fn default_true() -> bool { true }
+
+    /// v0.4.6+ (CC-1) — outbound result of `ShowSelectList`. Exactly one
+    /// of `value` or `cancelled` is set per response.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct SelectListResponse {
+        pub id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub value: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        pub cancelled: bool,
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -365,8 +429,10 @@ mod tests {
             EventType::PermissionResponse,
             EventType::SlashCommandsRegistered,
             EventType::MentionCandidatesRegistered,
+            EventType::ShowSelectList,
+            EventType::SelectListResponse,
         ];
-        assert_eq!(types.len(), 24);
+        assert_eq!(types.len(), 26);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();

@@ -34,7 +34,9 @@ export type EventType =
   | "UserInputSubmitted"
   | "PermissionResponse"
   | "SlashCommandsRegistered"
-  | "MentionCandidatesRegistered";
+  | "MentionCandidatesRegistered"
+  | "ShowSelectList"
+  | "SelectListResponse";
 
 export type Direction = "inbound" | "outbound";
 
@@ -127,6 +129,25 @@ export type MentionCandidate = {
 };
 export type MentionCandidatesRegistered = { candidates: MentionCandidate[] };
 
+export type SelectListOption = {
+  value: string;
+  label: string;
+  description?: string;
+};
+export type ShowSelectList = {
+  id: string;
+  prompt: string;
+  options: SelectListOption[];
+  default?: string;
+  allow_filter?: boolean;
+  allow_cancel?: boolean;
+};
+export type SelectListResponse = {
+  id: string;
+  value?: string;
+  cancelled?: boolean;
+};
+
 // Tagged union --------------------------------------------------------------
 
 export type Event = EnvelopeMeta &
@@ -155,6 +176,8 @@ export type Event = EnvelopeMeta &
     | { event_type: "PermissionResponse"; payload: PermissionResponse }
     | { event_type: "SlashCommandsRegistered"; payload: SlashCommandsRegistered }
     | { event_type: "MentionCandidatesRegistered"; payload: MentionCandidatesRegistered }
+    | { event_type: "ShowSelectList"; payload: ShowSelectList }
+    | { event_type: "SelectListResponse"; payload: SelectListResponse }
   );
 
 // Reader --------------------------------------------------------------------

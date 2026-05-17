@@ -805,7 +805,14 @@ impl RenderModel {
             }
             // Outbound events never reach apply() in practice, but be tolerant
             // (a replayed session log might contain them).
-            EventType::UserInputSubmitted | EventType::PermissionResponse => {}
+            EventType::UserInputSubmitted
+            | EventType::PermissionResponse
+            | EventType::SelectListResponse => {}
+            // CC-1 SelectList model state lands in the next commit. For now
+            // accept the Show event so validate + fixture roundtrip pass;
+            // the overlay is drawn from the SelectListState struct that
+            // we'll add to RenderModel in the next slice.
+            EventType::ShowSelectList => {}
         }
         true
     }

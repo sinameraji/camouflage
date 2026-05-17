@@ -24,4 +24,6 @@
 {"event_type":"PermissionResponse","payload":{"request_id":"perm-1","choice":"allow_once"}}
 {"event_type":"SlashCommandsRegistered","payload":{"commands":[{"name":"compact","description":"compact the session"},{"name":"clear","description":"clear the transcript"}]}}
 {"event_type":"MentionCandidatesRegistered","payload":{"candidates":[{"token":"src/auth/login.ts","kind":"file"},{"token":"AuthGuard","kind":"symbol"}]}}
+{"event_type":"ShowSelectList","payload":{"id":"resume-1","prompt":"Resume which session?","options":[{"value":"sess-abc","label":"fix auth"},{"value":"sess-def","label":"refactor router"}],"default":"sess-abc","allow_filter":true,"allow_cancel":true}}
+{"event_type":"SelectListResponse","payload":{"id":"resume-1","value":"sess-abc"}}
 {"event_type":"SessionEnded","payload":{}}

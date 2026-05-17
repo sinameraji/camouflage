@@ -16,6 +16,7 @@ const KNOWN_TYPES = new Set([
   "RuntimeError", "StatusUpdate", "BackgroundTaskUpdate", "ViewportMarker",
   "UserInputSubmitted", "PermissionResponse",
   "SlashCommandsRegistered", "MentionCandidatesRegistered",
+  "ShowSelectList", "SelectListResponse",
 ]);
 
 /**

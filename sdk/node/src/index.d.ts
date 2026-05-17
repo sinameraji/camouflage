@@ -40,6 +40,9 @@ export {
   SlashCommandsRegistered,
   MentionCandidate,
   MentionCandidatesRegistered,
+  SelectListOption,
+  ShowSelectList,
+  SelectListResponse,
   // Tagged union
   Event,
   // Helpers

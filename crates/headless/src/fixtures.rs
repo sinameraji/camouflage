@@ -116,6 +116,8 @@ mod tests {
             EventType::PermissionResponse,
             EventType::SlashCommandsRegistered,
             EventType::MentionCandidatesRegistered,
+            EventType::ShowSelectList,
+            EventType::SelectListResponse,
         ];
         for v in variants {
             let needle = format!("\"event_type\":\"{}\"", v.as_str());
