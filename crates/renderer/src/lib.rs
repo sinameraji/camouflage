@@ -18,8 +18,8 @@ pub use model::{
 pub use viewport::ViewportState;
 pub use snapshot::{
     Snapshot, SnapshotConfirm, SnapshotPermission, SnapshotRow, SnapshotRowKind,
-    SnapshotSelectList, SnapshotSelectListOption, SnapshotTask, SnapshotTaskState,
-    SnapshotToast, SnapshotToastKind,
+    SnapshotSelectList, SnapshotSelectListOption, SnapshotTable, SnapshotTableAlign,
+    SnapshotTableColumn, SnapshotTask, SnapshotTaskState, SnapshotToast, SnapshotToastKind,
 };
 
 use camouflage_protocol::Event;
@@ -126,6 +126,24 @@ impl SnapshotRenderer for RenderModel {
                 expires_ms: t.expires_ms,
             })
             .collect();
+        let table = self.active_table().map(|t| SnapshotTable {
+            id: t.id.clone(),
+            title: t.title.clone(),
+            columns: t
+                .columns
+                .iter()
+                .map(|c| SnapshotTableColumn {
+                    name: c.name.clone(),
+                    label: c.label.clone(),
+                    align: match c.align {
+                        model::TableAlign::Left => SnapshotTableAlign::Left,
+                        model::TableAlign::Right => SnapshotTableAlign::Right,
+                        model::TableAlign::Center => SnapshotTableAlign::Center,
+                    },
+                })
+                .collect(),
+            rows: t.rows.clone(),
+        });
         Snapshot {
             total_rows: self.total_rows(),
             rows,
@@ -135,6 +153,7 @@ impl SnapshotRenderer for RenderModel {
             select_list,
             confirm,
             toasts,
+            table,
         }
     }
 }

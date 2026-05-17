@@ -102,6 +102,10 @@ pub enum EventType {
     /// Display-only — no outbound response. Toast auto-fades after
     /// `ttl_ms` (defaults to 3000ms when omitted).
     ShowToast,
+    /// v0.4.6+ (CC-6) — Host → renderer: show a tabular data view as a
+    /// modal. Display-only in this version; interactive row selection
+    /// + inline mode are follow-ups.
+    ShowTable,
 }
 
 impl EventType {
@@ -136,6 +140,7 @@ impl EventType {
             EventType::ShowConfirm => "ShowConfirm",
             EventType::ConfirmResponse => "ConfirmResponse",
             EventType::ShowToast => "ShowToast",
+            EventType::ShowTable => "ShowTable",
         }
     }
 
@@ -448,6 +453,38 @@ pub mod payloads {
         #[serde(default)]
         pub ttl_ms: Option<u32>,
     }
+
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "snake_case")]
+    pub enum TableAlign {
+        Left,
+        Right,
+        Center,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct TableColumn {
+        /// Key into each row object.
+        pub name: String,
+        /// Display label shown in the header. Defaults to `name`.
+        #[serde(default)]
+        pub label: Option<String>,
+        /// Cell alignment. Defaults to left.
+        #[serde(default)]
+        pub align: Option<TableAlign>,
+    }
+
+    /// v0.4.6+ (CC-6) — show tabular data in a modal. Display-only in
+    /// this version. Rows are arbitrary JSON objects; each column reads
+    /// `row[name]` and stringifies it.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    pub struct ShowTable {
+        pub id: String,
+        #[serde(default)]
+        pub title: Option<String>,
+        pub columns: Vec<TableColumn>,
+        pub rows: Vec<serde_json::Value>,
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -505,8 +542,9 @@ mod tests {
             EventType::ShowConfirm,
             EventType::ConfirmResponse,
             EventType::ShowToast,
+            EventType::ShowTable,
         ];
-        assert_eq!(types.len(), 29);
+        assert_eq!(types.len(), 30);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();

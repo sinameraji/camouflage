@@ -39,7 +39,8 @@ export type EventType =
   | "SelectListResponse"
   | "ShowConfirm"
   | "ConfirmResponse"
-  | "ShowToast";
+  | "ShowToast"
+  | "ShowTable";
 
 export type Direction = "inbound" | "outbound";
 
@@ -172,6 +173,20 @@ export type ShowToast = {
   ttl_ms?: number;
 };
 
+export type TableAlign = "left" | "right" | "center";
+export type TableColumn = {
+  name: string;
+  label?: string;
+  align?: TableAlign;
+};
+export type ShowTable = {
+  id: string;
+  title?: string;
+  columns: TableColumn[];
+  /** Each row is a JSON object keyed by column `name`. */
+  rows: Record<string, unknown>[];
+};
+
 // Tagged union --------------------------------------------------------------
 
 export type Event = EnvelopeMeta &
@@ -205,6 +220,7 @@ export type Event = EnvelopeMeta &
     | { event_type: "ShowConfirm"; payload: ShowConfirm }
     | { event_type: "ConfirmResponse"; payload: ConfirmResponse }
     | { event_type: "ShowToast"; payload: ShowToast }
+    | { event_type: "ShowTable"; payload: ShowTable }
   );
 
 // Reader --------------------------------------------------------------------

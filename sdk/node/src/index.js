@@ -15,4 +15,4 @@ export {
   encode,
 } from "./types.js";
 
-export { mount, selectList, confirm, toast } from "./binding.js";
+export { mount, selectList, confirm, toast, table } from "./binding.js";

@@ -73,6 +73,21 @@ export function toast(
   },
 ): void;
 
+/** Convenience helper: show a tabular data view. Display-only. */
+export function table(
+  cam: CamouflageHandle,
+  spec: {
+    id: string;
+    title?: string;
+    columns: {
+      name: string;
+      label?: string;
+      align?: "left" | "right" | "center";
+    }[];
+    rows: Record<string, unknown>[];
+  },
+): void;
+
 /**
  * Convenience helper: emit a `ShowSelectList` and return a Promise that
  * resolves to the user's `SelectListResponseEvent` for that id. The host

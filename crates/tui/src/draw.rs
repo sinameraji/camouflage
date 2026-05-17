@@ -539,6 +539,11 @@ pub fn render<B: Backend>(
         if !toasts.is_empty() {
             draw_toasts(f, area, toasts, theme);
         }
+        // CC-6 — Table modal. Painted before SelectList/Confirm in z-order
+        // since those are interactive and should sit on top.
+        if let Some(t) = model.active_table() {
+            draw_table_overlay(f, area, t, theme);
+        }
     })?;
     Ok(())
 }
@@ -826,6 +831,122 @@ fn draw_tool_output_overlay(
                 .border_style(Style::default().fg(Color::Yellow)),
         );
     f.render_widget(widget, overlay);
+}
+
+fn draw_table_overlay(
+    f: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    t: &camouflage_renderer::model::TableState,
+    theme: &camouflage_renderer::theme::Theme,
+) {
+    use camouflage_renderer::model::TableAlign;
+    // Column widths: max(header, max cell) per column, capped to 30 chars.
+    let widths: Vec<usize> = t
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(ci, col)| {
+            let header_w = UnicodeWidthStr::width(col.label.as_str());
+            let cell_w = t
+                .rows
+                .iter()
+                .map(|r| r.get(ci).map(|s| UnicodeWidthStr::width(s.as_str())).unwrap_or(0))
+                .max()
+                .unwrap_or(0);
+            header_w.max(cell_w).min(30)
+        })
+        .collect();
+    let total_w: usize = widths.iter().sum::<usize>() + (widths.len().saturating_sub(1)) * 3 + 4;
+    let row_count = t.rows.len().min(20);
+    let h: u16 = (row_count as u16) + 4 + if t.title.is_some() { 1 } else { 0 }; // border + header + sep + rows + hint
+    let w = (total_w as u16).max(40).min(area.width.saturating_sub(2));
+    if area.width < w + 2 || area.height < h + 2 {
+        return;
+    }
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    let overlay = ratatui::layout::Rect { x, y, width: w, height: h };
+    f.render_widget(Clear, overlay);
+
+    let dim = Style::default().fg(Color::DarkGray);
+    let head = Style::default()
+        .fg(rgb_to_color(theme.accent))
+        .add_modifier(Modifier::BOLD);
+    let cell_style = Style::default().fg(rgb_to_color(theme.assistant));
+
+    let mut lines: Vec<Line> = Vec::new();
+    if let Some(title) = t.title.as_deref() {
+        lines.push(Line::from(vec![Span::styled(format!(" {}", title), head)]));
+    }
+    // Header row
+    let mut header_spans: Vec<Span> = vec![Span::raw(" ")];
+    for (i, col) in t.columns.iter().enumerate() {
+        let cell = pad_cell(&col.label, widths[i], col.align);
+        header_spans.push(Span::styled(cell, head));
+        if i + 1 < t.columns.len() {
+            header_spans.push(Span::styled("  │  ", dim));
+        }
+    }
+    lines.push(Line::from(header_spans));
+    lines.push(Line::from(vec![Span::styled(
+        "─".repeat((w.saturating_sub(2)) as usize),
+        dim,
+    )]));
+    for row in t.rows.iter().take(row_count) {
+        let mut spans: Vec<Span> = vec![Span::raw(" ")];
+        for (i, col) in t.columns.iter().enumerate() {
+            let raw = row.get(i).cloned().unwrap_or_default();
+            let cell = pad_cell(&raw, widths[i], col.align);
+            spans.push(Span::styled(cell, cell_style));
+            if i + 1 < t.columns.len() {
+                spans.push(Span::styled("  │  ", dim));
+            }
+        }
+        lines.push(Line::from(spans));
+    }
+    if t.rows.len() > row_count {
+        lines.push(Line::from(vec![Span::styled(
+            format!(" … {} more rows (truncated)", t.rows.len() - row_count),
+            dim,
+        )]));
+    }
+    lines.push(Line::from(vec![Span::styled("Esc to close", dim)]));
+
+    let widget = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" table ")
+            .border_style(Style::default().fg(rgb_to_color(theme.overlay_border))),
+    );
+    f.render_widget(widget, overlay);
+}
+
+/// Truncate-or-pad `s` to exactly `width` visible columns according to alignment.
+fn pad_cell(s: &str, width: usize, align: camouflage_renderer::model::TableAlign) -> String {
+    use camouflage_renderer::model::TableAlign;
+    let sw = UnicodeWidthStr::width(s);
+    if sw >= width {
+        // Truncate. Walk char boundaries.
+        let mut out = String::with_capacity(width);
+        let mut acc = 0;
+        for ch in s.chars() {
+            let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if acc + cw > width { break; }
+            out.push(ch);
+            acc += cw;
+        }
+        return out;
+    }
+    let pad = width - sw;
+    match align {
+        TableAlign::Left => format!("{}{}", s, " ".repeat(pad)),
+        TableAlign::Right => format!("{}{}", " ".repeat(pad), s),
+        TableAlign::Center => {
+            let l = pad / 2;
+            let r = pad - l;
+            format!("{}{}{}", " ".repeat(l), s, " ".repeat(r))
+        }
+    }
 }
 
 fn draw_toasts(

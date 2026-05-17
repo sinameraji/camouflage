@@ -110,6 +110,33 @@ pub struct RenderModel {
     /// renderer should call `prune_expired_toasts()` (or `active_toasts()`)
     /// each frame to drop expired entries.
     toasts: Vec<ToastState>,
+    /// CC-6 (v0.4.6+): currently-open Table modal. Display-only — Esc
+    /// dismisses, no outbound response.
+    active_table: Option<TableState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableAlign {
+    Left,
+    Right,
+    Center,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableColumn {
+    pub name: String,
+    pub label: String,
+    pub align: TableAlign,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableState {
+    pub id: String,
+    pub title: Option<String>,
+    pub columns: Vec<TableColumn>,
+    /// Each row pre-stringified per column (column-major-by-row), so the
+    /// TUI can render without re-parsing JSON each frame.
+    pub rows: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,6 +290,7 @@ impl RenderModel {
             active_select_list: None,
             active_confirm: None,
             toasts: Vec::new(),
+            active_table: None,
         }
     }
 
@@ -397,6 +425,17 @@ impl RenderModel {
     /// `active_toasts()` (which prunes) instead.
     pub fn peek_toasts(&self) -> &[ToastState] {
         &self.toasts
+    }
+
+    /// CC-6 — currently-open Table modal, if any.
+    pub fn active_table(&self) -> Option<&TableState> {
+        self.active_table.as_ref()
+    }
+
+    pub fn clear_table(&mut self) {
+        if self.active_table.take().is_some() {
+            self.dirty = true;
+        }
     }
 
     /// Drop toasts whose `expires_ms` is in the past. Sets `dirty` if
@@ -964,6 +1003,59 @@ impl RenderModel {
                 self.active_confirm = None;
                 self.dirty = true;
             }
+            EventType::ShowTable => {
+                if self.active_table.is_some() {
+                    return false;
+                }
+                let id = ev.payload.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if id.is_empty() {
+                    return false;
+                }
+                let title = ev.payload.get("title").and_then(|v| v.as_str()).map(str::to_string);
+                let columns: Vec<TableColumn> = ev
+                    .payload
+                    .get("columns")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|col| {
+                                let name = col.get("name").and_then(|v| v.as_str())?.to_string();
+                                let label = col
+                                    .get("label")
+                                    .and_then(|v| v.as_str())
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| name.clone());
+                                let align = match col.get("align").and_then(|v| v.as_str()) {
+                                    Some("right") => TableAlign::Right,
+                                    Some("center") => TableAlign::Center,
+                                    _ => TableAlign::Left,
+                                };
+                                Some(TableColumn { name, label, align })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if columns.is_empty() {
+                    return false;
+                }
+                let rows: Vec<Vec<String>> = ev
+                    .payload
+                    .get("rows")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .map(|row| {
+                                columns
+                                    .iter()
+                                    .map(|c| stringify_cell(row.get(&c.name)))
+                                    .collect()
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                self.active_table = Some(TableState { id, title, columns, rows });
+                self.dirty = true;
+            }
             EventType::ShowToast => {
                 let text = ev.payload.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 if text.is_empty() {
@@ -1143,6 +1235,19 @@ fn append_capped(buf: &mut String, chunk: &str) {
     let tail = &combined[tail_start..];
     let elided = total.saturating_sub(head.len() + tail.len());
     *buf = format!("{head}\n… {elided} bytes elided …\n{tail}");
+}
+
+/// Render a JSON cell value as a display string. Strings pass through,
+/// numbers/bools stringify naturally, null/missing → empty string,
+/// objects/arrays get JSON-compact representation.
+fn stringify_cell(v: Option<&serde_json::Value>) -> String {
+    match v {
+        None | Some(serde_json::Value::Null) => String::new(),
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(serde_json::Value::Bool(b)) => b.to_string(),
+        Some(serde_json::Value::Number(n)) => n.to_string(),
+        Some(other) => other.to_string(),
+    }
 }
 
 /// Wall-clock time in milliseconds since UNIX epoch. Used for toast TTLs.

@@ -121,6 +121,7 @@ mod tests {
             EventType::ShowConfirm,
             EventType::ConfirmResponse,
             EventType::ShowToast,
+            EventType::ShowTable,
         ];
         for v in variants {
             let needle = format!("\"event_type\":\"{}\"", v.as_str());

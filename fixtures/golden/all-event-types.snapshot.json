@@ -68,7 +68,7 @@
       "text": "end of warmup"
     },
     {
-      "seq": 31,
+      "seq": 32,
       "kind": "system",
       "text": "session ended"
     }
@@ -83,7 +83,33 @@
     {
       "text": "Saved",
       "kind": "success",
-      "expires_ms": 1778990532456
+      "expires_ms": 1778991269976
     }
-  ]
+  ],
+  "table": {
+    "id": "usage-1",
+    "title": "Cost — last 7 days",
+    "columns": [
+      {
+        "name": "day",
+        "label": "Day",
+        "align": "left"
+      },
+      {
+        "name": "cost",
+        "label": "Cost ($)",
+        "align": "right"
+      }
+    ],
+    "rows": [
+      [
+        "Mon",
+        "0.04"
+      ],
+      [
+        "Tue",
+        "0.07"
+      ]
+    ]
+  }
 }

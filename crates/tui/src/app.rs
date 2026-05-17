@@ -470,11 +470,18 @@ pub async fn run(cfg: Config) -> Result<()> {
             }
             // Esc closes any open overlay before anything else gets it. This
             // makes the dismiss UX consistent: ?, M, X, T → Esc closes.
+            // Also covers CC-6 Table (display-only modal — Esc is the only
+            // exit).
             if matches!(key, crate::tty::Key::Esc) {
-                if help_open || metrics_open || tool_output_open {
+                if help_open || metrics_open || tool_output_open
+                    || model.active_table().is_some()
+                {
                     help_open = false;
                     metrics_open = false;
                     tool_output_open = false;
+                    if model.active_table().is_some() {
+                        model.clear_table();
+                    }
                     model.mark_dirty();
                     continue;
                 }

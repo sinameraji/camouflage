@@ -113,6 +113,32 @@ pub struct SnapshotToast {
     pub expires_ms: i64,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SnapshotTableAlign {
+    Left,
+    Right,
+    Center,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotTableColumn {
+    pub name: String,
+    pub label: String,
+    pub align: SnapshotTableAlign,
+}
+
+/// CC-6 — projection of an active Table modal.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotTable {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub columns: Vec<SnapshotTableColumn>,
+    /// Pre-stringified cells (rows × columns).
+    pub rows: Vec<Vec<String>>,
+}
+
 /// A full UI snapshot. Renderers should treat the document as
 /// last-write-wins: every field reflects current state, not deltas.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -133,4 +159,7 @@ pub struct Snapshot {
     /// CC-3 — live toasts (those still within TTL).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub toasts: Vec<SnapshotToast>,
+    /// CC-6 — present when a Table modal is currently active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<SnapshotTable>,
 }

@@ -312,6 +312,16 @@ export function toast(cam, spec) {
   cam.send("ShowToast", payload);
 }
 
+/**
+ * Convenience helper: show a tabular data view. Display-only.
+ *
+ * @param {CamouflageHandle} cam
+ * @param {{id: string, title?: string, columns: object[], rows: object[]}} spec
+ */
+export function table(cam, spec) {
+  cam.send("ShowTable", spec);
+}
+
 function spawnError(err, bin) {
   if (err && err.code === "ENOENT") {
     return new Error(

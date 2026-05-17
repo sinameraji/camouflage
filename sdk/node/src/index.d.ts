@@ -47,6 +47,9 @@ export {
   ConfirmResponse,
   ToastKind,
   ShowToast,
+  TableAlign,
+  TableColumn,
+  ShowTable,
   // Tagged union
   Event,
   // Helpers
@@ -60,6 +63,7 @@ export {
   selectList,
   confirm,
   toast,
+  table,
   MountOptions,
   CamouflageHandle,
   PermissionResponseEvent,
