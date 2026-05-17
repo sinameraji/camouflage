@@ -523,6 +523,11 @@ pub fn render<B: Backend>(
                 draw_mention_picker_overlay(f, area, &partial, model, mention_picker_index);
             }
         }
+        // CC-1 — SelectList modal renders on top of everything else
+        // (above help, metrics, etc.) since it's a focused input modal.
+        if let Some(sl) = model.active_select_list() {
+            draw_select_list_overlay(f, area, sl, theme);
+        }
     })?;
     Ok(())
 }
@@ -809,6 +814,99 @@ fn draw_tool_output_overlay(
                 .title(" tool output (most recent) ")
                 .border_style(Style::default().fg(Color::Yellow)),
         );
+    f.render_widget(widget, overlay);
+}
+
+fn draw_select_list_overlay(
+    f: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    sl: &camouflage_renderer::model::SelectListState,
+    theme: &camouflage_renderer::theme::Theme,
+) {
+    let visible = sl.filtered_indices();
+    let entry_count = visible.len().min(12); // cap visible entries; longer lists scroll
+    // Compute width from the longest visible label so the modal doesn't
+    // hug too narrowly.
+    let max_label = visible
+        .iter()
+        .map(|&i| {
+            let e = &sl.options[i];
+            UnicodeWidthStr::width(e.label.as_str())
+                + e.description
+                    .as_deref()
+                    .map(|d| UnicodeWidthStr::width(d) + 3)
+                    .unwrap_or(0)
+        })
+        .max()
+        .unwrap_or(20);
+    let prompt_w = UnicodeWidthStr::width(sl.prompt.as_str());
+    let mut w = (max_label + 6).max(prompt_w + 4).max(40) as u16;
+    w = w.min(area.width.saturating_sub(2));
+    let h: u16 = (entry_count as u16)
+        + 2  // top/bottom border
+        + 1  // prompt row
+        + 1  // separator
+        + if sl.allow_filter { 2 } else { 0 } // filter row + separator
+        + 1; // hints row
+    if area.width < w + 2 || area.height < h + 2 {
+        return;
+    }
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    let overlay = ratatui::layout::Rect { x, y, width: w, height: h };
+    f.render_widget(Clear, overlay);
+
+    let dim = Style::default().fg(Color::DarkGray);
+    let plain = Style::default().fg(rgb_to_color(theme.assistant));
+    let head = Style::default()
+        .fg(rgb_to_color(theme.accent))
+        .add_modifier(Modifier::BOLD);
+    let sel_bg = rgb_to_color(theme.accent);
+    let sel_fg = Color::Black;
+    let sel = Style::default().fg(sel_fg).bg(sel_bg).add_modifier(Modifier::BOLD);
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(vec![Span::styled(format!(" {}", sl.prompt), head)]));
+    if sl.allow_filter {
+        let filter_hint = if sl.filter.is_empty() {
+            Span::styled("(type to filter)", dim)
+        } else {
+            Span::styled(sl.filter.as_str(), plain)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(" filter › ", dim),
+            filter_hint,
+        ]));
+    }
+    lines.push(Line::from(vec![Span::styled(
+        "─".repeat((w.saturating_sub(2)) as usize),
+        dim,
+    )]));
+    for &i in visible.iter().take(entry_count) {
+        let entry = &sl.options[i];
+        let style = if i == sl.selected { sel } else { plain };
+        let mut spans = vec![
+            Span::styled(if i == sl.selected { " ▸ " } else { "   " }, style),
+            Span::styled(entry.label.as_str(), style),
+        ];
+        if let Some(desc) = entry.description.as_deref() {
+            spans.push(Span::styled(format!("  {}", desc), dim));
+        }
+        lines.push(Line::from(spans));
+    }
+    let hint = if sl.allow_cancel {
+        "↑/↓ navigate · Enter select · Esc cancel"
+    } else {
+        "↑/↓ navigate · Enter select"
+    };
+    lines.push(Line::from(vec![Span::styled(hint, dim)]));
+
+    let widget = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" select ")
+            .border_style(Style::default().fg(rgb_to_color(theme.overlay_border))),
+    );
     f.render_widget(widget, overlay);
 }
 

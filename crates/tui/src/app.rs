@@ -479,6 +479,100 @@ pub async fn run(cfg: Config) -> Result<()> {
                     continue;
                 }
             }
+            // CC-1 — SelectList short-circuit. When a SelectList is active,
+            // all input flows into it: ↑/↓ navigate filtered options,
+            // Enter submits the highlighted option, Esc cancels (when
+            // allow_cancel), Backspace edits the filter, printable chars
+            // append to the filter (when allow_filter).
+            if model.active_select_list().is_some() {
+                use crate::tty::Key;
+                let (id, value_to_emit, cancel, filter_change): (Option<String>, Option<String>, bool, Option<(char, bool)>) = {
+                    let sl = model.active_select_list().unwrap();
+                    let visible = sl.filtered_indices();
+                    match key {
+                        Key::Up => {
+                            // Move within the filtered list. selected may not
+                            // be in `visible`, in which case treat as 0.
+                            let pos = visible.iter().position(|&i| i == sl.selected).unwrap_or(0);
+                            let next = pos.saturating_sub(1);
+                            if let Some(&new_sel) = visible.get(next) {
+                                if let Some(s) = model.active_select_list_mut() {
+                                    s.selected = new_sel;
+                                }
+                            }
+                            model.mark_dirty();
+                            continue;
+                        }
+                        Key::Down => {
+                            let pos = visible.iter().position(|&i| i == sl.selected).unwrap_or(0);
+                            let next = (pos + 1).min(visible.len().saturating_sub(1));
+                            if let Some(&new_sel) = visible.get(next) {
+                                if let Some(s) = model.active_select_list_mut() {
+                                    s.selected = new_sel;
+                                }
+                            }
+                            model.mark_dirty();
+                            continue;
+                        }
+                        Key::Enter => {
+                            // Submit: use the selected option if it's in the
+                            // filtered set, otherwise first visible.
+                            let chosen = if visible.contains(&sl.selected) {
+                                sl.selected
+                            } else if let Some(&first) = visible.first() {
+                                first
+                            } else {
+                                // Empty filter — no-op rather than crash.
+                                continue;
+                            };
+                            (Some(sl.id.clone()), Some(sl.options[chosen].value.clone()), false, None)
+                        }
+                        Key::Esc if sl.allow_cancel => {
+                            (Some(sl.id.clone()), None, true, None)
+                        }
+                        Key::Backspace if sl.allow_filter => (None, None, false, Some(('\0', true))),
+                        Key::Char(c) if sl.allow_filter => (None, None, false, Some((c, false))),
+                        _ => continue,
+                    }
+                };
+                if let Some(change) = filter_change {
+                    if let Some(s) = model.active_select_list_mut() {
+                        let (ch, backspace) = change;
+                        if backspace { s.filter.pop(); } else { s.filter.push(ch); }
+                        // After filtering, ensure selected is in the visible set;
+                        // if not, snap to the first visible.
+                        let visible = s.filtered_indices();
+                        if !visible.contains(&s.selected) {
+                            s.selected = *visible.first().unwrap_or(&0);
+                        }
+                    }
+                    model.mark_dirty();
+                    continue;
+                }
+                if let Some(id) = id {
+                    // Build + send SelectListResponse, then clear the modal.
+                    if let Some(tx) = outbound_tx.as_ref() {
+                        let payload = if cancel {
+                            serde_json::json!({ "id": id, "cancelled": true })
+                        } else {
+                            serde_json::json!({ "id": id, "value": value_to_emit })
+                        };
+                        let ev = Event {
+                            id: Uuid::new_v4(),
+                            session_id,
+                            seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                            timestamp_ms: now_ms(),
+                            schema_version: SCHEMA_VERSION,
+                            event_type: EventType::SelectListResponse,
+                            payload,
+                        };
+                        let _ = tx.send(OutgoingEvent(ev)).await;
+                    }
+                    model.clear_select_list();
+                    continue;
+                }
+                continue;
+            }
             // @-mention picker short-circuit. Active when the last
             // whitespace-delimited token of input starts with '@' and the
             // host has registered candidates.
