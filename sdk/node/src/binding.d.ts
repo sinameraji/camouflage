@@ -88,6 +88,16 @@ export function table(
   },
 ): void;
 
+/** Convenience helper: show a label/value list. Display-only. */
+export function keyValueView(
+  cam: CamouflageHandle,
+  spec: {
+    id: string;
+    title?: string;
+    items: { label: string; value: string }[];
+  },
+): void;
+
 /**
  * Convenience helper: emit a `ShowSelectList` and return a Promise that
  * resolves to the user's `SelectListResponseEvent` for that id. The host

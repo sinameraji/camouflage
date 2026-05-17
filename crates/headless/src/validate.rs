@@ -128,6 +128,9 @@ fn validate_payload(event_type: EventType, payload: serde_json::Value) -> Result
         ShowTable => {
             serde_json::from_value::<payloads::ShowTable>(payload)?;
         }
+        ShowKeyValueView => {
+            serde_json::from_value::<payloads::ShowKeyValueView>(payload)?;
+        }
         // Events without typed payloads — any JSON value is accepted.
         SessionStarted
         | SessionEnded

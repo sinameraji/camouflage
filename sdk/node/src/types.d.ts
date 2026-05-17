@@ -40,7 +40,8 @@ export type EventType =
   | "ShowConfirm"
   | "ConfirmResponse"
   | "ShowToast"
-  | "ShowTable";
+  | "ShowTable"
+  | "ShowKeyValueView";
 
 export type Direction = "inbound" | "outbound";
 
@@ -187,6 +188,13 @@ export type ShowTable = {
   rows: Record<string, unknown>[];
 };
 
+export type KeyValueItem = { label: string; value: string };
+export type ShowKeyValueView = {
+  id: string;
+  title?: string;
+  items: KeyValueItem[];
+};
+
 // Tagged union --------------------------------------------------------------
 
 export type Event = EnvelopeMeta &
@@ -221,6 +229,7 @@ export type Event = EnvelopeMeta &
     | { event_type: "ConfirmResponse"; payload: ConfirmResponse }
     | { event_type: "ShowToast"; payload: ShowToast }
     | { event_type: "ShowTable"; payload: ShowTable }
+    | { event_type: "ShowKeyValueView"; payload: ShowKeyValueView }
   );
 
 // Reader --------------------------------------------------------------------

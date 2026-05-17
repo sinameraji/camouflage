@@ -50,6 +50,8 @@ export {
   TableAlign,
   TableColumn,
   ShowTable,
+  KeyValueItem,
+  ShowKeyValueView,
   // Tagged union
   Event,
   // Helpers
@@ -64,6 +66,7 @@ export {
   confirm,
   toast,
   table,
+  keyValueView,
   MountOptions,
   CamouflageHandle,
   PermissionResponseEvent,

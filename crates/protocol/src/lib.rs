@@ -106,6 +106,9 @@ pub enum EventType {
     /// modal. Display-only in this version; interactive row selection
     /// + inline mode are follow-ups.
     ShowTable,
+    /// v0.4.6+ (CC-7) — Host → renderer: show a label/value list (session
+    /// details, welcome screen, "about" panel). Display-only.
+    ShowKeyValueView,
 }
 
 impl EventType {
@@ -141,6 +144,7 @@ impl EventType {
             EventType::ConfirmResponse => "ConfirmResponse",
             EventType::ShowToast => "ShowToast",
             EventType::ShowTable => "ShowTable",
+            EventType::ShowKeyValueView => "ShowKeyValueView",
         }
     }
 
@@ -485,6 +489,21 @@ pub mod payloads {
         pub columns: Vec<TableColumn>,
         pub rows: Vec<serde_json::Value>,
     }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct KeyValueItem {
+        pub label: String,
+        pub value: String,
+    }
+
+    /// v0.4.6+ (CC-7) — show a label/value list as a modal. Display-only.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct ShowKeyValueView {
+        pub id: String,
+        #[serde(default)]
+        pub title: Option<String>,
+        pub items: Vec<KeyValueItem>,
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -543,8 +562,9 @@ mod tests {
             EventType::ConfirmResponse,
             EventType::ShowToast,
             EventType::ShowTable,
+            EventType::ShowKeyValueView,
         ];
-        assert_eq!(types.len(), 30);
+        assert_eq!(types.len(), 31);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();

@@ -17,9 +17,10 @@ pub use model::{
 };
 pub use viewport::ViewportState;
 pub use snapshot::{
-    Snapshot, SnapshotConfirm, SnapshotPermission, SnapshotRow, SnapshotRowKind,
-    SnapshotSelectList, SnapshotSelectListOption, SnapshotTable, SnapshotTableAlign,
-    SnapshotTableColumn, SnapshotTask, SnapshotTaskState, SnapshotToast, SnapshotToastKind,
+    Snapshot, SnapshotConfirm, SnapshotKeyValueItem, SnapshotKeyValueView, SnapshotPermission,
+    SnapshotRow, SnapshotRowKind, SnapshotSelectList, SnapshotSelectListOption, SnapshotTable,
+    SnapshotTableAlign, SnapshotTableColumn, SnapshotTask, SnapshotTaskState, SnapshotToast,
+    SnapshotToastKind,
 };
 
 use camouflage_protocol::Event;
@@ -144,6 +145,18 @@ impl SnapshotRenderer for RenderModel {
                 .collect(),
             rows: t.rows.clone(),
         });
+        let key_value_view = self.active_kv().map(|k| SnapshotKeyValueView {
+            id: k.id.clone(),
+            title: k.title.clone(),
+            items: k
+                .items
+                .iter()
+                .map(|i| SnapshotKeyValueItem {
+                    label: i.label.clone(),
+                    value: i.value.clone(),
+                })
+                .collect(),
+        });
         Snapshot {
             total_rows: self.total_rows(),
             rows,
@@ -154,6 +167,7 @@ impl SnapshotRenderer for RenderModel {
             confirm,
             toasts,
             table,
+            key_value_view,
         }
     }
 }

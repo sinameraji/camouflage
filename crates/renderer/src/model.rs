@@ -113,6 +113,21 @@ pub struct RenderModel {
     /// CC-6 (v0.4.6+): currently-open Table modal. Display-only — Esc
     /// dismisses, no outbound response.
     active_table: Option<TableState>,
+    /// CC-7 (v0.4.6+): currently-open KeyValueView modal. Display-only.
+    active_kv: Option<KeyValueViewState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyValueItem {
+    pub label: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyValueViewState {
+    pub id: String,
+    pub title: Option<String>,
+    pub items: Vec<KeyValueItem>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,6 +306,7 @@ impl RenderModel {
             active_confirm: None,
             toasts: Vec::new(),
             active_table: None,
+            active_kv: None,
         }
     }
 
@@ -434,6 +450,16 @@ impl RenderModel {
 
     pub fn clear_table(&mut self) {
         if self.active_table.take().is_some() {
+            self.dirty = true;
+        }
+    }
+
+    pub fn active_kv(&self) -> Option<&KeyValueViewState> {
+        self.active_kv.as_ref()
+    }
+
+    pub fn clear_kv(&mut self) {
+        if self.active_kv.take().is_some() {
             self.dirty = true;
         }
     }
@@ -1001,6 +1027,35 @@ impl RenderModel {
             // resolve the modal.
             EventType::ConfirmResponse => {
                 self.active_confirm = None;
+                self.dirty = true;
+            }
+            EventType::ShowKeyValueView => {
+                if self.active_kv.is_some() {
+                    return false;
+                }
+                let id = ev.payload.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if id.is_empty() {
+                    return false;
+                }
+                let title = ev.payload.get("title").and_then(|v| v.as_str()).map(str::to_string);
+                let items: Vec<KeyValueItem> = ev
+                    .payload
+                    .get("items")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|x| {
+                                let label = x.get("label").and_then(|v| v.as_str())?.to_string();
+                                let value = x.get("value").and_then(|v| v.as_str())?.to_string();
+                                Some(KeyValueItem { label, value })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if items.is_empty() {
+                    return false;
+                }
+                self.active_kv = Some(KeyValueViewState { id, title, items });
                 self.dirty = true;
             }
             EventType::ShowTable => {

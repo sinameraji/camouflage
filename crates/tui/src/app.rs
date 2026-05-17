@@ -475,12 +475,16 @@ pub async fn run(cfg: Config) -> Result<()> {
             if matches!(key, crate::tty::Key::Esc) {
                 if help_open || metrics_open || tool_output_open
                     || model.active_table().is_some()
+                    || model.active_kv().is_some()
                 {
                     help_open = false;
                     metrics_open = false;
                     tool_output_open = false;
                     if model.active_table().is_some() {
                         model.clear_table();
+                    }
+                    if model.active_kv().is_some() {
+                        model.clear_kv();
                     }
                     model.mark_dirty();
                     continue;

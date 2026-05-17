@@ -544,6 +544,10 @@ pub fn render<B: Backend>(
         if let Some(t) = model.active_table() {
             draw_table_overlay(f, area, t, theme);
         }
+        // CC-7 — KeyValueView modal. Same display-only treatment as Table.
+        if let Some(k) = model.active_kv() {
+            draw_kv_overlay(f, area, k, theme);
+        }
     })?;
     Ok(())
 }
@@ -830,6 +834,74 @@ fn draw_tool_output_overlay(
                 .title(" tool output (most recent) ")
                 .border_style(Style::default().fg(Color::Yellow)),
         );
+    f.render_widget(widget, overlay);
+}
+
+fn draw_kv_overlay(
+    f: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    k: &camouflage_renderer::model::KeyValueViewState,
+    theme: &camouflage_renderer::theme::Theme,
+) {
+    let label_w = k
+        .items
+        .iter()
+        .map(|i| UnicodeWidthStr::width(i.label.as_str()))
+        .max()
+        .unwrap_or(8);
+    let value_w = k
+        .items
+        .iter()
+        .map(|i| UnicodeWidthStr::width(i.value.as_str()))
+        .max()
+        .unwrap_or(16)
+        .min(60);
+    let w = ((label_w + value_w + 6) as u16).max(36).min(area.width.saturating_sub(2));
+    let visible = k.items.len().min(16);
+    let h: u16 = (visible as u16) + 3 + if k.title.is_some() { 1 } else { 0 };
+    if area.width < w + 2 || area.height < h + 2 {
+        return;
+    }
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    let overlay = ratatui::layout::Rect { x, y, width: w, height: h };
+    f.render_widget(Clear, overlay);
+
+    let dim = Style::default().fg(Color::DarkGray);
+    let head = Style::default()
+        .fg(rgb_to_color(theme.accent))
+        .add_modifier(Modifier::BOLD);
+    let label_style = Style::default().fg(rgb_to_color(theme.system));
+    let value_style = Style::default().fg(rgb_to_color(theme.assistant));
+
+    let mut lines: Vec<Line> = Vec::new();
+    if let Some(title) = k.title.as_deref() {
+        lines.push(Line::from(vec![Span::styled(format!(" {}", title), head)]));
+    }
+    for item in k.items.iter().take(visible) {
+        let pad = label_w.saturating_sub(UnicodeWidthStr::width(item.label.as_str()));
+        lines.push(Line::from(vec![
+            Span::raw(" "),
+            Span::styled(item.label.clone(), label_style),
+            Span::raw(" ".repeat(pad)),
+            Span::styled("   ", dim),
+            Span::styled(item.value.clone(), value_style),
+        ]));
+    }
+    if k.items.len() > visible {
+        lines.push(Line::from(vec![Span::styled(
+            format!(" … {} more (truncated)", k.items.len() - visible),
+            dim,
+        )]));
+    }
+    lines.push(Line::from(vec![Span::styled("Esc to close", dim)]));
+
+    let widget = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" details ")
+            .border_style(Style::default().fg(rgb_to_color(theme.overlay_border))),
+    );
     f.render_widget(widget, overlay);
 }
 

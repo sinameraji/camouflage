@@ -139,6 +139,21 @@ pub struct SnapshotTable {
     pub rows: Vec<Vec<String>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotKeyValueItem {
+    pub label: String,
+    pub value: String,
+}
+
+/// CC-7 — projection of an active KeyValueView modal.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotKeyValueView {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub items: Vec<SnapshotKeyValueItem>,
+}
+
 /// A full UI snapshot. Renderers should treat the document as
 /// last-write-wins: every field reflects current state, not deltas.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -162,4 +177,7 @@ pub struct Snapshot {
     /// CC-6 — present when a Table modal is currently active.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table: Option<SnapshotTable>,
+    /// CC-7 — present when a KeyValueView modal is currently active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_value_view: Option<SnapshotKeyValueView>,
 }

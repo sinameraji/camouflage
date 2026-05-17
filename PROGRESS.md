@@ -53,8 +53,8 @@ The full catalog conversation from 2026-05-17 lives in [`docs/specs/components-c
 | CC-3 | `Toast` | ✅ DONE — `8f3f0d4` | "Saved", "Authenticated", brief feedback | Trivial scope, immediate visible value. No outbound event — display-only with optional TTL. |
 | CC-4 | `Wizard` | ⬜ TODO | onboarding flow, LSP wizard, command wizard | Multi-step; composes 1+2+3. |
 | CC-5 | `Form` | ⬜ TODO | settings configuration, cloud token + endpoint configuration | Bigger; can wait for a real driver. |
-| CC-6 | `Table` | ✅ DONE — `<this commit>` (display-only modal; selectable rows + inline mode are follow-ups) | usage stats, cost attribution, session-list with metadata | Display-oriented; optional `RowSelected` outbound for interactive use. |
-| CC-7 | `KeyValueView` | ⬜ TODO | "session details" inspector pane, welcome screen | Display-oriented. |
+| CC-6 | `Table` | ✅ DONE — `e4c1d25` (display-only modal; selectable rows + inline mode are follow-ups) | usage stats, cost attribution, session-list with metadata | Display-oriented; optional `RowSelected` outbound for interactive use. |
+| CC-7 | `KeyValueView` | ✅ DONE — `<this commit>` (display-only modal) | "session details" inspector pane, welcome screen | Display-oriented. |
 
 Each component ships as a self-contained slice (one commit series): protocol event(s) → model state → renderer overlay → Snapshot projection field → Node SDK types update → KimiFlare adapter wires it against an actual component being replaced. The KimiFlare wiring is what proves the design.
 

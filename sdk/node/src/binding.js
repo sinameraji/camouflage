@@ -322,6 +322,16 @@ export function table(cam, spec) {
   cam.send("ShowTable", spec);
 }
 
+/**
+ * Convenience helper: show a label/value list. Display-only.
+ *
+ * @param {CamouflageHandle} cam
+ * @param {{id: string, title?: string, items: {label: string, value: string}[]}} spec
+ */
+export function keyValueView(cam, spec) {
+  cam.send("ShowKeyValueView", spec);
+}
+
 function spawnError(err, bin) {
   if (err && err.code === "ENOENT") {
     return new Error(
