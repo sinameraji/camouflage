@@ -247,8 +247,18 @@ pub fn render<B: Backend>(
             .collect();
         for r in combined.iter().rev() {
             rows_taken.push(*r);
-            let text_w = UnicodeWidthStr::width(r.text.as_str()).max(1);
-            visual_so_far += (text_w + avail - 1) / avail;
+            // Match row_to_lines: assistant rows split on `\n` into one
+            // visual paragraph per segment; everything else counts as one
+            // logical row that wraps at `avail` width.
+            if r.kind == RowKind::Assistant && r.text.contains('\n') {
+                for seg in r.text.split('\n') {
+                    let w = UnicodeWidthStr::width(seg).max(1);
+                    visual_so_far += (w + avail - 1) / avail;
+                }
+            } else {
+                let text_w = UnicodeWidthStr::width(r.text.as_str()).max(1);
+                visual_so_far += (text_w + avail - 1) / avail;
+            }
             if visual_so_far >= viewport_h + 4 {
                 break;
             }
@@ -257,7 +267,7 @@ pub fn render<B: Backend>(
         let active_tools = model.tools();
         let lines: Vec<Line> = rows_taken
             .iter()
-            .map(|r| row_to_line(r, frame, active_tools, theme, model.has_active_stream()))
+            .flat_map(|r| row_to_lines(r, frame, active_tools, theme, model.has_active_stream()))
             .collect();
         // Scroll so the bottom of the wrapped content sits on the bottom of
         // the chunk. `visual_so_far` is the total visual lines of the slice;
@@ -1509,6 +1519,53 @@ fn row_to_line<'a>(
         }
     }
     Line::from(spans)
+}
+
+/// Expand a row into one-or-more Lines, splitting on embedded `\n` so
+/// markdown paragraph breaks (e.g. `"foo\n\nbar"`) actually produce
+/// visible blank lines instead of collapsing into one wall of text.
+/// Only Assistant rows are split; other row kinds remain single-line.
+fn row_to_lines<'a>(
+    r: &'a camouflage_renderer::Row,
+    frame: u64,
+    active_tools: &std::collections::HashMap<String, camouflage_renderer::ToolState>,
+    theme: &camouflage_renderer::theme::Theme,
+    has_active_stream: bool,
+) -> Vec<Line<'a>> {
+    if r.kind != RowKind::Assistant || !r.text.contains('\n') {
+        return vec![row_to_line(r, frame, active_tools, theme, has_active_stream)];
+    }
+    let assistant_color = rgb_to_color(theme.assistant);
+    let code_fg = rgb_to_color(theme.code_fg);
+    let code_bg = rgb_to_color(theme.code_bg);
+    let mut out: Vec<Line> = Vec::new();
+    // First segment uses the same prefix the canonical row_to_line emits;
+    // we synthesise a one-segment "row" for it so styling stays in sync.
+    let segments: Vec<&str> = r.text.split('\n').collect();
+    for (i, seg) in segments.iter().enumerate() {
+        let mut spans: Vec<Span> = Vec::new();
+        if i == 0 {
+            // Reuse the prefix glyph the assistant branch emits in row_to_line.
+            spans.push(Span::styled("  ", Style::default().fg(assistant_color)));
+        } else {
+            spans.push(Span::raw("  "));
+        }
+        for sp in parse_inline(seg) {
+            let style = match sp.style {
+                InlineStyle::Plain => Style::default().fg(assistant_color),
+                InlineStyle::Bold => Style::default()
+                    .fg(assistant_color)
+                    .add_modifier(Modifier::BOLD),
+                InlineStyle::Italic => Style::default()
+                    .fg(assistant_color)
+                    .add_modifier(Modifier::ITALIC),
+                InlineStyle::Code => Style::default().fg(code_fg).bg(code_bg),
+            };
+            spans.push(Span::styled(sp.text, style));
+        }
+        out.push(Line::from(spans));
+    }
+    out
 }
 
 fn rgb_to_color(rgb: camouflage_renderer::theme::Rgb) -> Color {
