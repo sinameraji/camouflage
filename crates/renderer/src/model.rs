@@ -1022,6 +1022,21 @@ impl RenderModel {
                     tool_id: None,
                 });
             }
+            EventType::TranscriptCleared => {
+                // Wipe live rows + history. Keep status segments, registered
+                // slash-commands, mention candidates etc. — those are
+                // orthogonal to the visible transcript.
+                self.rows.clear();
+                self.history.clear();
+                self.tools.clear();
+                self.push_row(Row {
+                    seq: ev.seq,
+                    kind: RowKind::System,
+                    text: "transcript cleared".into(),
+                    tool_id: None,
+                });
+                self.dirty = true;
+            }
             EventType::ViewportMarker => {
                 self.push_row(Row {
                     seq: ev.seq,

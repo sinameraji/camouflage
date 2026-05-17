@@ -133,6 +133,10 @@ pub enum EventType {
     /// cancelled (Ctrl+C or Esc pressed). Hosts typically call
     /// `controller.abort()` on the in-flight agent turn. No payload.
     CancelRequested,
+    /// v0.4.8+ — Host → renderer: wipe the visible transcript (used by
+    /// `/clear` in host CLIs). Auto-follow resumes at the bottom; status
+    /// bar and registered slash-commands persist. No payload.
+    TranscriptCleared,
 }
 
 impl EventType {
@@ -176,6 +180,7 @@ impl EventType {
             EventType::WizardCancelled => "WizardCancelled",
             EventType::ModeChangeRequested => "ModeChangeRequested",
             EventType::CancelRequested => "CancelRequested",
+            EventType::TranscriptCleared => "TranscriptCleared",
         }
     }
 
