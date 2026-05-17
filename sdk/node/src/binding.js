@@ -277,6 +277,8 @@ export async function mount(opts = {}) {
       handle.emit("modeChangeRequested", {
         direction: ev.payload?.direction,
       });
+    } else if (ev.event_type === "CancelRequested") {
+      handle.emit("cancelRequested", {});
     }
     // Always also emit the raw Event for advanced consumers.
     handle.emit("event", ev);

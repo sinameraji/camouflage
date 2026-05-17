@@ -39,6 +39,10 @@ pub enum Key {
     CtrlC,
     CtrlE,
     CtrlF,
+    /// Delete word before cursor (readline convention).
+    CtrlW,
+    /// Delete to start of line (readline convention).
+    CtrlU,
     /// Mouse wheel up (when SGR mouse capture is enabled).
     ScrollUp,
     /// Mouse wheel down (when SGR mouse capture is enabled).
@@ -113,6 +117,8 @@ impl EscParser {
                 0x05 => Some(Key::CtrlE),
                 0x06 => Some(Key::CtrlF),
                 0x09 => Some(Key::Tab),
+                0x15 => Some(Key::CtrlU),
+                0x17 => Some(Key::CtrlW),
                 0x0d | 0x0a => Some(Key::Enter),
                 0x7f | 0x08 => Some(Key::Backspace),
                 0x1b => {

@@ -448,19 +448,17 @@ pub async fn run(cfg: Config) -> Result<()> {
                 && !help_open
                 && !metrics_open
                 && !tool_output_open;
-            // Tab / Shift+Tab on an empty input → emit ModeChangeRequested
-            // outbound so the host (KimiFlare's ui-mode) can cycle through
-            // edit/plan/auto. Tab inside a typed buffer falls through to
-            // the form-step navigation handler downstream.
-            if input_focused && input_buf.is_empty() {
+            // Shift+Tab fires the mode-cycle regardless of input contents —
+            // it's not a typing key and the user expects it to work mid-
+            // typing. Tab when input is empty also fires mode-cycle; Tab
+            // inside text falls through to form-step navigation (the only
+            // place Tab is plausibly a "next field" rather than "cycle
+            // mode" is inside a Form modal, which has its own handler
+            // upstream of here).
+            if input_focused {
                 match key {
-                    crate::tty::Key::Tab | crate::tty::Key::BackTab => {
+                    crate::tty::Key::BackTab => {
                         if let Some(tx) = outbound_tx.as_ref() {
-                            let direction = if matches!(key, crate::tty::Key::BackTab) {
-                                "prev"
-                            } else {
-                                "next"
-                            };
                             let ev = Event {
                                 id: Uuid::new_v4(),
                                 session_id,
@@ -468,7 +466,22 @@ pub async fn run(cfg: Config) -> Result<()> {
                                 timestamp_ms: now_ms(),
                                 schema_version: SCHEMA_VERSION,
                                 event_type: EventType::ModeChangeRequested,
-                                payload: serde_json::json!({ "direction": direction }),
+                                payload: serde_json::json!({ "direction": "prev" }),
+                            };
+                            let _ = tx.send(OutgoingEvent(ev)).await;
+                        }
+                        continue;
+                    }
+                    crate::tty::Key::Tab if input_buf.is_empty() => {
+                        if let Some(tx) = outbound_tx.as_ref() {
+                            let ev = Event {
+                                id: Uuid::new_v4(),
+                                session_id,
+                                seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                                timestamp_ms: now_ms(),
+                                schema_version: SCHEMA_VERSION,
+                                event_type: EventType::ModeChangeRequested,
+                                payload: serde_json::json!({ "direction": "next" }),
                             };
                             let _ = tx.send(OutgoingEvent(ev)).await;
                         }
@@ -888,7 +901,31 @@ pub async fn run(cfg: Config) -> Result<()> {
                 input::handle_key(key, &mut input_buf, &mut input_cursor)
             };
             match action {
-                input::Action::Quit => return shutdown(&mut terminal, Ok(())),
+                input::Action::Quit => {
+                    // Ctrl+C is now "interrupt the agent" instead of
+                    // "quit the app". If a turn is running, the host
+                    // catches CancelRequested and aborts; otherwise the
+                    // host typically does nothing. Quitting moves to
+                    // /quit slash command or explicit Ctrl+C twice (next
+                    // commit can add the double-press semantics).
+                    if let Some(tx) = outbound_tx.as_ref() {
+                        let ev = Event {
+                            id: Uuid::new_v4(),
+                            session_id,
+                            seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                            timestamp_ms: now_ms(),
+                            schema_version: SCHEMA_VERSION,
+                            event_type: EventType::CancelRequested,
+                            payload: serde_json::json!({}),
+                        };
+                        let _ = tx.send(OutgoingEvent(ev)).await;
+                    } else {
+                        // Standalone mode (no host): preserve the legacy
+                        // "Ctrl+C quits" behaviour so the binary remains
+                        // usable without an adapter.
+                        return shutdown(&mut terminal, Ok(()));
+                    }
+                }
                 input::Action::SubmitInput(text) => {
                     // Push into input history (de-duped: skip if same as most recent).
                     if input_history.last().map(|s| s.as_str()) != Some(text.as_str()) {
@@ -942,6 +979,22 @@ pub async fn run(cfg: Config) -> Result<()> {
                     model.mark_dirty();
                 }
                 input::Action::CancelStream => {
+                    // Esc → interrupt. Same semantics as Ctrl+C now;
+                    // emit CancelRequested so the host (e.g. KimiFlare's
+                    // ui-mode) calls controller.abort() on the in-flight
+                    // agent turn.
+                    if let Some(tx) = outbound_tx.as_ref() {
+                        let ev = Event {
+                            id: Uuid::new_v4(),
+                            session_id,
+                            seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                            timestamp_ms: now_ms(),
+                            schema_version: SCHEMA_VERSION,
+                            event_type: EventType::CancelRequested,
+                            payload: serde_json::json!({}),
+                        };
+                        let _ = tx.send(OutgoingEvent(ev)).await;
+                    }
                     status = "canceled".into();
                     model.mark_dirty();
                 }

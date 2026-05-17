@@ -47,7 +47,8 @@ export type EventType =
   | "ShowWizard"
   | "WizardCompleted"
   | "WizardCancelled"
-  | "ModeChangeRequested";
+  | "ModeChangeRequested"
+  | "CancelRequested";
 
 export type Direction = "inbound" | "outbound";
 
@@ -294,6 +295,7 @@ export type Event = EnvelopeMeta &
     | { event_type: "WizardCompleted"; payload: WizardCompleted }
     | { event_type: "WizardCancelled"; payload: WizardCancelled }
     | { event_type: "ModeChangeRequested"; payload: ModeChangeRequested }
+    | { event_type: "CancelRequested"; payload?: Record<string, never> }
   );
 
 // Reader --------------------------------------------------------------------

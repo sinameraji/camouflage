@@ -37,4 +37,5 @@
 {"event_type":"WizardCompleted","payload":{"id":"onboard","results":{"agree":true,"creds":{"email":"x@y.z"}}}}
 {"event_type":"WizardCancelled","payload":{"id":"onboard-2","at_step":1}}
 {"event_type":"ModeChangeRequested","payload":{"direction":"next"}}
+{"event_type":"CancelRequested","payload":{}}
 {"event_type":"SessionEnded","payload":{}}

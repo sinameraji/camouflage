@@ -87,18 +87,35 @@ pub fn handle_key(k: Key, buf: &mut String, cursor: &mut usize) -> Action {
         Key::CtrlC => Action::Quit,
         Key::CtrlE => Action::JumpToLatest,
         Key::CtrlF => Action::SearchOpen,
-        Key::Char('q') if buf.is_empty() => Action::Quit,
-        Key::Char('r') if buf.is_empty() => Action::Replay,
-        Key::Char('i') if buf.is_empty() => Action::ToggleInspector,
-        Key::Char('f') if buf.is_empty() => Action::CycleFilter,
-        Key::Char('n') if buf.is_empty() => Action::SearchNext,
-        Key::Char('N') if buf.is_empty() => Action::SearchPrev,
-        Key::Char('m') if buf.is_empty() => Action::BookmarkAdd,
-        Key::Char('\'') if buf.is_empty() => Action::BookmarkNext,
+        // Removed vim-style lowercase single-char shortcuts (q/r/i/f/n/N/m/').
+        // They surprised users by quitting / toggling state mid-typing
+        // session — the most common report being "I typed 'q' and the
+        // whole thing exited". Power-users now use slash commands
+        // (/quit, /help) and the uppercase keybinds below which are
+        // unlikely to collide with normal prose.
         Key::Char('?') if buf.is_empty() => Action::ToggleHelp,
         Key::Char('M') if buf.is_empty() => Action::ToggleMetrics,
         Key::Char('T') if buf.is_empty() => Action::CycleTheme,
         Key::Char('X') if buf.is_empty() => Action::ToggleToolOutput,
+        // Readline-style deletions:
+        //   Ctrl+W (0x17) → delete word before cursor
+        //   Ctrl+U (0x15) → delete to start of line
+        // These mirror what most macOS users hit when Option+Delete /
+        // Cmd+Delete don't get through (Terminal.app's defaults vary).
+        Key::CtrlW => {
+            let new_cursor = word_boundary_left(buf, *cursor);
+            let from = byte_index_of_char(buf, new_cursor);
+            let to = byte_index_of_char(buf, *cursor);
+            buf.replace_range(from..to, "");
+            *cursor = new_cursor;
+            Action::None
+        }
+        Key::CtrlU => {
+            let to = byte_index_of_char(buf, *cursor);
+            buf.replace_range(0..to, "");
+            *cursor = 0;
+            Action::None
+        }
         Key::Char(c) => {
             insert_at_cursor(buf, cursor, c);
             Action::None

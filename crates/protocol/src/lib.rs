@@ -129,6 +129,10 @@ pub enum EventType {
     /// edit/plan/auto) handle this and emit a StatusUpdate to reflect
     /// the new mode. Payload: { direction: "next" | "prev" }.
     ModeChangeRequested,
+    /// v0.4.7+ — Renderer → host: user wants the current operation
+    /// cancelled (Ctrl+C or Esc pressed). Hosts typically call
+    /// `controller.abort()` on the in-flight agent turn. No payload.
+    CancelRequested,
 }
 
 impl EventType {
@@ -171,6 +175,7 @@ impl EventType {
             EventType::WizardCompleted => "WizardCompleted",
             EventType::WizardCancelled => "WizardCancelled",
             EventType::ModeChangeRequested => "ModeChangeRequested",
+            EventType::CancelRequested => "CancelRequested",
         }
     }
 
@@ -184,7 +189,8 @@ impl EventType {
             | EventType::FormResponse
             | EventType::WizardCompleted
             | EventType::WizardCancelled
-            | EventType::ModeChangeRequested => Direction::Outbound,
+            | EventType::ModeChangeRequested
+            | EventType::CancelRequested => Direction::Outbound,
             _ => Direction::Inbound,
         }
     }
@@ -730,8 +736,9 @@ mod tests {
             EventType::WizardCompleted,
             EventType::WizardCancelled,
             EventType::ModeChangeRequested,
+            EventType::CancelRequested,
         ];
-        assert_eq!(types.len(), 37);
+        assert_eq!(types.len(), 38);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();

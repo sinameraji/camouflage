@@ -21,7 +21,7 @@ const KNOWN_TYPES = new Set([
   "ShowToast", "ShowTable", "ShowKeyValueView",
   "ShowForm", "FormResponse",
   "ShowWizard", "WizardCompleted", "WizardCancelled",
-  "ModeChangeRequested",
+  "ModeChangeRequested", "CancelRequested",
 ]);
 
 /**

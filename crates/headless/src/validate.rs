@@ -149,6 +149,9 @@ fn validate_payload(event_type: EventType, payload: serde_json::Value) -> Result
         ModeChangeRequested => {
             serde_json::from_value::<payloads::ModeChangeRequested>(payload)?;
         }
+        CancelRequested => {
+            // No typed payload (CancelRequested is bodyless); accept any value.
+        }
         // Events without typed payloads — any JSON value is accepted.
         SessionStarted
         | SessionEnded

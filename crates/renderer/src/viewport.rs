@@ -32,8 +32,13 @@ impl ViewportState {
     }
 
     /// Move viewport up (toward older rows). Disables auto-follow.
+    /// Caps at `total_rows` to avoid scrolling past the start, but does
+    /// NOT subtract viewport_height — rows often wrap into multiple
+    /// visual lines, so a row-based cap leaves a lot of real content
+    /// unscrollable. The draw layer handles a "scrolled past the top"
+    /// state gracefully (just shows fewer rows).
     pub fn scroll_up(&mut self, lines: i64, total_rows: i64) {
-        let max_up = (total_rows - self.viewport_height as i64).max(0);
+        let max_up = total_rows.max(0);
         self.scroll_offset = (self.scroll_offset + lines).min(max_up);
         if self.scroll_offset > 0 {
             self.auto_follow = false;
@@ -95,7 +100,10 @@ mod tests {
     #[test]
     fn scroll_clamped_to_history() {
         let mut v = ViewportState::new(Uuid::nil(), 10, 80);
+        // Cap is now `total_rows` (not `total_rows - height`): row-based
+        // height-subtraction left wrapped content unscrollable (real bug
+        // surfaced in --ui camouflage testing).
         v.scroll_up(1_000_000, 20);
-        assert_eq!(v.scroll_offset, 10);
+        assert_eq!(v.scroll_offset, 20);
     }
 }
