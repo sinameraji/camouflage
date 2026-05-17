@@ -16,16 +16,22 @@ use std::io;
 use std::os::fd::RawFd;
 use std::sync::mpsc;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
     Char(char),
     Enter,
     Backspace,
     Esc,
+    Tab,
+    BackTab,
     Up,
     Down,
     Left,
     Right,
+    /// Option+Left on macOS / Alt+Left elsewhere — "jump word left".
+    WordLeft,
+    /// Option+Right / Alt+Right — "jump word right".
+    WordRight,
     PageUp,
     PageDown,
     Home,
@@ -33,6 +39,10 @@ pub enum Key {
     CtrlC,
     CtrlE,
     CtrlF,
+    /// Mouse wheel up (when SGR mouse capture is enabled).
+    ScrollUp,
+    /// Mouse wheel down (when SGR mouse capture is enabled).
+    ScrollDown,
 }
 
 /// Open /dev/tty for reading and return its raw fd.
@@ -102,6 +112,7 @@ impl EscParser {
                 0x03 => Some(Key::CtrlC),
                 0x05 => Some(Key::CtrlE),
                 0x06 => Some(Key::CtrlF),
+                0x09 => Some(Key::Tab),
                 0x0d | 0x0a => Some(Key::Enter),
                 0x7f | 0x08 => Some(Key::Backspace),
                 0x1b => {
@@ -117,6 +128,10 @@ impl EscParser {
                     self.csi_buf.clear();
                     None
                 }
+                // macOS Terminal.app's default Option+Left / Option+Right
+                // bindings: ESC b (word backward) and ESC f (word forward).
+                b'b' => { self.state = State::Ground; Some(Key::WordLeft) }
+                b'f' => { self.state = State::Ground; Some(Key::WordRight) }
                 0x1b => None,
                 _ => {
                     // Lone ESC (or Alt-X we don't handle); treat as Esc.
@@ -127,17 +142,44 @@ impl EscParser {
             State::Csi => {
                 // CSI ends on a byte in 0x40..=0x7e
                 if (0x40..=0x7e).contains(&b) {
+                    let s = std::str::from_utf8(&self.csi_buf).unwrap_or("");
                     let k = match b {
                         b'A' => Some(Key::Up),
                         b'B' => Some(Key::Down),
-                        b'C' => Some(Key::Right),
-                        b'D' => Some(Key::Left),
+                        b'C' => {
+                            // ESC [1;3C = Meta+Right (alt for Option+Right).
+                            if s == "1;3" { Some(Key::WordRight) } else { Some(Key::Right) }
+                        }
+                        b'D' => {
+                            if s == "1;3" { Some(Key::WordLeft) } else { Some(Key::Left) }
+                        }
                         b'H' => Some(Key::Home),
                         b'F' => Some(Key::End),
+                        b'Z' => Some(Key::BackTab),
+                        b'M' | b'm' => {
+                            // SGR mouse: ESC [ < button ; x ; y M|m
+                            // We only care about wheel events (buttons 64/65).
+                            if let Some(rest) = s.strip_prefix('<') {
+                                let parts: Vec<&str> = rest.split(';').collect();
+                                if let Some(btn) = parts.first().and_then(|b| b.parse::<u32>().ok()) {
+                                    match btn {
+                                        64 => Some(Key::ScrollUp),
+                                        65 => Some(Key::ScrollDown),
+                                        _ => None,
+                                    }
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        }
                         b'~' => {
-                            // Look at csi_buf for number
-                            let s = std::str::from_utf8(&self.csi_buf).unwrap_or("");
-                            match s {
+                            // Function keys with optional modifier suffix.
+                            // We ignore modifiers and just look at the base
+                            // number before the first ';' (e.g. "5;3" → 5).
+                            let base = s.split(';').next().unwrap_or("");
+                            match base {
                                 "1" | "7" => Some(Key::Home),
                                 "4" | "8" => Some(Key::End),
                                 "5" => Some(Key::PageUp),
@@ -210,5 +252,36 @@ mod tests {
         // ESC then a non-[ byte
         let keys = feed_all(&mut p, b"\x1bz");
         assert!(matches!(keys.first(), Some(Key::Esc)));
+    }
+
+    #[test]
+    fn parse_tab_and_backtab() {
+        let mut p = EscParser::new();
+        let keys = feed_all(&mut p, b"\t\x1b[Z");
+        assert!(matches!(keys.as_slice(), [Key::Tab, Key::BackTab]));
+    }
+
+    #[test]
+    fn parse_word_jumps_macos_option() {
+        let mut p = EscParser::new();
+        // ESC b = Option+Left, ESC f = Option+Right on macOS Terminal.app.
+        let keys = feed_all(&mut p, b"\x1bb\x1bf");
+        assert!(matches!(keys.as_slice(), [Key::WordLeft, Key::WordRight]));
+    }
+
+    #[test]
+    fn parse_word_jumps_xterm_modifier() {
+        let mut p = EscParser::new();
+        // ESC [ 1 ; 3 D = Meta+Left (xterm).
+        let keys = feed_all(&mut p, b"\x1b[1;3D\x1b[1;3C");
+        assert!(matches!(keys.as_slice(), [Key::WordLeft, Key::WordRight]));
+    }
+
+    #[test]
+    fn parse_sgr_mouse_scroll() {
+        let mut p = EscParser::new();
+        // SGR mouse: ESC [ < 64 ; 10 ; 5 M = wheel up at (10,5).
+        let keys = feed_all(&mut p, b"\x1b[<64;10;5M\x1b[<65;10;5M");
+        assert!(matches!(keys.as_slice(), [Key::ScrollUp, Key::ScrollDown]));
     }
 }

@@ -109,6 +109,12 @@ pub fn handle_key(k: Key, buf: &mut String) -> Action {
         Key::Esc => Action::CancelStream,
         Key::Up => Action::ScrollUp(1),
         Key::Down => Action::ScrollDown(1),
+        // Mouse wheel scrolls the transcript by a few lines per notch.
+        // Without SGR mouse capture the terminal would translate the wheel
+        // into Up/Down keys, which the input-history walker would consume —
+        // hence the explicit scroll mapping.
+        Key::ScrollUp => Action::ScrollUp(3),
+        Key::ScrollDown => Action::ScrollDown(3),
         Key::PageUp => Action::ScrollUp(10),
         Key::PageDown => Action::ScrollDown(10),
         Key::End => Action::JumpToLatest,

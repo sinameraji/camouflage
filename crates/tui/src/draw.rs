@@ -58,15 +58,8 @@ fn status_total_width(
             w += UnicodeWidthStr::width(k.as_str()) + 1 + UnicodeWidthStr::width(v.as_str());
         }
     }
-    // Counts + optional indicator.
-    let counts = format!(
-        "  [{}] live={} history={} total={}",
-        if viewport.auto_follow { "follow" } else { "scrolled" },
-        model.rows().len(),
-        model.history_rows().len(),
-        model.total_rows(),
-    );
-    w += UnicodeWidthStr::width(counts.as_str());
+    // Only the scrolled-indicator now contributes to the right side; the
+    // debug counts (live/history/total) moved to the metrics overlay.
     if !viewport.auto_follow {
         w += UnicodeWidthStr::width(" | new output below ↓");
     }
@@ -376,19 +369,10 @@ pub fn render<B: Backend>(
                 ));
             }
         }
-        // Renderer-internal counts at the end (dimmed). With wrap enabled
-        // these naturally flow to the next visual line on narrow terminals
-        // rather than being clipped.
-        spans.push(Span::styled(
-            format!(
-                "  [{}] live={} history={} total={}",
-                follow,
-                live.len(),
-                history.len(),
-                model.total_rows(),
-            ),
-            Style::default().fg(Color::DarkGray),
-        ));
+        // Subtle "scrolled" indicator only — the live=/history=/total=
+        // counters were debug noise; they're now only visible via the
+        // metrics overlay (M). Auto-follow is the default and silent.
+        let _ = (follow, &live, &history); // suppress unused warnings
         if !indicator.is_empty() {
             spans.push(Span::styled(
                 indicator.to_string(),
@@ -665,12 +649,14 @@ fn draw_mention_picker_overlay(
     let plain = Style::default().fg(Color::White);
 
     let sel_idx = selected.min(matches.len() - 1);
-    let lines: Vec<Line> = matches
+    let scroll_off = sel_idx.saturating_sub(visible - 1);
+    let end = (scroll_off + visible).min(matches.len());
+    let mut lines: Vec<Line> = matches[scroll_off..end]
         .iter()
-        .take(visible)
         .enumerate()
         .map(|(i, m)| {
-            let style = if i == sel_idx { sel } else { plain };
+            let absolute_i = scroll_off + i;
+            let style = if absolute_i == sel_idx { sel } else { plain };
             let kind = m.kind.as_deref().unwrap_or("");
             let label = m.label.as_deref().unwrap_or("");
             Line::from(vec![
@@ -683,12 +669,18 @@ fn draw_mention_picker_overlay(
             ])
         })
         .collect();
+    if matches.len() > visible {
+        lines.push(Line::from(vec![Span::styled(
+            format!(" {}/{} ", sel_idx + 1, matches.len()),
+            dim,
+        )]));
+    }
 
     let widget = Paragraph::new(lines)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" mentions  ↑/↓ select  Enter insert ")
+                .title(" mentions  ↑/↓ wrap  Enter insert ")
                 .border_style(Style::default().fg(Color::Magenta)),
         );
     f.render_widget(widget, overlay);
@@ -728,12 +720,16 @@ fn draw_slash_picker_overlay(
     let plain = Style::default().fg(Color::White);
 
     let sel_idx = selected.min(matches.len() - 1);
-    let lines: Vec<Line> = matches
+    // Windowed view: keep the selected item visible by scrolling the
+    // slice up when sel_idx exceeds the bottom of the visible window.
+    let scroll_off = sel_idx.saturating_sub(visible - 1);
+    let end = (scroll_off + visible).min(matches.len());
+    let mut lines: Vec<Line> = matches[scroll_off..end]
         .iter()
-        .take(visible)
         .enumerate()
         .map(|(i, c)| {
-            let style = if i == sel_idx { sel } else { plain };
+            let absolute_i = scroll_off + i;
+            let style = if absolute_i == sel_idx { sel } else { plain };
             let hint = c.args_hint.as_deref().unwrap_or("");
             Line::from(vec![
                 Span::styled(format!(" /{}", c.name), style),
@@ -742,12 +738,19 @@ fn draw_slash_picker_overlay(
             ])
         })
         .collect();
+    // Show a "X/Y" footer when the list is longer than the window.
+    if matches.len() > visible {
+        lines.push(Line::from(vec![Span::styled(
+            format!(" {}/{} ", sel_idx + 1, matches.len()),
+            dim,
+        )]));
+    }
 
     let widget = Paragraph::new(lines)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" slash commands  ↑/↓ select  Enter insert ")
+                .title(" slash commands  ↑/↓ wrap  Enter insert ")
                 .border_style(Style::default().fg(Color::Cyan)),
         );
     f.render_widget(widget, overlay);
@@ -1293,7 +1296,17 @@ fn draw_select_list_overlay(
         "─".repeat((w.saturating_sub(2)) as usize),
         dim,
     )]));
-    for &i in visible.iter().take(entry_count) {
+    // Windowed view keyed on the position of `sl.selected` within the
+    // filtered `visible` indices. Scrolls when the selection moves past
+    // the bottom; wraps cleanly when the host's input handler wraps the
+    // index.
+    let sel_pos_in_visible = visible
+        .iter()
+        .position(|&i| i == sl.selected)
+        .unwrap_or(0);
+    let scroll_off = sel_pos_in_visible.saturating_sub(entry_count - 1);
+    let visible_window = &visible[scroll_off..(scroll_off + entry_count).min(visible.len())];
+    for &i in visible_window {
         let entry = &sl.options[i];
         let style = if i == sl.selected { sel } else { plain };
         let mut spans = vec![
@@ -1305,10 +1318,16 @@ fn draw_select_list_overlay(
         }
         lines.push(Line::from(spans));
     }
+    if visible.len() > entry_count {
+        lines.push(Line::from(vec![Span::styled(
+            format!(" {}/{} ", sel_pos_in_visible + 1, visible.len()),
+            dim,
+        )]));
+    }
     let hint = if sl.allow_cancel {
-        "↑/↓ navigate · Enter select · Esc cancel"
+        "↑/↓ wrap · Enter select · Esc cancel"
     } else {
-        "↑/↓ navigate · Enter select"
+        "↑/↓ wrap · Enter select"
     };
     lines.push(Line::from(vec![Span::styled(hint, dim)]));
 

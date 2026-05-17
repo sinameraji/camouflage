@@ -387,13 +387,19 @@ pub async fn run(cfg: Config) -> Result<()> {
                     .collect();
                 if !matches.is_empty() {
                     match key {
+                        // Wrap on both ends so power-users can fly to the
+                        // bottom of a long list by pressing Up once.
                         crate::tty::Key::Up => {
-                            slash_picker_index = slash_picker_index.saturating_sub(1);
+                            slash_picker_index = if slash_picker_index == 0 {
+                                matches.len() - 1
+                            } else {
+                                slash_picker_index - 1
+                            };
                             model.mark_dirty();
                             continue;
                         }
                         crate::tty::Key::Down => {
-                            slash_picker_index = (slash_picker_index + 1).min(matches.len() - 1);
+                            slash_picker_index = (slash_picker_index + 1) % matches.len();
                             model.mark_dirty();
                             continue;
                         }
@@ -667,10 +673,10 @@ pub async fn run(cfg: Config) -> Result<()> {
                     let visible = sl.filtered_indices();
                     match key {
                         Key::Up => {
-                            // Move within the filtered list. selected may not
-                            // be in `visible`, in which case treat as 0.
+                            // Wraps at the top edge so a single Up jumps
+                            // to the bottom of the filtered list.
                             let pos = visible.iter().position(|&i| i == sl.selected).unwrap_or(0);
-                            let next = pos.saturating_sub(1);
+                            let next = if pos == 0 { visible.len() - 1 } else { pos - 1 };
                             if let Some(&new_sel) = visible.get(next) {
                                 if let Some(s) = model.active_select_list_mut() {
                                     s.selected = new_sel;
@@ -681,7 +687,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                         }
                         Key::Down => {
                             let pos = visible.iter().position(|&i| i == sl.selected).unwrap_or(0);
-                            let next = (pos + 1).min(visible.len().saturating_sub(1));
+                            let next = (pos + 1) % visible.len().max(1);
                             if let Some(&new_sel) = visible.get(next) {
                                 if let Some(s) = model.active_select_list_mut() {
                                     s.selected = new_sel;
@@ -780,12 +786,16 @@ pub async fn run(cfg: Config) -> Result<()> {
                 if !matches.is_empty() {
                     match key {
                         crate::tty::Key::Up => {
-                            mention_picker_index = mention_picker_index.saturating_sub(1);
+                            mention_picker_index = if mention_picker_index == 0 {
+                                matches.len() - 1
+                            } else {
+                                mention_picker_index - 1
+                            };
                             model.mark_dirty();
                             continue;
                         }
                         crate::tty::Key::Down => {
-                            mention_picker_index = (mention_picker_index + 1).min(matches.len() - 1);
+                            mention_picker_index = (mention_picker_index + 1) % matches.len();
                             model.mark_dirty();
                             continue;
                         }
@@ -1478,6 +1488,15 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     stdout.execute(EnterAlternateScreen)?;
+    // Enable SGR mouse mode: basic press/release (1000) + SGR extension
+    // (1006) for coordinates > 223 and uniform parsing. With these on,
+    // the terminal sends ESC [ < button ; x ; y M|m for mouse events
+    // (including wheel as buttons 64/65) instead of translating the
+    // scroll wheel into Up/Down arrow keys — which was polluting the
+    // input-history navigation. Wired into the /dev/tty reader's parser.
+    use std::io::Write;
+    let _ = stdout.write_all(b"\x1b[?1000h\x1b[?1006h");
+    let _ = stdout.flush();
     let backend = CrosstermBackend::new(stdout);
     let mut term = Terminal::new(backend)?;
     term.clear()?;
@@ -1486,6 +1505,10 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
 
 fn teardown_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     let _ = disable_raw_mode();
+    // Disable mouse capture (must come before LeaveAlternateScreen so the
+    // sequence isn't lost when we drop the alt screen).
+    use std::io::Write;
+    let _ = terminal.backend_mut().write_all(b"\x1b[?1006l\x1b[?1000l");
     terminal.backend_mut().execute(LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     Ok(())
