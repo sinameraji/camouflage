@@ -37,6 +37,14 @@ pub struct ToolState {
     pub stderr_bytes: usize,
     pub finished: bool,
     pub exit_code: Option<i32>,
+    /// v0.4.8+: terminal status, populated from the optional `status` field
+    /// of `ToolExecutionFinished` (defaults to derived from `exit_code` for
+    /// backward compatibility). Drives the [ok]/[err]/[x]/[!] glyph in
+    /// the row prefix.
+    pub status: Option<ToolStatus>,
+    /// v0.4.8+: true when the host flagged this call as a repeat of a
+    /// recent tool invocation. Renderer surfaces "[warn] repeated".
+    pub repeated: bool,
     pub row_index_hint: Option<usize>,
     /// v0.2+: wall-clock timestamp from the ToolExecutionStarted event.
     pub started_ms: i64,
@@ -47,6 +55,28 @@ pub struct ToolState {
     /// marker) so a 100MB tool output doesn't blow up the model.
     pub recent_stdout: String,
     pub recent_stderr: String,
+}
+
+/// v0.4.8+: terminal state for a finished tool, mirroring Ink's
+/// ToolView status set. Maps 1:1 to the icons the renderer draws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolStatus {
+    Done,
+    Error,
+    Cancelled,
+    Rejected,
+}
+
+impl ToolStatus {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "done" | "ok" => Some(Self::Done),
+            "error" | "err" => Some(Self::Error),
+            "cancelled" | "canceled" => Some(Self::Cancelled),
+            "rejected" => Some(Self::Rejected),
+            _ => None,
+        }
+    }
 }
 
 /// Per-tool stdout/stderr capture cap, in bytes. Above this we keep the
@@ -791,6 +821,11 @@ impl RenderModel {
                     text: display,
                     tool_id: Some(tool_id.clone()),
                 });
+                let repeated = ev
+                    .payload
+                    .get("repeated")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 self.tools.insert(
                     tool_id.clone(),
                     ToolState {
@@ -801,6 +836,8 @@ impl RenderModel {
                         stderr_bytes: 0,
                         finished: false,
                         exit_code: None,
+                        status: None,
+                        repeated,
                         row_index_hint: Some(idx),
                         started_ms: ev.timestamp_ms,
                         finished_ms: None,
@@ -851,14 +888,36 @@ impl RenderModel {
                     .get("exit_code")
                     .and_then(|v| v.as_i64())
                     .map(|i| i as i32);
+                let explicit_status = ev
+                    .payload
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .and_then(ToolStatus::from_str);
                 if let Some(state) = self.tools.get_mut(&tool_id) {
                     state.finished = true;
                     state.exit_code = exit;
+                    state.status = explicit_status.or_else(|| {
+                        // Backward-compat: derive from exit code when host
+                        // didn't send a status field.
+                        Some(match exit {
+                            Some(0) => ToolStatus::Done,
+                            Some(_) => ToolStatus::Error,
+                            None => ToolStatus::Done,
+                        })
+                    });
                     state.finished_ms = Some(ev.timestamp_ms);
                     let elapsed_ms = (ev.timestamp_ms - state.started_ms).max(0);
                     let elapsed_str = format_elapsed_ms(elapsed_ms);
+                    let glyph = match state.status {
+                        Some(ToolStatus::Done)      => "✓",
+                        Some(ToolStatus::Error)     => "✗",
+                        Some(ToolStatus::Cancelled) => "■",
+                        Some(ToolStatus::Rejected)  => "!",
+                        None => "·",
+                    };
                     let summary = format!(
-                        "✓ {} {} ({}, exit={}, stdout={}B, stderr={}B)",
+                        "{} {} {} ({}, exit={}, stdout={}B, stderr={}B)",
+                        glyph,
                         state.tool,
                         state.command,
                         elapsed_str,

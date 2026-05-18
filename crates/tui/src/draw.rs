@@ -1488,14 +1488,21 @@ fn row_to_line<'a>(
             }
         }
         RowKind::Tool => {
-            let unfinished = r
-                .tool_id
-                .as_ref()
-                .and_then(|tid| active_tools.get(tid))
-                .map(|st| !st.finished)
-                .unwrap_or(false);
-            if unfinished {
-                (spinner_glyph(spinner_frame_now()).to_string(), spinner_color)
+            let st = r.tool_id.as_ref().and_then(|tid| active_tools.get(tid));
+            if let Some(state) = st {
+                if !state.finished {
+                    (spinner_glyph(spinner_frame_now()).to_string(), spinner_color)
+                } else {
+                    // Status-aware glyphs match Ink's ToolView [ok]/[err]/[x]/[!].
+                    use camouflage_renderer::model::ToolStatus;
+                    let (g, c) = match state.status {
+                        Some(ToolStatus::Error)     => ("✗", rgb_to_color(theme.error)),
+                        Some(ToolStatus::Cancelled) => ("■", system_color),
+                        Some(ToolStatus::Rejected)  => ("!", rgb_to_color(theme.error)),
+                        _ => ("✓", rgb_to_color(theme.diff_add)),
+                    };
+                    (g.to_string(), c)
+                }
             } else {
                 ("⚙".to_string(), tool_color)
             }
@@ -1541,6 +1548,12 @@ fn row_to_line<'a>(
     }
     if r.kind == RowKind::Tool {
         if let Some(state) = r.tool_id.as_ref().and_then(|tid| active_tools.get(tid)) {
+            if state.repeated {
+                spans.push(Span::styled(
+                    " [warn] repeated".to_string(),
+                    Style::default().fg(rgb_to_color(theme.error)),
+                ));
+            }
             if !state.finished {
                 let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
