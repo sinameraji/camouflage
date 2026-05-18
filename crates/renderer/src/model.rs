@@ -79,6 +79,11 @@ impl ToolStatus {
     }
 }
 
+/// How long finished tasks stay in the ribbon after Done/Error.
+/// Matches Ink's TaskList celebration window (~1.5s) plus a small margin
+/// so the user catches the checkmark even on a quick burst of tasks.
+pub const TASK_CELEBRATION_MS: i64 = 2_000;
+
 /// Per-tool stdout/stderr capture cap, in bytes. Above this we keep the
 /// head + tail and elide the middle. Tuned so a typical compiler error
 /// fits whole but a giant log dump still costs only a few KB of memory.
@@ -380,6 +385,10 @@ pub struct BackgroundTask {
     pub label: String,
     pub state: BackgroundTaskState,
     pub progress: Option<f32>,
+    /// Timestamp the task transitioned to Done/Error. None while running.
+    /// Used by the draw layer to keep finished tasks visible for a short
+    /// celebration window (Ink parity), then evict.
+    pub finished_at_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -668,6 +677,14 @@ impl RenderModel {
 
     pub fn background_tasks(&self) -> &[BackgroundTask] {
         &self.background_tasks
+    }
+    /// Drop tasks that finished more than `TASK_CELEBRATION_MS` before
+    /// `now_ms`. Cheap O(n); called once per render tick.
+    pub fn sweep_finished_tasks(&mut self, now_ms: i64) {
+        self.background_tasks.retain(|t| match t.finished_at_ms {
+            Some(fin) => (now_ms - fin) < TASK_CELEBRATION_MS,
+            None => true,
+        });
     }
 
     /// Called by the TUI when the user has answered. The pending state clears
@@ -1176,10 +1193,28 @@ impl RenderModel {
                     .get("progress")
                     .and_then(|v| v.as_f64())
                     .map(|f| f as f32);
-                // Done/Error → remove from ribbon. Running → upsert.
+                // Done/Error → mark finished (kept visible briefly).
+                // Running → upsert. The draw layer prunes finished tasks
+                // older than TASK_CELEBRATION_MS so users see the
+                // checkmark before it vanishes (matches Ink's celebration).
                 match state {
                     BackgroundTaskState::Done | BackgroundTaskState::Error => {
-                        self.background_tasks.retain(|t| t.task_id != task_id);
+                        if let Some(existing) =
+                            self.background_tasks.iter_mut().find(|t| t.task_id == task_id)
+                        {
+                            existing.label = label;
+                            existing.state = state;
+                            existing.progress = None;
+                            existing.finished_at_ms = Some(ev.timestamp_ms);
+                        } else {
+                            self.background_tasks.push(BackgroundTask {
+                                task_id,
+                                label,
+                                state,
+                                progress: None,
+                                finished_at_ms: Some(ev.timestamp_ms),
+                            });
+                        }
                     }
                     BackgroundTaskState::Running => {
                         if let Some(existing) =
@@ -1188,12 +1223,14 @@ impl RenderModel {
                             existing.label = label;
                             existing.state = state;
                             existing.progress = progress;
+                            existing.finished_at_ms = None;
                         } else {
                             self.background_tasks.push(BackgroundTask {
                                 task_id,
                                 label,
                                 state,
                                 progress,
+                                finished_at_ms: None,
                             });
                         }
                     }

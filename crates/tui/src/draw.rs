@@ -397,22 +397,35 @@ pub fn render<B: Backend>(
         }
         // Task ribbon (only if there are any active tasks).
         if has_tasks {
+            use camouflage_renderer::model::BackgroundTaskState;
             let mut ribbon_spans: Vec<Span> = Vec::new();
             for (i, task) in model.background_tasks().iter().enumerate() {
-                if i > 0 {
-                    ribbon_spans.push(Span::styled("  ", Style::default()));
-                }
-                ribbon_spans.push(Span::styled(
-                    spinner_glyph(spinner_frame_now()).to_string(),
-                    Style::default().fg(Color::Cyan),
-                ));
+                if i > 0 { ribbon_spans.push(Span::raw("  ")); }
+                let (glyph, glyph_style, label_style) = match task.state {
+                    BackgroundTaskState::Running => (
+                        spinner_glyph(spinner_frame_now()).to_string(),
+                        Style::default().fg(Color::Cyan),
+                        Style::default().fg(Color::Gray),
+                    ),
+                    BackgroundTaskState::Done => (
+                        "✓".to_string(),
+                        Style::default().fg(rgb_to_color(theme.diff_add)),
+                        Style::default().fg(Color::DarkGray).add_modifier(Modifier::CROSSED_OUT),
+                    ),
+                    BackgroundTaskState::Error => (
+                        "✗".to_string(),
+                        Style::default().fg(rgb_to_color(theme.error)),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                };
+                ribbon_spans.push(Span::styled(glyph, glyph_style));
                 ribbon_spans.push(Span::raw(" "));
                 let mut label = task.label.clone();
                 if let Some(p) = task.progress {
                     let pct = (p.clamp(0.0, 1.0) * 100.0) as u32;
                     label.push_str(&format!(" {}%", pct));
                 }
-                ribbon_spans.push(Span::styled(label, Style::default().fg(Color::Gray)));
+                ribbon_spans.push(Span::styled(label, label_style));
             }
             let ribbon = Paragraph::new(Line::from(ribbon_spans));
             f.render_widget(ribbon, chunks[2]);

@@ -1433,6 +1433,13 @@ pub async fn run(cfg: Config) -> Result<()> {
                 // CC-3 — expire toasts whose TTL has elapsed. Cheap; the
                 // call sets dirty if it removed any entries.
                 model.prune_expired_toasts();
+                // Drop finished background tasks once the celebration
+                // window has elapsed. Matches Ink's TaskList ~1.5s glow.
+                let before = model.background_tasks().len();
+                model.sweep_finished_tasks(now_ms());
+                if model.background_tasks().len() != before {
+                    model.mark_dirty();
+                }
                 // Refresh inspector cache if the cursor moved or the row at
                 // the cursor has changed seq (e.g. due to new events).
                 if inspector_open {
