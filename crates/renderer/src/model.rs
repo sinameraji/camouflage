@@ -323,6 +323,23 @@ pub struct PendingPermission {
     pub tool: String,
     pub action: String,
     pub detail: String,
+    /// Selected option index (0 = allow once, 1 = allow session, 2 = deny).
+    /// Mutated by ↑↓/j/k and the 1/2/3 digit shortcuts.
+    pub selected: usize,
+    /// True when `?` was pressed; the renderer overlays a help panel
+    /// instead of the normal widget. Toggled by any key.
+    pub help_open: bool,
+    /// Optional unified-diff to render under the action title. Populated
+    /// from the `diff` field of a `PermissionRequested` payload:
+    /// `{ "diff": { "path": "...", "before": "...", "after": "..." } }`.
+    pub diff: Option<PermissionDiff>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PermissionDiff {
+    pub path: String,
+    pub before: String,
+    pub after: String,
 }
 
 /// A row in the background task ribbon, populated by `BackgroundTaskUpdate`
@@ -469,6 +486,9 @@ impl RenderModel {
     /// modal widget while this is `Some`.
     pub fn pending_permission(&self) -> Option<&PendingPermission> {
         self.pending_permission.as_ref()
+    }
+    pub fn pending_permission_mut(&mut self) -> Option<&mut PendingPermission> {
+        self.pending_permission.as_mut()
     }
 
     /// Active background tasks (ribbon between transcript and status).
@@ -953,11 +973,20 @@ impl RenderModel {
                     text: format!("permission requested: {} ({})", action, tool),
                     tool_id: None,
                 });
+                let diff = ev.payload.get("diff").and_then(|d| {
+                    let path = d.get("path").and_then(|v| v.as_str())?.to_string();
+                    let before = d.get("before").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let after = d.get("after").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    Some(PermissionDiff { path, before, after })
+                });
                 self.pending_permission = Some(PendingPermission {
                     request_id,
                     tool,
                     action,
                     detail,
+                    selected: 0,
+                    help_open: false,
+                    diff,
                 });
                 self.dirty = true;
             }

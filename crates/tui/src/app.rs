@@ -877,7 +877,7 @@ pub async fn run(cfg: Config) -> Result<()> {
             // Priority order: search prompt → pending permission widget →
             // inspector cursor (if open) → replay controls (if --replay) →
             // normal handler.
-            let action = if search_open {
+            let mut action = if search_open {
                 input::handle_key_search(key)
             } else if model.pending_permission().is_some() {
                 input::handle_key_permission(key, &mut permission_feedback)
@@ -1011,6 +1011,89 @@ pub async fn run(cfg: Config) -> Result<()> {
                     for ev in &evs { model.apply(ev); }
                     status = format!("replayed {} events", evs.len());
                     model.mark_dirty();
+                }
+                input::Action::PermissionSelectPrev => {
+                    if let Some(pp) = model.pending_permission_mut() {
+                        if pp.help_open { pp.help_open = false; }
+                        else if pp.selected > 0 { pp.selected -= 1; }
+                        else { pp.selected = 2; }
+                        model.mark_dirty();
+                    }
+                }
+                input::Action::PermissionSelectNext => {
+                    if let Some(pp) = model.pending_permission_mut() {
+                        if pp.help_open { pp.help_open = false; }
+                        else { pp.selected = (pp.selected + 1) % 3; }
+                        model.mark_dirty();
+                    }
+                }
+                input::Action::PermissionToggleHelp => {
+                    if let Some(pp) = model.pending_permission_mut() {
+                        pp.help_open = !pp.help_open;
+                        model.mark_dirty();
+                    }
+                }
+                input::Action::PermissionConfirmSelected => {
+                    // Translate the selected row into the same Action
+                    // the digit keys would produce, then re-dispatch in
+                    // the next loop iteration via fall-through.
+                    if let Some(pp) = model.pending_permission() {
+                        if pp.help_open {
+                            if let Some(ppm) = model.pending_permission_mut() {
+                                ppm.help_open = false;
+                            }
+                            model.mark_dirty();
+                            continue;
+                        }
+                        action = match pp.selected {
+                            0 => input::Action::PermissionAllowOnce,
+                            1 => input::Action::PermissionAllowSession,
+                            _ => input::Action::PermissionDeny,
+                        };
+                    } else {
+                        continue;
+                    }
+                    // Fall through to PermissionAllowOnce|Session|Deny arm below.
+                    // (Rust match doesn't allow C-style fallthrough — emulate
+                    // by re-matching on the rewritten action via a nested if.)
+                    if matches!(action,
+                        input::Action::PermissionAllowOnce |
+                        input::Action::PermissionAllowSession |
+                        input::Action::PermissionDeny
+                    ) {
+                        // Inline the dispatcher to avoid Rust's no-fallthrough.
+                        let (choice_str, fallback_kind) = match action {
+                            input::Action::PermissionAllowOnce => ("allow_once", EventType::PermissionGranted),
+                            input::Action::PermissionAllowSession => ("allow_session", EventType::PermissionGranted),
+                            _ => ("deny", EventType::PermissionDenied),
+                        };
+                        let request_id = model.pending_permission().map(|p| p.request_id.clone()).unwrap_or_default();
+                        if let Some(tx) = outbound_tx.as_ref() {
+                            let mut payload = serde_json::json!({ "request_id": request_id, "choice": choice_str });
+                            if !permission_feedback.trim().is_empty() {
+                                payload["feedback"] = serde_json::Value::String(permission_feedback.trim().to_string());
+                            }
+                            let ev = Event {
+                                id: Uuid::new_v4(), session_id,
+                                seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                                timestamp_ms: now_ms(), schema_version: SCHEMA_VERSION,
+                                event_type: EventType::PermissionResponse, payload,
+                            };
+                            let _ = tx.send(OutgoingEvent(ev)).await;
+                        } else {
+                            let ev = Event {
+                                id: Uuid::new_v4(), session_id,
+                                seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                                timestamp_ms: now_ms(), schema_version: SCHEMA_VERSION,
+                                event_type: fallback_kind,
+                                payload: serde_json::json!({"request_id": request_id}),
+                            };
+                            let _ = persist_tx.send(ev).await;
+                        }
+                        model.clear_pending_permission();
+                        permission_feedback.clear();
+                        model.mark_dirty();
+                    }
                 }
                 input::Action::PermissionAllowOnce
                 | input::Action::PermissionAllowSession

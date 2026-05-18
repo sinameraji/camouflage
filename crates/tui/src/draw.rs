@@ -178,22 +178,21 @@ pub fn render<B: Backend>(
         };
         // Bottom box height grows to fit wrapped content.
         let bottom_height: u16 = if let Some(pp) = model.pending_permission() {
-            // Three logical content lines: title + buttons + feedback. Each
-            // may wrap on a narrow terminal; total visual lines = sum.
-            let title_w = UnicodeWidthStr::width(" ⚠ permission needed: ")
-                + UnicodeWidthStr::width(pp.action.as_str())
-                + 4 + UnicodeWidthStr::width(pp.tool.as_str()); // "  (tool)"
-            let buttons_w =
-                UnicodeWidthStr::width("   [1] allow once   [2] allow for session   [3] deny   [Esc] deny");
-            let feedback_w = UnicodeWidthStr::width("   feedback › ")
-                + UnicodeWidthStr::width(permission_feedback).max(
-                    UnicodeWidthStr::width("(optional — type a reason, sent with your choice)"),
-                );
-            let title_lines = ((title_w + inner_w - 1) / inner_w).max(1);
-            let button_lines = ((buttons_w + inner_w - 1) / inner_w).max(1);
-            let feedback_lines = ((feedback_w + inner_w - 1) / inner_w).max(1);
-            let content = (title_lines + button_lines + feedback_lines).max(3).min(8) as u16;
-            content + 2 // top + bottom border
+            if pp.help_open {
+                // Help overlay: 1 title + 6 rows + 1 footer = 8 + borders
+                10u16
+            } else {
+                // title + (diff preview if present) + 3 option rows + feedback + hints
+                let base: u16 = 1 + 3 + 1 + 1; // title + options + feedback + hints
+                let diff_lines: u16 = pp.diff.as_ref()
+                    .map(|d| {
+                        let preview = unified_diff_lines(&d.before, &d.after, 12).len() as u16;
+                        // +1 for the "── path ──" header
+                        preview + 1
+                    })
+                    .unwrap_or(0);
+                (base + diff_lines).min(20) + 2
+            }
         } else {
             let input_w = UnicodeWidthStr::width(input_buf).max(1);
             let content_lines = ((input_w + inner_w - 1) / inner_w).max(1).min(3) as u16;
@@ -442,47 +441,78 @@ pub fn render<B: Backend>(
             );
             f.render_widget(widget, input_chunk);
         } else if let Some(pp) = model.pending_permission() {
-            let lines: Vec<Line> = vec![
-                Line::from(vec![
-                    Span::styled(
-                        format!(" ⚠ permission needed: "),
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                    ),
+            let yellow = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+            let dim = Style::default().fg(Color::DarkGray);
+            let sel = Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD);
+            let mut lines: Vec<Line> = Vec::new();
+            if pp.help_open {
+                // Help overlay (ports Ink's PermissionModal "?" panel).
+                lines.push(Line::from(Span::styled(" Permission modal — keyboard shortcuts", yellow)));
+                for (k, v) in [
+                    ("↑ / ↓ or j / k", "navigate options"),
+                    ("1 / 2 / 3", "pick option directly"),
+                    ("Enter", "confirm highlighted"),
+                    ("Esc", "deny and close"),
+                    ("?", "toggle this help"),
+                    ("(in feedback)", "Enter submit + deny; Esc deny without"),
+                ] {
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("   {:<18}", k), Style::default().fg(Color::Cyan)),
+                        Span::raw(v),
+                    ]));
+                }
+                lines.push(Line::from(Span::styled(" press any key to close", dim)));
+            } else {
+                lines.push(Line::from(vec![
+                    Span::styled(" ⚠ permission needed: ", yellow),
                     Span::styled(pp.action.clone(), Style::default().fg(Color::White)),
-                    Span::styled(
-                        format!("  ({})", pp.tool),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                ]),
-                Line::from(vec![
-                    Span::styled("   [1]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-                    Span::raw(" allow once   "),
-                    Span::styled("[2]", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                    Span::raw(" allow for session   "),
-                    Span::styled("[3]", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-                    Span::raw(" deny   "),
-                    Span::styled("[Esc]", Style::default().fg(Color::DarkGray)),
-                    Span::raw(" deny"),
-                ]),
-                Line::from(vec![
-                    Span::styled(
-                        "   feedback › ",
-                        Style::default().fg(Color::DarkGray),
-                    ),
+                    Span::styled(format!("  ({})", pp.tool), dim),
+                ]));
+                // Inline diff (ports Ink DiffView). Trimmed to keep the
+                // bottom widget compact; the host can also surface the
+                // full diff via PatchProposed for the in-transcript view.
+                if let Some(d) = pp.diff.as_ref() {
+                    lines.push(Line::from(Span::styled(format!("   ── {} ──", d.path), dim)));
+                    for line in unified_diff_lines(&d.before, &d.after, 12) {
+                        let style = if line.starts_with('+') {
+                            Style::default().fg(Color::Green)
+                        } else if line.starts_with('-') {
+                            Style::default().fg(Color::Red)
+                        } else if line.starts_with('@') {
+                            Style::default().fg(Color::Magenta)
+                        } else {
+                            Style::default().fg(Color::DarkGray)
+                        };
+                        lines.push(Line::from(Span::styled(format!("   {}", line), style)));
+                    }
+                }
+                // Three options, vertically — Ink uses arrow + label per row.
+                let labels = ["Allow once", "Allow for this session", "Something else"];
+                let keys = [1, 2, 3];
+                for (i, (label, key)) in labels.iter().zip(keys.iter()).enumerate() {
+                    let style = if i == pp.selected { sel } else { Style::default().fg(Color::White) };
+                    let arrow = if i == pp.selected { "▸ " } else { "  " };
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("  {}", arrow), style),
+                        Span::styled(format!("[{}] {}", key, label), style),
+                    ]));
+                }
+                lines.push(Line::from(vec![
+                    Span::styled("   feedback › ", dim),
                     Span::styled(
                         if permission_feedback.is_empty() {
                             "(optional — type a reason, sent with your choice)".to_string()
-                        } else {
-                            permission_feedback.to_string()
-                        },
+                        } else { permission_feedback.to_string() },
                         if permission_feedback.is_empty() {
                             Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)
-                        } else {
-                            Style::default().fg(Color::White)
-                        },
+                        } else { Style::default().fg(Color::White) },
                     ),
-                ]),
-            ];
+                ]));
+                lines.push(Line::from(Span::styled(
+                    "   ↑↓ navigate · Enter confirm · 1/2/3 pick · ? help · Esc deny",
+                    dim,
+                )));
+            }
             let widget = Paragraph::new(lines)
                 .wrap(Wrap { trim: false })
                 .block(
@@ -1580,4 +1610,40 @@ fn rgb_to_color(rgb: camouflage_renderer::theme::Rgb) -> Color {
 
 fn short_uuid(s: &str) -> String {
     s.chars().take(8).collect()
+}
+
+/// Compact unified-diff renderer for the PermissionModal preview.
+/// Hand-rolled instead of pulling in a full `similar` dep: we just need
+/// "+ / - / space" prefixes per changed line, with up to `max` lines of
+/// output. Identical content returns empty. Truncation is signalled by
+/// a trailing "… (N more lines)" entry.
+///
+/// Cheap heuristic — counts adds/removes via a line-by-line LCS with a
+/// small window. For deeply rewritten files the result is still useful
+/// (shows the first N changes); for surgical edits it's near-optimal.
+pub(crate) fn unified_diff_lines(before: &str, after: &str, max: usize) -> Vec<String> {
+    if before == after { return vec![]; }
+    let a: Vec<&str> = before.split('\n').collect();
+    let b: Vec<&str> = after.split('\n').collect();
+    let mut out: Vec<String> = Vec::new();
+    let (mut i, mut j) = (0usize, 0usize);
+    while (i < a.len() || j < b.len()) && out.len() < max {
+        if i < a.len() && j < b.len() && a[i] == b[j] {
+            // context — keep light, only when adjacent to a change
+            i += 1; j += 1;
+            continue;
+        }
+        if i < a.len() && (j >= b.len() || !b[j..].iter().take(8).any(|x| *x == a[i])) {
+            out.push(format!("- {}", a[i]));
+            i += 1;
+        } else if j < b.len() {
+            out.push(format!("+ {}", b[j]));
+            j += 1;
+        }
+    }
+    let remaining = (a.len().saturating_sub(i)) + (b.len().saturating_sub(j));
+    if remaining > 0 && out.len() == max {
+        out.push(format!("… ({} more lines)", remaining));
+    }
+    out
 }

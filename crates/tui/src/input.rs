@@ -13,6 +13,12 @@ pub enum Action {
     PermissionAllowOnce,
     PermissionAllowSession,
     PermissionDeny,
+    /// v0.4.8+: move the highlighted permission option up/down + commit.
+    PermissionSelectPrev,
+    PermissionSelectNext,
+    PermissionConfirmSelected,
+    /// v0.4.8+: toggle the in-modal `?` help overlay (Ink parity).
+    PermissionToggleHelp,
     /// v0.2+: replay controls (only meaningful when `--replay` is active).
     ReplayTogglePlay,
     ReplayStepForward,
@@ -59,17 +65,27 @@ pub enum Action {
 pub fn handle_key_permission(k: Key, feedback: &mut String) -> Action {
     match k {
         Key::CtrlC => Action::Quit,
+        // Direct digit shortcuts (mirrors Ink's Alt+1/2/3 — but bare
+        // digits work too since this handler only fires when a
+        // permission is pending).
         Key::Char('1') => Action::PermissionAllowOnce,
         Key::Char('2') => Action::PermissionAllowSession,
         Key::Char('3') => Action::PermissionDeny,
+        // Arrow / vim navigation + Enter confirms the highlighted row.
+        Key::Up => Action::PermissionSelectPrev,
+        Key::Down => Action::PermissionSelectNext,
+        Key::Char('k') => Action::PermissionSelectPrev,
+        Key::Char('j') => Action::PermissionSelectNext,
+        Key::Enter => Action::PermissionConfirmSelected,
+        // ? overlays a help panel. Any subsequent key dismisses (handled
+        // in app.rs by clearing help_open on the next iteration).
+        Key::Char('?') => Action::PermissionToggleHelp,
         Key::Esc => Action::PermissionDeny,
         Key::Backspace => {
             feedback.pop();
             Action::None
         }
         Key::Char(c) => {
-            // Don't let reserved digits leak into feedback. Other
-            // printable chars accumulate.
             feedback.push(c);
             Action::None
         }
