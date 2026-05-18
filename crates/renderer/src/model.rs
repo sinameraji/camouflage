@@ -341,6 +341,11 @@ pub struct SlashCmdEntry {
     pub name: String,
     pub description: String,
     pub args_hint: Option<String>,
+    /// v0.4.8+: where this command came from. Ports Ink's slash-picker
+    /// source badge ("builtin" | "project" | "global"). Rendered as a
+    /// small tag after the name so users can tell a custom override
+    /// from the built-in.
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -348,6 +353,10 @@ pub struct MentionEntry {
     pub token: String,
     pub label: Option<String>,
     pub kind: Option<String>,
+    /// v0.4.8+: true if this candidate is in the user's recent set
+    /// (Ink's `recentFilesRef`). The picker draws a "Recent" header
+    /// above the contiguous block of recent entries.
+    pub recent: bool,
 }
 
 /// State for an in-flight permission request. Cleared once the renderer
@@ -1249,6 +1258,7 @@ impl RenderModel {
                             name: name.to_string(),
                             description: v.get("description").and_then(|x| x.as_str()).unwrap_or("").to_string(),
                             args_hint: v.get("args_hint").and_then(|x| x.as_str()).map(str::to_string),
+                            source: v.get("source").and_then(|x| x.as_str()).map(str::to_string),
                         });
                     }
                 }
@@ -1266,6 +1276,7 @@ impl RenderModel {
                             token: token.to_string(),
                             label: v.get("label").and_then(|x| x.as_str()).map(str::to_string),
                             kind: v.get("kind").and_then(|x| x.as_str()).map(str::to_string),
+                            recent: v.get("recent").and_then(|x| x.as_bool()).unwrap_or(false),
                         });
                     }
                 }

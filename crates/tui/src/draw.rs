@@ -699,15 +699,20 @@ fn draw_mention_picker_overlay(
     model: &RenderModel,
     selected: usize,
 ) {
-    let matches: Vec<&camouflage_renderer::model::MentionEntry> = model
+    // Two-tier ordering: recent files first (the ones the user has
+    // actually touched), then everything else. Mirrors Ink's FilePicker
+    // "Recent" / "All files" sections. Sort is stable, so within each
+    // tier the original registration order is preserved.
+    let mut matches: Vec<&camouflage_renderer::model::MentionEntry> = model
         .mention_candidates()
         .iter()
         .filter(|m| m.token.contains(partial))
         .collect();
+    matches.sort_by_key(|m| !m.recent);
     if matches.is_empty() {
         return;
     }
-    let visible = matches.len().min(8);
+    let visible = matches.len().min(12);
     let w: u16 = 60;
     let h: u16 = (visible as u16) + 2;
     if area.width < w + 2 || area.height < h + 6 {
@@ -726,24 +731,35 @@ fn draw_mention_picker_overlay(
     let sel_idx = selected.min(matches.len() - 1);
     let scroll_off = sel_idx.saturating_sub(visible - 1);
     let end = (scroll_off + visible).min(matches.len());
-    let mut lines: Vec<Line> = matches[scroll_off..end]
-        .iter()
-        .enumerate()
-        .map(|(i, m)| {
-            let absolute_i = scroll_off + i;
-            let style = if absolute_i == sel_idx { sel } else { plain };
-            let kind = m.kind.as_deref().unwrap_or("");
-            let label = m.label.as_deref().unwrap_or("");
-            Line::from(vec![
-                Span::styled(format!(" @{}", m.token), style),
-                Span::styled(
-                    if kind.is_empty() { "  ".to_string() } else { format!("  [{}]  ", kind) },
-                    dim,
-                ),
-                Span::styled(label.to_string(), dim),
-            ])
-        })
-        .collect();
+    // Build lines with section headers inserted at the recent→all boundary
+    // when the window straddles it.
+    let header = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let recent_in_window = matches[scroll_off..end].iter().any(|m| m.recent);
+    let other_in_window = matches[scroll_off..end].iter().any(|m| !m.recent);
+    let mut lines: Vec<Line> = Vec::new();
+    if recent_in_window {
+        lines.push(Line::from(Span::styled(" Recent", header)));
+    }
+    let mut saw_other_header = !other_in_window || !recent_in_window;
+    for (i, m) in matches[scroll_off..end].iter().enumerate() {
+        let absolute_i = scroll_off + i;
+        if !saw_other_header && !m.recent {
+            lines.push(Line::from(Span::styled(" All files", header)));
+            saw_other_header = true;
+        }
+        let style = if absolute_i == sel_idx { sel } else { plain };
+        let kind = m.kind.as_deref().unwrap_or("");
+        let label = m.label.as_deref().unwrap_or("");
+        let prefix = if m.recent { " ↻ @" } else { "   @" };
+        lines.push(Line::from(vec![
+            Span::styled(format!("{}{}", prefix, m.token), style),
+            Span::styled(
+                if kind.is_empty() { "  ".to_string() } else { format!("  [{}]  ", kind) },
+                dim,
+            ),
+            Span::styled(label.to_string(), dim),
+        ]));
+    }
     if matches.len() > visible {
         lines.push(Line::from(vec![Span::styled(
             format!(" {}/{} ", sel_idx + 1, matches.len()),
@@ -799,6 +815,19 @@ fn draw_slash_picker_overlay(
     // slice up when sel_idx exceeds the bottom of the visible window.
     let scroll_off = sel_idx.saturating_sub(visible - 1);
     let end = (scroll_off + visible).min(matches.len());
+    // Source-badge palette mirrors Ink: project commands get accent
+    // (they're the user's own), global is cyan (cross-repo), builtin is
+    // dim grey (lowest information). The badge is right-aligned via
+    // padding so columns line up.
+    let badge_for = |src: Option<&str>| -> Option<(String, Style)> {
+        match src {
+            Some("project") => Some(("  [project]".into(), Style::default().fg(Color::Yellow))),
+            Some("global")  => Some(("  [global] ".into(), Style::default().fg(Color::Cyan))),
+            Some("builtin") => Some(("  [builtin]".into(), Style::default().fg(Color::DarkGray))),
+            Some(other) if !other.is_empty() => Some((format!("  [{}]", other), Style::default().fg(Color::DarkGray))),
+            _ => None,
+        }
+    };
     let mut lines: Vec<Line> = matches[scroll_off..end]
         .iter()
         .enumerate()
@@ -806,11 +835,15 @@ fn draw_slash_picker_overlay(
             let absolute_i = scroll_off + i;
             let style = if absolute_i == sel_idx { sel } else { plain };
             let hint = c.args_hint.as_deref().unwrap_or("");
-            Line::from(vec![
+            let mut spans = vec![
                 Span::styled(format!(" /{}", c.name), style),
                 Span::styled(if hint.is_empty() { "  ".to_string() } else { format!(" {}  ", hint) }, dim),
                 Span::styled(c.description.clone(), dim),
-            ])
+            ];
+            if let Some((txt, s)) = badge_for(c.source.as_deref()) {
+                spans.push(Span::styled(txt, s));
+            }
+            Line::from(spans)
         })
         .collect();
     // Show a "X/Y" footer when the list is longer than the window.
@@ -1584,9 +1617,14 @@ fn row_to_line<'a>(
 }
 
 /// Expand a row into one-or-more Lines, splitting on embedded `\n` so
-/// markdown paragraph breaks (e.g. `"foo\n\nbar"`) actually produce
-/// visible blank lines instead of collapsing into one wall of text.
-/// Only Assistant rows are split; other row kinds remain single-line.
+/// markdown paragraph breaks render correctly, and adding lightweight
+/// block-level styling for code fences (```), bullet lists, and
+/// numbered lists. Only Assistant rows are split; other row kinds
+/// remain single-line.
+///
+/// Code fences toggle a flag; while in a fenced block the whole line is
+/// painted with the code_fg/code_bg pair and inline parsing is skipped
+/// (so `*literal asterisks*` stay literal in code).
 fn row_to_lines<'a>(
     r: &'a camouflage_renderer::Row,
     frame: u64,
@@ -1600,27 +1638,70 @@ fn row_to_lines<'a>(
     let assistant_color = rgb_to_color(theme.assistant);
     let code_fg = rgb_to_color(theme.code_fg);
     let code_bg = rgb_to_color(theme.code_bg);
+    let accent = rgb_to_color(theme.accent);
     let mut out: Vec<Line> = Vec::new();
-    // First segment uses the same prefix the canonical row_to_line emits;
-    // we synthesise a one-segment "row" for it so styling stays in sync.
     let segments: Vec<&str> = r.text.split('\n').collect();
+    let mut in_code = false;
     for (i, seg) in segments.iter().enumerate() {
         let mut spans: Vec<Span> = Vec::new();
         if i == 0 {
-            // Reuse the prefix glyph the assistant branch emits in row_to_line.
             spans.push(Span::styled("  ", Style::default().fg(assistant_color)));
         } else {
             spans.push(Span::raw("  "));
         }
-        for sp in parse_inline(seg) {
+        let trimmed = seg.trim_start();
+        // ── code fence handling ──────────────────────────────────────
+        if trimmed.starts_with("```") {
+            // Toggle and render the fence itself dimly so the user can
+            // see the boundary without it dominating the row.
+            in_code = !in_code;
+            spans.push(Span::styled(
+                seg.to_string(),
+                Style::default().fg(Color::DarkGray),
+            ));
+            out.push(Line::from(spans));
+            continue;
+        }
+        if in_code {
+            // Whole-line code styling. Background bg covers visible
+            // chars; trailing pad on short lines is left intentionally
+            // unpainted to avoid loud half-row stripes.
+            spans.push(Span::styled(
+                seg.to_string(),
+                Style::default().fg(code_fg).bg(code_bg),
+            ));
+            out.push(Line::from(spans));
+            continue;
+        }
+        // ── bullets and numbered lists ───────────────────────────────
+        // Match common markdown markers (-, *, +, 1.) and recolor the
+        // glyph in accent so lists scan at a glance. The remaining text
+        // still flows through parse_inline.
+        let (list_glyph, body): (Option<&str>, &str) =
+            if let Some(rest) = trimmed.strip_prefix("- ") { (Some("• "), rest) }
+            else if let Some(rest) = trimmed.strip_prefix("* ") { (Some("• "), rest) }
+            else if let Some(rest) = trimmed.strip_prefix("+ ") { (Some("• "), rest) }
+            else {
+                // numbered: "1. text", "23. text"
+                let mut idx = 0usize;
+                let bytes = trimmed.as_bytes();
+                while idx < bytes.len() && bytes[idx].is_ascii_digit() { idx += 1; }
+                if idx > 0 && trimmed.get(idx..idx + 2) == Some(". ") {
+                    let prefix = &trimmed[..idx + 2];
+                    let rest = &trimmed[idx + 2..];
+                    spans.push(Span::styled(prefix.to_string(), Style::default().fg(accent)));
+                    (None, rest)
+                } else { (None, seg.as_ref()) }
+            };
+        if let Some(glyph) = list_glyph {
+            spans.push(Span::styled(glyph.to_string(), Style::default().fg(accent)));
+        }
+        // Inline pass for the body.
+        for sp in parse_inline(body) {
             let style = match sp.style {
                 InlineStyle::Plain => Style::default().fg(assistant_color),
-                InlineStyle::Bold => Style::default()
-                    .fg(assistant_color)
-                    .add_modifier(Modifier::BOLD),
-                InlineStyle::Italic => Style::default()
-                    .fg(assistant_color)
-                    .add_modifier(Modifier::ITALIC),
+                InlineStyle::Bold => Style::default().fg(assistant_color).add_modifier(Modifier::BOLD),
+                InlineStyle::Italic => Style::default().fg(assistant_color).add_modifier(Modifier::ITALIC),
                 InlineStyle::Code => Style::default().fg(code_fg).bg(code_bg),
             };
             spans.push(Span::styled(sp.text, style));
