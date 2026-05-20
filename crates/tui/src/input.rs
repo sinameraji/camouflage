@@ -141,6 +141,14 @@ pub fn handle_key(k: Key, buf: &mut String, cursor: &mut usize) -> Action {
             *cursor = 0;
             Action::None
         }
+        Key::CtrlK => {
+            // Readline "kill to end of line": drop everything from the
+            // cursor to the end of the buffer. Cursor stays put — it's
+            // now at the (new) end of the line.
+            let from = byte_index_of_char(buf, *cursor);
+            buf.truncate(from);
+            Action::None
+        }
         Key::Char(c) => {
             insert_at_cursor(buf, cursor, c);
             Action::None

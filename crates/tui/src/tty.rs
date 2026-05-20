@@ -43,6 +43,8 @@ pub enum Key {
     CtrlF,
     /// Cursor to start of line (readline convention).
     CtrlA,
+    /// Delete to end of line (readline convention).
+    CtrlK,
     /// Delete word before cursor (readline convention).
     CtrlW,
     /// Delete to start of line (readline convention).
@@ -122,6 +124,7 @@ impl EscParser {
                 0x05 => Some(Key::CtrlE),
                 0x06 => Some(Key::CtrlF),
                 0x09 => Some(Key::Tab),
+                0x0b => Some(Key::CtrlK),
                 0x15 => Some(Key::CtrlU),
                 0x17 => Some(Key::CtrlW),
                 0x0d | 0x0a => Some(Key::Enter),
@@ -247,6 +250,14 @@ mod tests {
         // CSI 3 ~ — the Delete key (fn+Backspace on macOS).
         let keys = feed_all(&mut p, b"\x1b[3~");
         assert!(matches!(keys.as_slice(), [Key::Delete]));
+    }
+
+    #[test]
+    fn parse_ctrl_k() {
+        let mut p = EscParser::new();
+        // 0x0b (VT) is Ctrl+K — readline "kill to end of line".
+        let keys = feed_all(&mut p, &[0x0b]);
+        assert!(matches!(keys.as_slice(), [Key::CtrlK]));
     }
 
     #[test]
