@@ -429,9 +429,10 @@ pub async fn run(cfg: Config) -> Result<()> {
             // Input-history walk: Up/Down when the input prompt has focus,
             // no overlays/pickers are open, no permission is pending, no
             // search is active, no replay scrubber is taking the key.
-            // Doesn't interfere with the existing "scroll transcript" use
-            // of Up/Down because that's bound when input_buf is empty —
-            // but if there's history, history takes priority.
+            // Only walks history when the input buffer is empty OR the
+            // user is already in the middle of a history walk — otherwise
+            // Up/Down with typed text would silently clobber the user's
+            // unsubmitted input. Matches Ink's readline-style convention.
             // Compute mention_active locally so input_focused can include
             // it (the main mention_active computation runs below for its
             // own ↑/↓ short-circuit; cheap to evaluate twice).
@@ -490,7 +491,10 @@ pub async fn run(cfg: Config) -> Result<()> {
                     _ => {}
                 }
             }
-            if input_focused && !input_history.is_empty() {
+            if input_focused
+                && !input_history.is_empty()
+                && (input_buf.is_empty() || input_history_index.is_some())
+            {
                 match key {
                     crate::tty::Key::Up => {
                         let next = match input_history_index {
