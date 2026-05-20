@@ -36,6 +36,8 @@ pub enum Key {
     PageDown,
     Home,
     End,
+    /// Forward-delete (fn+Backspace on macOS, Del key elsewhere — CSI 3 ~).
+    Delete,
     CtrlC,
     CtrlE,
     CtrlF,
@@ -190,6 +192,7 @@ impl EscParser {
                             let base = s.split(';').next().unwrap_or("");
                             match base {
                                 "1" | "7" => Some(Key::Home),
+                                "3" => Some(Key::Delete),
                                 "4" | "8" => Some(Key::End),
                                 "5" => Some(Key::PageUp),
                                 "6" => Some(Key::PageDown),
@@ -236,6 +239,14 @@ mod tests {
         let mut p = EscParser::new();
         let keys = feed_all(&mut p, b"\x1b[5~\x1b[6~\x1b[F");
         assert!(matches!(keys.as_slice(), [Key::PageUp, Key::PageDown, Key::End]));
+    }
+
+    #[test]
+    fn parse_forward_delete() {
+        let mut p = EscParser::new();
+        // CSI 3 ~ — the Delete key (fn+Backspace on macOS).
+        let keys = feed_all(&mut p, b"\x1b[3~");
+        assert!(matches!(keys.as_slice(), [Key::Delete]));
     }
 
     #[test]

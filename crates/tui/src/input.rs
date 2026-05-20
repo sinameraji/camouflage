@@ -193,6 +193,10 @@ pub fn handle_key(k: Key, buf: &mut String, cursor: &mut usize) -> Action {
             delete_before_cursor(buf, cursor);
             Action::None
         }
+        Key::Delete => {
+            delete_after_cursor(buf, cursor);
+            Action::None
+        }
         _ => Action::None,
     }
 }
@@ -212,6 +216,16 @@ pub fn delete_before_cursor(buf: &mut String, cursor: &mut usize) {
     let old_byte_idx = byte_index_of_char(buf, *cursor);
     buf.replace_range(new_byte_idx..old_byte_idx, "");
     *cursor -= 1;
+}
+
+/// Delete the character at the cursor (forward-delete / Delete key). The
+/// cursor stays in place — the next character slides left to fill the gap.
+pub fn delete_after_cursor(buf: &mut String, cursor: &mut usize) {
+    let total = buf.chars().count();
+    if *cursor >= total { return; }
+    let from = byte_index_of_char(buf, *cursor);
+    let to = byte_index_of_char(buf, *cursor + 1);
+    buf.replace_range(from..to, "");
 }
 
 /// Byte offset of the `n`-th character (or buf.len() if n is at/past end).
