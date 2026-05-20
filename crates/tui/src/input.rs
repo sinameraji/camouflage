@@ -149,6 +149,16 @@ pub fn handle_key(k: Key, buf: &mut String, cursor: &mut usize) -> Action {
             buf.truncate(from);
             Action::None
         }
+        Key::MetaD => {
+            // Readline "kill word forward": drop from cursor up to (but
+            // not including) the start of the next word. Mirror of
+            // Ctrl+W. Cursor stays put.
+            let new_end = word_boundary_right(buf, *cursor);
+            let from = byte_index_of_char(buf, *cursor);
+            let to = byte_index_of_char(buf, new_end);
+            buf.replace_range(from..to, "");
+            Action::None
+        }
         Key::Char(c) => {
             insert_at_cursor(buf, cursor, c);
             Action::None

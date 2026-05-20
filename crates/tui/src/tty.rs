@@ -32,6 +32,9 @@ pub enum Key {
     WordLeft,
     /// Option+Right / Alt+Right — "jump word right".
     WordRight,
+    /// Option+D / Alt+D — readline "kill word forward" (delete from
+    /// cursor to next word boundary).
+    MetaD,
     PageUp,
     PageDown,
     Home,
@@ -146,6 +149,9 @@ impl EscParser {
                 // bindings: ESC b (word backward) and ESC f (word forward).
                 b'b' => { self.state = State::Ground; Some(Key::WordLeft) }
                 b'f' => { self.state = State::Ground; Some(Key::WordRight) }
+                // ESC d — Option+D / Alt+D, "kill word forward". Mirror of
+                // Ctrl+W (which kills the word backward).
+                b'd' => { self.state = State::Ground; Some(Key::MetaD) }
                 0x1b => None,
                 _ => {
                     // Lone ESC (or Alt-X we don't handle); treat as Esc.
@@ -258,6 +264,14 @@ mod tests {
         // 0x0b (VT) is Ctrl+K — readline "kill to end of line".
         let keys = feed_all(&mut p, &[0x0b]);
         assert!(matches!(keys.as_slice(), [Key::CtrlK]));
+    }
+
+    #[test]
+    fn parse_meta_d() {
+        let mut p = EscParser::new();
+        // ESC d — Option+D on macOS, "kill word forward".
+        let keys = feed_all(&mut p, b"\x1bd");
+        assert!(matches!(keys.as_slice(), [Key::MetaD]));
     }
 
     #[test]
