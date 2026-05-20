@@ -168,6 +168,14 @@ pub async fn run(cfg: Config) -> Result<()> {
     // the cursor (None = "live" buffer, not browsing history).
     let mut input_history: Vec<String> = Vec::new();
     let mut input_history_index: Option<usize> = None;
+    // Timestamp of the most recent Ctrl+C. Used to implement the
+    // "press Ctrl+C twice to exit" semantics: a lone Ctrl+C emits
+    // CancelRequested (interrupt the agent) and arms this timestamp;
+    // a second Ctrl+C within CTRL_C_DOUBLE_PRESS_WINDOW disarms and
+    // shuts the app down.
+    let mut last_ctrl_c: Option<std::time::Instant> = None;
+    const CTRL_C_DOUBLE_PRESS_WINDOW: std::time::Duration =
+        std::time::Duration::from_millis(1500);
 
     // Replay state: loaded but not played-through. We start paused at
     // position 0 so the user can scrub controls before content shows.
@@ -913,12 +921,22 @@ pub async fn run(cfg: Config) -> Result<()> {
             }
             match action {
                 input::Action::Quit => {
-                    // Ctrl+C is now "interrupt the agent" instead of
-                    // "quit the app". If a turn is running, the host
-                    // catches CancelRequested and aborts; otherwise the
-                    // host typically does nothing. Quitting moves to
-                    // /quit slash command or explicit Ctrl+C twice (next
-                    // commit can add the double-press semantics).
+                    // Ctrl+C is "interrupt the agent" on first press and
+                    // "quit the app" on a second press within
+                    // CTRL_C_DOUBLE_PRESS_WINDOW. Mirrors Ink / readline:
+                    // users expect Ctrl+C to abort the running operation
+                    // first and only exit when they really mean it. The
+                    // timestamp expires naturally after the window, so
+                    // pressing Ctrl+C once and then continuing to work is
+                    // not a latent exit hazard.
+                    let now = std::time::Instant::now();
+                    let is_second_press = last_ctrl_c
+                        .map(|t| now.duration_since(t) <= CTRL_C_DOUBLE_PRESS_WINDOW)
+                        .unwrap_or(false);
+                    if is_second_press {
+                        return shutdown(&mut terminal, Ok(()));
+                    }
+                    last_ctrl_c = Some(now);
                     if let Some(tx) = outbound_tx.as_ref() {
                         let ev = Event {
                             id: Uuid::new_v4(),
@@ -930,12 +948,13 @@ pub async fn run(cfg: Config) -> Result<()> {
                             payload: serde_json::json!({}),
                         };
                         let _ = tx.send(OutgoingEvent(ev)).await;
-                    } else {
-                        // Standalone mode (no host): preserve the legacy
-                        // "Ctrl+C quits" behaviour so the binary remains
-                        // usable without an adapter.
-                        return shutdown(&mut terminal, Ok(()));
                     }
+                    // Standalone mode (no host): the first press is now a
+                    // no-op apart from arming the double-press window. The
+                    // second press lands above. This is a small UX shift
+                    // from "Ctrl+C quits instantly" but matches the hosted
+                    // semantics and prevents accidental loss of unsubmitted
+                    // input.
                 }
                 input::Action::SubmitInput(text) => {
                     // Push into input history (de-duped: skip if same as most recent).
