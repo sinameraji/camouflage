@@ -16,7 +16,7 @@ use std::io;
 use std::os::fd::RawFd;
 use std::sync::mpsc;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Key {
     Char(char),
     Enter,
@@ -56,6 +56,11 @@ pub enum Key {
     ScrollUp,
     /// Mouse wheel down (when SGR mouse capture is enabled).
     ScrollDown,
+    /// Bracketed-paste payload — the literal text the user pasted,
+    /// delivered as a single key so the input layer can insert it
+    /// atomically (and embedded newlines / control chars don't trigger
+    /// Enter / Ctrl+C mid-paste).
+    Paste(String),
 }
 
 /// Open /dev/tty for reading and return its raw fd.
@@ -100,15 +105,29 @@ pub fn spawn_key_reader(tty_fd: RawFd) -> mpsc::Receiver<Key> {
 /// - Ground: each byte either a printable, control, or `ESC` starting a sequence
 /// - Esc: after seeing `0x1b`
 /// - Csi: after seeing `ESC [`
+/// - InPaste: inside a bracketed-paste run (ESC [200~ … ESC [201~) — all
+///   bytes are collected literally until the terminator is recognised.
+/// - PasteEsc / PasteCsi: transient states used to detect the ESC [201~
+///   paste terminator without leaking partial-match bytes into the paste
+///   buffer.
 struct EscParser {
     state: State,
     csi_buf: Vec<u8>,
+    paste_buf: String,
+    /// Parameter bytes accumulated while we're trying to recognise the
+    /// paste terminator. If recognition fails, these get flushed back
+    /// into the paste buffer along with the literal ESC [ that started
+    /// the detection attempt.
+    paste_csi_buf: Vec<u8>,
 }
 
 enum State {
     Ground,
     Esc,
     Csi,
+    InPaste,
+    PasteEsc,
+    PasteCsi,
 }
 
 impl EscParser {
@@ -116,6 +135,8 @@ impl EscParser {
         Self {
             state: State::Ground,
             csi_buf: Vec::with_capacity(8),
+            paste_buf: String::new(),
+            paste_csi_buf: Vec::with_capacity(4),
         }
     }
 
@@ -163,6 +184,15 @@ impl EscParser {
                 // CSI ends on a byte in 0x40..=0x7e
                 if (0x40..=0x7e).contains(&b) {
                     let s = std::str::from_utf8(&self.csi_buf).unwrap_or("");
+                    // Bracketed-paste start (ESC [ 200 ~). Switch to InPaste
+                    // before the normal state-reset runs, so the trailing
+                    // assignment below doesn't undo us.
+                    if b == b'~' && s == "200" {
+                        self.csi_buf.clear();
+                        self.paste_buf.clear();
+                        self.state = State::InPaste;
+                        return None;
+                    }
                     let k = match b {
                         b'A' => Some(Key::Up),
                         b'B' => Some(Key::Down),
@@ -215,6 +245,60 @@ impl EscParser {
                     k
                 } else {
                     self.csi_buf.push(b);
+                    None
+                }
+            }
+            State::InPaste => {
+                // Collect bytes literally. ESC starts a terminator-detection
+                // attempt; if it doesn't match, the bytes get flushed back.
+                if b == 0x1b {
+                    self.state = State::PasteEsc;
+                    None
+                } else {
+                    self.paste_buf.push(b as char);
+                    None
+                }
+            }
+            State::PasteEsc => {
+                if b == b'[' {
+                    self.paste_csi_buf.clear();
+                    self.state = State::PasteCsi;
+                    None
+                } else {
+                    // False alarm — flush the ESC + this byte back into
+                    // the paste buffer and resume collecting.
+                    self.paste_buf.push(0x1b as char);
+                    self.paste_buf.push(b as char);
+                    self.state = State::InPaste;
+                    None
+                }
+            }
+            State::PasteCsi => {
+                if (0x40..=0x7e).contains(&b) {
+                    let s = std::str::from_utf8(&self.paste_csi_buf).unwrap_or("");
+                    if b == b'~' && s == "201" {
+                        // Real terminator — emit the paste payload.
+                        self.paste_csi_buf.clear();
+                        self.state = State::Ground;
+                        let payload = std::mem::take(&mut self.paste_buf);
+                        Some(Key::Paste(payload))
+                    } else {
+                        // Some other CSI sequence appeared inside the
+                        // paste — push the literal bytes back and resume
+                        // collecting. (Rare in real pastes but possible if
+                        // the user pastes ANSI-escaped text.)
+                        self.paste_buf.push(0x1b as char);
+                        self.paste_buf.push('[');
+                        for &pb in &self.paste_csi_buf {
+                            self.paste_buf.push(pb as char);
+                        }
+                        self.paste_buf.push(b as char);
+                        self.paste_csi_buf.clear();
+                        self.state = State::InPaste;
+                        None
+                    }
+                } else {
+                    self.paste_csi_buf.push(b);
                     None
                 }
             }
@@ -328,5 +412,39 @@ mod tests {
         // SGR mouse: ESC [ < 64 ; 10 ; 5 M = wheel up at (10,5).
         let keys = feed_all(&mut p, b"\x1b[<64;10;5M\x1b[<65;10;5M");
         assert!(matches!(keys.as_slice(), [Key::ScrollUp, Key::ScrollDown]));
+    }
+
+    #[test]
+    fn parse_bracketed_paste_basic() {
+        let mut p = EscParser::new();
+        // ESC[200~hello world\nfoo ESC[201~ — pastes a multi-line block.
+        let keys = feed_all(&mut p, b"\x1b[200~hello world\nfoo\x1b[201~");
+        match keys.as_slice() {
+            [Key::Paste(s)] => assert_eq!(s, "hello world\nfoo"),
+            other => panic!("expected single Paste, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_bracketed_paste_does_not_emit_enter_or_ctrl_c() {
+        // The whole point: \r and \x03 inside a paste must not become
+        // Key::Enter or Key::CtrlC — they ride along as part of the
+        // payload so the host doesn't submit or quit mid-paste.
+        let mut p = EscParser::new();
+        let keys = feed_all(&mut p, b"\x1b[200~a\rb\x03c\x1b[201~");
+        match keys.as_slice() {
+            [Key::Paste(s)] => assert_eq!(s, "a\rb\x03c"),
+            other => panic!("expected single Paste, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_bracketed_paste_then_normal_key() {
+        let mut p = EscParser::new();
+        let keys = feed_all(&mut p, b"\x1b[200~x\x1b[201~\r");
+        match keys.as_slice() {
+            [Key::Paste(s), Key::Enter] => assert_eq!(s, "x"),
+            other => panic!("expected [Paste, Enter], got {:?}", other),
+        }
     }
 }

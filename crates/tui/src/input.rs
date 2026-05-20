@@ -89,6 +89,12 @@ pub fn handle_key_permission(k: Key, feedback: &mut String) -> Action {
             feedback.push(c);
             Action::None
         }
+        Key::Paste(text) => {
+            // Same rationale as handle_key: a paste into the permission
+            // feedback box should land as a single block of literal text.
+            feedback.push_str(&text);
+            Action::None
+        }
         _ => Action::None,
     }
 }
@@ -161,6 +167,17 @@ pub fn handle_key(k: Key, buf: &mut String, cursor: &mut usize) -> Action {
         }
         Key::Char(c) => {
             insert_at_cursor(buf, cursor, c);
+            Action::None
+        }
+        Key::Paste(text) => {
+            // Bracketed paste payload — insert atomically at the cursor.
+            // Newlines / control chars are preserved as literal characters
+            // (the parser already filtered out the wrapping ESC sequences),
+            // so a multi-line paste stays multi-line and never accidentally
+            // submits the input mid-stream.
+            for c in text.chars() {
+                insert_at_cursor(buf, cursor, c);
+            }
             Action::None
         }
         Key::Enter => {

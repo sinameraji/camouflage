@@ -906,7 +906,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                     _ => input::Action::None,
                 }
             } else if let (Some(_), Some(act)) =
-                (replay_state.as_ref(), input::handle_key_replay(key, &input_buf))
+                (replay_state.as_ref(), input::handle_key_replay(key.clone(), &input_buf))
             {
                 act
             } else {
@@ -1706,8 +1706,14 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     // (including wheel as buttons 64/65) instead of translating the
     // scroll wheel into Up/Down arrow keys — which was polluting the
     // input-history navigation. Wired into the /dev/tty reader's parser.
+    //
+    // Also enable bracketed-paste mode (?2004): the terminal wraps any
+    // pasted text in ESC [200~ … ESC [201~, which the parser turns into
+    // a single Key::Paste event. Without this, pasting a block that
+    // contains a newline would submit the partial input the moment the
+    // newline arrived (since 0x0a is Enter in raw mode).
     use std::io::Write;
-    let _ = stdout.write_all(b"\x1b[?1000h\x1b[?1006h");
+    let _ = stdout.write_all(b"\x1b[?1000h\x1b[?1006h\x1b[?2004h");
     let _ = stdout.flush();
     let backend = CrosstermBackend::new(stdout);
     let mut term = Terminal::new(backend)?;
@@ -1717,10 +1723,11 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
 
 fn teardown_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     let _ = disable_raw_mode();
-    // Disable mouse capture (must come before LeaveAlternateScreen so the
-    // sequence isn't lost when we drop the alt screen).
+    // Disable mouse capture and bracketed paste (must come before
+    // LeaveAlternateScreen so the sequence isn't lost when we drop the
+    // alt screen).
     use std::io::Write;
-    let _ = terminal.backend_mut().write_all(b"\x1b[?1006l\x1b[?1000l");
+    let _ = terminal.backend_mut().write_all(b"\x1b[?2004l\x1b[?1006l\x1b[?1000l");
     terminal.backend_mut().execute(LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     Ok(())
