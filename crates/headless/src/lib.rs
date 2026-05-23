@@ -20,11 +20,20 @@ pub enum NdjsonError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    /// Forward-compat: an event_type the running renderer doesn't know
+    /// about. Callers may choose to skip these silently instead of
+    /// surfacing them as RuntimeError rows, which is important whenever
+    /// a host ships ahead of the renderer binary.
+    #[error("unknown event_type: {0}")]
+    UnknownEventType(String),
 }
 
 #[derive(Debug, Deserialize)]
 struct Shorthand {
-    event_type: EventType,
+    /// Parsed as a raw string and converted into `EventType` inside
+    /// `parse_line` so unknown variants can be reported with a typed
+    /// error (and skipped) instead of taking down the whole event.
+    event_type: String,
     #[serde(default)]
     payload: Option<serde_json::Value>,
     #[serde(default)]
@@ -56,6 +65,9 @@ impl NdjsonDecoder {
 
     pub fn parse_line(&self, line: &str) -> Result<Event, NdjsonError> {
         let s: Shorthand = serde_json::from_str(line)?;
+        let Some(event_type) = EventType::from_str(&s.event_type) else {
+            return Err(NdjsonError::UnknownEventType(s.event_type));
+        };
         let seq = s.seq.unwrap_or_else(|| self.seq.fetch_add(1, Ordering::Relaxed));
         // Keep the local counter ahead of any externally-supplied seq.
         if let Some(seq_v) = s.seq {
@@ -67,7 +79,7 @@ impl NdjsonDecoder {
             seq,
             timestamp_ms: s.timestamp_ms.unwrap_or_else(now_ms),
             schema_version: s.schema_version.unwrap_or(SCHEMA_VERSION),
-            event_type: s.event_type,
+            event_type,
             payload: s.payload.unwrap_or(serde_json::Value::Null),
         })
     }
@@ -100,6 +112,16 @@ where
             Ok(ev) => {
                 if tx.send(ev).await.is_err() {
                     break;
+                }
+            }
+            Err(NdjsonError::UnknownEventType(name)) => {
+                // Forward-compat: a newer host shipped an event type
+                // this renderer build doesn't recognise. Silently skip
+                // instead of polluting the transcript with a noisy
+                // RuntimeError row the user can't act on. Surface via
+                // an env-gated stderr line for diagnostics.
+                if std::env::var_os("CAMOUFLAGE_DEBUG_NDJSON").is_some() {
+                    eprintln!("[camouflage] skipping unknown event_type: {name}");
                 }
             }
             Err(e) => {
@@ -160,5 +182,22 @@ mod tests {
         assert_eq!(e1.event_type, EventType::RuntimeError);
         let e2 = rx.recv().await.unwrap();
         assert_eq!(e2.event_type, EventType::SessionEnded);
+    }
+
+    #[tokio::test]
+    async fn unknown_event_type_is_skipped_not_surfaced() {
+        // A host shipped with a Camouflage variant this renderer doesn't
+        // know about. The stream must keep flowing; only known events
+        // reach the channel.
+        let d = NdjsonDecoder::new(Uuid::nil());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let input = "{\"event_type\":\"FutureMagic\"}\n{\"event_type\":\"SessionEnded\"}\n"
+            .as_bytes();
+        let reader = BufReader::new(input);
+        tokio::spawn(async move { run_reader(reader, d, tx).await.unwrap() });
+        let next = rx.recv().await.unwrap();
+        assert_eq!(next.event_type, EventType::SessionEnded);
+        // No second event — the unknown one was dropped silently.
+        assert!(rx.recv().await.is_none());
     }
 }

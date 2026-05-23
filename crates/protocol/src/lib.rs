@@ -191,6 +191,56 @@ impl EventType {
         }
     }
 
+    /// Inverse of `as_str`. Returns `None` for variants this binary
+    /// doesn't know about — callers (e.g. the NDJSON decoder) use this
+    /// to skip forward-shipped events instead of failing the whole
+    /// stream.
+    pub fn from_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "SessionStarted" => Self::SessionStarted,
+            "SessionEnded" => Self::SessionEnded,
+            "UserMessageCreated" => Self::UserMessageCreated,
+            "AssistantStreamStarted" => Self::AssistantStreamStarted,
+            "AssistantTokenDelta" => Self::AssistantTokenDelta,
+            "AssistantMessageCompleted" => Self::AssistantMessageCompleted,
+            "ToolExecutionStarted" => Self::ToolExecutionStarted,
+            "ToolExecutionStdout" => Self::ToolExecutionStdout,
+            "ToolExecutionStderr" => Self::ToolExecutionStderr,
+            "ToolExecutionFinished" => Self::ToolExecutionFinished,
+            "PatchProposed" => Self::PatchProposed,
+            "PatchApplied" => Self::PatchApplied,
+            "PermissionRequested" => Self::PermissionRequested,
+            "PermissionGranted" => Self::PermissionGranted,
+            "PermissionDenied" => Self::PermissionDenied,
+            "RuntimeError" => Self::RuntimeError,
+            "SessionCompacted" => Self::SessionCompacted,
+            "ViewportMarker" => Self::ViewportMarker,
+            "StatusUpdate" => Self::StatusUpdate,
+            "BackgroundTaskUpdate" => Self::BackgroundTaskUpdate,
+            "UserInputSubmitted" => Self::UserInputSubmitted,
+            "PermissionResponse" => Self::PermissionResponse,
+            "SlashCommandsRegistered" => Self::SlashCommandsRegistered,
+            "MentionCandidatesRegistered" => Self::MentionCandidatesRegistered,
+            "ShowSelectList" => Self::ShowSelectList,
+            "SelectListResponse" => Self::SelectListResponse,
+            "ShowConfirm" => Self::ShowConfirm,
+            "ConfirmResponse" => Self::ConfirmResponse,
+            "ShowToast" => Self::ShowToast,
+            "ShowTable" => Self::ShowTable,
+            "ShowKeyValueView" => Self::ShowKeyValueView,
+            "ShowForm" => Self::ShowForm,
+            "FormResponse" => Self::FormResponse,
+            "ShowWizard" => Self::ShowWizard,
+            "WizardCompleted" => Self::WizardCompleted,
+            "WizardCancelled" => Self::WizardCancelled,
+            "ModeChangeRequested" => Self::ModeChangeRequested,
+            "CancelRequested" => Self::CancelRequested,
+            "TranscriptCleared" => Self::TranscriptCleared,
+            "Splash" => Self::Splash,
+            _ => return None,
+        })
+    }
+
     /// Direction this event flows on the wire.
     pub fn direction(&self) -> Direction {
         match self {
