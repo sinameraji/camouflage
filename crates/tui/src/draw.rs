@@ -246,12 +246,14 @@ pub fn render<B: Backend>(
         ]));
         f.render_widget(header, chunks[0]);
 
-        // Render the splash (if any) into chunks[1]. The text may contain
-        // raw ANSI; we pass it through `tui::text::Text::raw` which keeps
-        // newlines but doesn't try to re-interpret escape sequences (the
-        // terminal does that itself when ratatui writes the bytes).
+        // Render the splash (if any) into chunks[1]. The text typically
+        // contains ANSI SGR escape sequences (RGB fg/bg, reset) — we
+        // parse those into per-Span Style so ratatui knows the visual
+        // width per cell. Without parsing, ratatui treats the ESC bytes
+        // as printable text and the resulting layout looks shredded.
         if let Some(text) = splash_text {
-            let para = Paragraph::new(text);
+            let lines = parse_ansi_lines(text);
+            let para = Paragraph::new(lines);
             f.render_widget(para, chunks[1]);
         }
 
@@ -2044,4 +2046,139 @@ pub(crate) fn unified_diff_lines(before: &str, after: &str, max: usize) -> Vec<S
         out.push(format!("… ({} more lines)", remaining));
     }
     out
+}
+
+/// Minimal SGR-aware ANSI parser. Handles exactly the subset emitted by
+/// host CLI splash banners: `\x1b[Nm` reset / single param, `\x1b[N;Nm`
+/// multi-param, and 24-bit colour (`38;2;R;G;B` foreground / `48;2;R;G;B`
+/// background / `49` default-bg / `m` or `0m` reset). Everything else
+/// (cursor moves, save/restore, OSC) is ignored. Each input line becomes
+/// one `Line` of `Span`s with the active style baked into each Span.
+pub fn parse_ansi_lines(text: &str) -> Vec<Line<'static>> {
+    let mut out: Vec<Line<'static>> = Vec::new();
+    for raw_line in text.split('\n') {
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        let mut style = Style::default();
+        let bytes = raw_line.as_bytes();
+        let mut i = 0;
+        let mut buf = String::new();
+        while i < bytes.len() {
+            // ESC [ ... letter
+            if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+                if !buf.is_empty() {
+                    spans.push(Span::styled(std::mem::take(&mut buf), style));
+                }
+                // Find the terminating letter (0x40..=0x7e).
+                let start = i + 2;
+                let mut end = start;
+                while end < bytes.len() && !(0x40..=0x7e).contains(&bytes[end]) {
+                    end += 1;
+                }
+                if end >= bytes.len() {
+                    // malformed; bail on this line.
+                    i = bytes.len();
+                    break;
+                }
+                let final_byte = bytes[end];
+                let params: &str = std::str::from_utf8(&bytes[start..end]).unwrap_or("");
+                if final_byte == b'm' {
+                    apply_sgr(&mut style, params);
+                }
+                i = end + 1;
+                continue;
+            }
+            // Decode one UTF-8 codepoint and append.
+            let ch_len = utf8_char_len(bytes[i]);
+            let end = (i + ch_len).min(bytes.len());
+            if let Ok(s) = std::str::from_utf8(&bytes[i..end]) {
+                buf.push_str(s);
+            }
+            i = end;
+        }
+        if !buf.is_empty() {
+            spans.push(Span::styled(buf, style));
+        }
+        out.push(Line::from(spans));
+    }
+    out
+}
+
+fn utf8_char_len(b: u8) -> usize {
+    if b < 0x80 { 1 }
+    else if b < 0xc0 { 1 } // continuation byte (shouldn't happen at start; treat as 1)
+    else if b < 0xe0 { 2 }
+    else if b < 0xf0 { 3 }
+    else { 4 }
+}
+
+fn apply_sgr(style: &mut Style, params: &str) {
+    // Empty `\x1b[m` is the same as `\x1b[0m` — reset.
+    if params.is_empty() {
+        *style = Style::default();
+        return;
+    }
+    let parts: Vec<&str> = params.split(';').collect();
+    let mut idx = 0;
+    while idx < parts.len() {
+        let Ok(n) = parts[idx].parse::<u16>() else {
+            idx += 1;
+            continue;
+        };
+        match n {
+            0 => *style = Style::default(),
+            1 => *style = style.add_modifier(Modifier::BOLD),
+            2 => *style = style.add_modifier(Modifier::DIM),
+            3 => *style = style.add_modifier(Modifier::ITALIC),
+            4 => *style = style.add_modifier(Modifier::UNDERLINED),
+            22 => *style = style.remove_modifier(Modifier::BOLD | Modifier::DIM),
+            38 => {
+                // 38;2;R;G;B  → RGB foreground
+                if parts.get(idx + 1) == Some(&"2") && idx + 4 < parts.len() {
+                    if let (Ok(r), Ok(g), Ok(b)) = (
+                        parts[idx + 2].parse::<u8>(),
+                        parts[idx + 3].parse::<u8>(),
+                        parts[idx + 4].parse::<u8>(),
+                    ) {
+                        *style = style.fg(Color::Rgb(r, g, b));
+                    }
+                    idx += 4;
+                }
+            }
+            48 => {
+                if parts.get(idx + 1) == Some(&"2") && idx + 4 < parts.len() {
+                    if let (Ok(r), Ok(g), Ok(b)) = (
+                        parts[idx + 2].parse::<u8>(),
+                        parts[idx + 3].parse::<u8>(),
+                        parts[idx + 4].parse::<u8>(),
+                    ) {
+                        *style = style.bg(Color::Rgb(r, g, b));
+                    }
+                    idx += 4;
+                }
+            }
+            39 => *style = style.fg(Color::Reset),
+            49 => *style = style.bg(Color::Reset),
+            30..=37 => *style = style.fg(basic_color(n - 30)),
+            40..=47 => *style = style.bg(basic_color(n - 40)),
+            90..=97 => *style = style.fg(bright_color(n - 90)),
+            100..=107 => *style = style.bg(bright_color(n - 100)),
+            _ => {}
+        }
+        idx += 1;
+    }
+}
+
+fn basic_color(c: u16) -> Color {
+    match c {
+        0 => Color::Black, 1 => Color::Red, 2 => Color::Green, 3 => Color::Yellow,
+        4 => Color::Blue,  5 => Color::Magenta, 6 => Color::Cyan, 7 => Color::Gray,
+        _ => Color::Reset,
+    }
+}
+fn bright_color(c: u16) -> Color {
+    match c {
+        0 => Color::DarkGray, 1 => Color::LightRed, 2 => Color::LightGreen, 3 => Color::LightYellow,
+        4 => Color::LightBlue, 5 => Color::LightMagenta, 6 => Color::LightCyan, 7 => Color::White,
+        _ => Color::Reset,
+    }
 }
