@@ -975,6 +975,25 @@ impl RenderModel {
                     .get("status")
                     .and_then(|v| v.as_str())
                     .and_then(ToolStatus::from_str);
+                if !self.tools.contains_key(&tool_id) {
+                    // Adapter bug: a Finished event arrived for a tool we
+                    // never saw Started for. The matching row (if any) will
+                    // be left spinning. Behind CAMOUFLAGE_DEBUG_TOOLS so it
+                    // doesn't spam normal runs.
+                    if std::env::var_os("CAMOUFLAGE_DEBUG_TOOLS").is_some() {
+                        eprintln!(
+                            "[camouflage] ToolExecutionFinished for unknown tool_id={} (seq={})",
+                            tool_id, ev.seq
+                        );
+                    }
+                } else if self.tools.get(&tool_id).map(|s| s.finished).unwrap_or(false) {
+                    if std::env::var_os("CAMOUFLAGE_DEBUG_TOOLS").is_some() {
+                        eprintln!(
+                            "[camouflage] duplicate ToolExecutionFinished tool_id={} (seq={})",
+                            tool_id, ev.seq
+                        );
+                    }
+                }
                 if let Some(state) = self.tools.get_mut(&tool_id) {
                     state.finished = true;
                     state.exit_code = exit;
