@@ -83,6 +83,32 @@ pub fn spawn_key_reader(tty_fd: RawFd) -> mpsc::Receiver<Key> {
         let mut parser = EscParser::new();
         let mut buf = [0u8; 64];
         loop {
+            // poll() with a short timeout lets us flush a lone ESC that
+            // would otherwise sit in State::Esc waiting for a follow-up
+            // byte (without this, pressing Escape alone has no visible
+            // effect until the next key is pressed). 50 ms is well over
+            // any real terminal sequence's inter-byte gap.
+            let mut pfd = libc::pollfd {
+                fd: tty_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let pr = unsafe { libc::poll(&mut pfd, 1, 50) };
+            if pr < 0 {
+                let err = io::Error::last_os_error();
+                if err.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                break;
+            }
+            if pr == 0 {
+                if let Some(k) = parser.flush_idle() {
+                    if tx.send(k).is_err() {
+                        return;
+                    }
+                }
+                continue;
+            }
             let n = unsafe { libc::read(tty_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
             if n <= 0 {
                 break;
@@ -140,6 +166,19 @@ impl EscParser {
         }
     }
 
+    /// Called when the reader has been idle for long enough that any
+    /// pending escape sequence would already have arrived. Flushes a
+    /// lone ESC sitting in State::Esc as Key::Esc so that pressing
+    /// Escape alone takes effect without waiting for the next keypress.
+    fn flush_idle(&mut self) -> Option<Key> {
+        if matches!(self.state, State::Esc) {
+            self.state = State::Ground;
+            Some(Key::Esc)
+        } else {
+            None
+        }
+    }
+
     fn feed(&mut self, b: u8) -> Option<Key> {
         match self.state {
             State::Ground => match b {
@@ -173,6 +212,11 @@ impl EscParser {
                 // ESC d — Option+D / Alt+D, "kill word forward". Mirror of
                 // Ctrl+W (which kills the word backward).
                 b'd' => { self.state = State::Ground; Some(Key::MetaD) }
+                // ESC DEL / ESC BS — Option+Backspace on macOS (Ghostty,
+                // iTerm, Terminal.app all encode it this way). Map to the
+                // same action as Ctrl+W so users get "delete word back"
+                // without having to remap the terminal.
+                0x7f | 0x08 => { self.state = State::Ground; Some(Key::CtrlW) }
                 0x1b => None,
                 _ => {
                     // Lone ESC (or Alt-X we don't handle); treat as Esc.
@@ -212,9 +256,20 @@ impl EscParser {
                             if let Some(rest) = s.strip_prefix('<') {
                                 let parts: Vec<&str> = rest.split(';').collect();
                                 if let Some(btn) = parts.first().and_then(|b| b.parse::<u32>().ok()) {
-                                    match btn {
-                                        64 => Some(Key::ScrollUp),
-                                        65 => Some(Key::ScrollDown),
+                                    // Ghostty/iTerm/Terminal.app forward
+                                    // the raw wheel direction in SGR mouse
+                                    // mode — they do NOT apply macOS's
+                                    // "Natural" scrolling inversion that
+                                    // GUI apps get for free. If the user
+                                    // expects natural scrolling we flip
+                                    // the mapping so two-fingers-down on
+                                    // the trackpad reveals older content
+                                    // (which is what the OS preference
+                                    // means). See settings::natural_scroll.
+                                    let natural = crate::settings::natural_scroll();
+                                    match (btn, natural) {
+                                        (64, false) | (65, true) => Some(Key::ScrollUp),
+                                        (65, false) | (64, true) => Some(Key::ScrollDown),
                                         _ => None,
                                     }
                                 } else {
@@ -359,6 +414,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_option_backspace_emits_ctrl_w() {
+        // Option+Backspace on Ghostty / iTerm / Terminal.app sends ESC 0x7f
+        // (and some terminals send ESC 0x08). Both should map to Ctrl+W so
+        // the input layer's existing word-back-delete handler fires.
+        let mut p = EscParser::new();
+        let keys = feed_all(&mut p, b"\x1b\x7f");
+        assert!(matches!(keys.as_slice(), [Key::CtrlW]), "got {:?}", keys);
+        let mut p = EscParser::new();
+        let keys = feed_all(&mut p, b"\x1b\x08");
+        assert!(matches!(keys.as_slice(), [Key::CtrlW]), "got {:?}", keys);
+    }
+
+    #[test]
     fn parse_printable_and_enter() {
         let mut p = EscParser::new();
         let keys = feed_all(&mut p, b"hi\r");
@@ -408,6 +476,12 @@ mod tests {
 
     #[test]
     fn parse_sgr_mouse_scroll() {
+        // Force the non-natural mapping so the test is independent of
+        // host OS preferences. (Tests share the OnceLock-backed flag, so
+        // we set the env var before its first read on this thread.)
+        // SAFETY: set_var is unsafe in Rust 2024+; this is a single-threaded
+        // test, no other code is reading env vars concurrently.
+        unsafe { std::env::set_var("CAMOUFLAGE_NATURAL_SCROLL", "0"); }
         let mut p = EscParser::new();
         // SGR mouse: ESC [ < 64 ; 10 ; 5 M = wheel up at (10,5).
         let keys = feed_all(&mut p, b"\x1b[<64;10;5M\x1b[<65;10;5M");

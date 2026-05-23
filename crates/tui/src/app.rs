@@ -161,6 +161,12 @@ pub async fn run(cfg: Config) -> Result<()> {
     let mut permission_feedback: String = String::new();
     // v0.4.5: slash-picker selection cursor (within the *filtered* list).
     let mut slash_picker_index: usize = 0;
+    // Sub-picker for slash-command discrete arguments. When Enter is
+    // pressed on a top-level command whose args_hint parses as a
+    // pipe-separated set of bare options (e.g. /mode → "edit|plan|auto"),
+    // we drop into a second-level picker for the user to choose one
+    // without typing. (parent_name, options, optional, selected_index).
+    let mut slash_sub_state: Option<(String, Vec<String>, bool, usize)> = None;
     // v0.4.5: @-mention picker selection cursor.
     let mut mention_picker_index: usize = 0;
     // v0.4.6: per-session input history. Each submitted user prompt is
@@ -383,6 +389,87 @@ pub async fn run(cfg: Config) -> Result<()> {
     loop {
         // Non-blocking poll for keys before each frame.
         while let Ok(key) = key_rx.try_recv() {
+            // Sub-picker short-circuit: when the user picked a top-level
+            // slash command whose args parse as a discrete option list,
+            // we display a second picker and consume Up/Down/Enter/Esc
+            // here so they can choose without typing.
+            if let Some(state) = slash_sub_state.clone() {
+                use crate::tty::Key;
+                let (parent, options, optional, idx) = state;
+                let total = options.len() + if optional { 1 } else { 0 };
+                match key {
+                    Key::Up => {
+                        let new = if idx == 0 { total.saturating_sub(1) } else { idx - 1 };
+                        slash_sub_state = Some((parent, options, optional, new));
+                        model.mark_dirty();
+                        continue;
+                    }
+                    Key::Down => {
+                        let new = if total == 0 { 0 } else { (idx + 1) % total };
+                        slash_sub_state = Some((parent, options, optional, new));
+                        model.mark_dirty();
+                        continue;
+                    }
+                    Key::Esc | Key::Backspace | Key::Left => {
+                        // Back to the top-level picker. input_buf still
+                        // holds "/parent" so the parent picker filters
+                        // sensibly when the overlay re-renders. Left is
+                        // included so the user's natural "go back" key on
+                        // a nested list maps to the obvious thing.
+                        slash_sub_state = None;
+                        model.mark_dirty();
+                        continue;
+                    }
+                    Key::Enter => {
+                        let text = if optional && idx == options.len() {
+                            format!("/{}", parent)
+                        } else {
+                            format!("/{} {}", parent, options[idx])
+                        };
+                        slash_sub_state = None;
+                        input_buf.clear();
+                        input_cursor = 0;
+                        if input_history.last().map(|s| s.as_str()) != Some(text.as_str()) {
+                            input_history.push(text.clone());
+                            if input_history.len() > 200 {
+                                input_history.remove(0);
+                            }
+                        }
+                        input_history_index = None;
+                        if let Some(tx) = outbound_tx.as_ref() {
+                            let ev = Event {
+                                id: Uuid::new_v4(),
+                                session_id,
+                                seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                                timestamp_ms: now_ms(),
+                                schema_version: SCHEMA_VERSION,
+                                event_type: EventType::UserInputSubmitted,
+                                payload: serde_json::json!({"text": text}),
+                            };
+                            let _ = tx.send(OutgoingEvent(ev)).await;
+                        } else {
+                            let ev = Event {
+                                id: Uuid::new_v4(),
+                                session_id,
+                                seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                                timestamp_ms: now_ms(),
+                                schema_version: SCHEMA_VERSION,
+                                event_type: EventType::UserMessageCreated,
+                                payload: serde_json::json!({"text": text}),
+                            };
+                            let _ = persist_tx.send(ev).await;
+                        }
+                        model.mark_dirty();
+                        continue;
+                    }
+                    _ => {
+                        // Any other keypress: drop sub-picker and let the
+                        // normal handler take over (so manual typing of an
+                        // argument still works as an escape hatch).
+                        slash_sub_state = None;
+                    }
+                }
+            }
             // Slash-picker short-circuit: when the input starts with `/` and
             // the host has registered slash commands, ↑/↓/Enter drive the
             // picker instead of falling through to the normal handler.
@@ -417,9 +504,70 @@ pub async fn run(cfg: Config) -> Result<()> {
                         }
                         crate::tty::Key::Enter => {
                             let idx = slash_picker_index.min(matches.len() - 1);
-                            input_buf = format!("/{} ", matches[idx].name);
-                            input_cursor = input_buf.chars().count();
+                            let chosen = matches[idx];
+                            let name = chosen.name.clone();
                             slash_picker_index = 0;
+                            // Decide what to do based on the args_hint:
+                            //  - no hint           → submit "/name" directly.
+                            //  - discrete options  → drop into the sub-picker.
+                            //  - free-text args    → fall back to inserting
+                            //    "/name " into the buffer so the user can
+                            //    type the argument (preserves the manual
+                            //    escape hatch the user explicitly asked for).
+                            let parsed = chosen
+                                .args_hint
+                                .as_deref()
+                                .and_then(parse_discrete_args);
+                            match (chosen.args_hint.as_deref(), parsed) {
+                                (None, _) => {
+                                    let text = format!("/{}", name);
+                                    input_buf.clear();
+                                    input_cursor = 0;
+                                    if input_history.last().map(|s| s.as_str())
+                                        != Some(text.as_str())
+                                    {
+                                        input_history.push(text.clone());
+                                        if input_history.len() > 200 {
+                                            input_history.remove(0);
+                                        }
+                                    }
+                                    input_history_index = None;
+                                    if let Some(tx) = outbound_tx.as_ref() {
+                                        let ev = Event {
+                                            id: Uuid::new_v4(),
+                                            session_id,
+                                            seq: seq_counter
+                                                .fetch_add(1, Ordering::Relaxed),
+                                            timestamp_ms: now_ms(),
+                                            schema_version: SCHEMA_VERSION,
+                                            event_type: EventType::UserInputSubmitted,
+                                            payload: serde_json::json!({"text": text}),
+                                        };
+                                        let _ = tx.send(OutgoingEvent(ev)).await;
+                                    } else {
+                                        let ev = Event {
+                                            id: Uuid::new_v4(),
+                                            session_id,
+                                            seq: seq_counter
+                                                .fetch_add(1, Ordering::Relaxed),
+                                            timestamp_ms: now_ms(),
+                                            schema_version: SCHEMA_VERSION,
+                                            event_type: EventType::UserMessageCreated,
+                                            payload: serde_json::json!({"text": text}),
+                                        };
+                                        let _ = persist_tx.send(ev).await;
+                                    }
+                                }
+                                (Some(_), Some((options, optional))) => {
+                                    input_buf = format!("/{}", name);
+                                    input_cursor = input_buf.chars().count();
+                                    slash_sub_state = Some((name, options, optional, 0));
+                                }
+                                (Some(_), None) => {
+                                    input_buf = format!("/{} ", name);
+                                    input_cursor = input_buf.chars().count();
+                                }
+                            }
                             model.mark_dirty();
                             continue;
                         }
@@ -949,6 +1097,8 @@ pub async fn run(cfg: Config) -> Result<()> {
                         };
                         let _ = tx.send(OutgoingEvent(ev)).await;
                     }
+                    // Optimistic local cancel — mirrors what Esc does.
+                    model.local_cancel_all(now_ms());
                     // Standalone mode (no host): the first press is now a
                     // no-op apart from arming the double-press window. The
                     // second press lands above. This is a small UX shift
@@ -979,6 +1129,15 @@ pub async fn run(cfg: Config) -> Result<()> {
                             event_type: EventType::UserInputSubmitted,
                             payload: serde_json::json!({"text": text}),
                         };
+                        if crate::scrolllog::event_enabled() {
+                            crate::scrolllog::log_event(serde_json::json!({
+                                "dir": "out",
+                                "event_type": "UserInputSubmitted",
+                                "seq": ev.seq,
+                                "text_len": text.len(),
+                                "text_preview": text.chars().take(80).collect::<String>(),
+                            }));
+                        }
                         let _ = tx.send(OutgoingEvent(ev)).await;
                     } else {
                         // Standalone mode: synthesise a local UserMessageCreated
@@ -996,14 +1155,41 @@ pub async fn run(cfg: Config) -> Result<()> {
                     }
                 }
                 input::Action::ScrollUp(n) => {
-                    viewport.scroll_up(n as i64, model.combined_len() as i64);
+                    let before = viewport.scroll_offset;
+                    let before_frozen = viewport.frozen_visual_bottom;
+                    viewport.scroll_up(n as i64);
+                    crate::scrolllog::log_json(serde_json::json!({
+                        "ev": "scroll_up",
+                        "n": n,
+                        "last_total_visual": viewport.last_total_visual,
+                        "viewport_h": viewport.viewport_height,
+                        "offset_before": before,
+                        "offset_after": viewport.scroll_offset,
+                        "frozen_before": before_frozen,
+                        "frozen_after": viewport.frozen_visual_bottom,
+                        "auto_follow": viewport.auto_follow,
+                    }));
                     model.mark_dirty();
                 }
                 input::Action::ScrollDown(n) => {
+                    let before = viewport.scroll_offset;
                     viewport.scroll_down(n as i64);
+                    crate::scrolllog::log_json(serde_json::json!({
+                        "ev": "scroll_down",
+                        "n": n,
+                        "viewport_h": viewport.viewport_height,
+                        "offset_before": before,
+                        "offset_after": viewport.scroll_offset,
+                        "frozen_after": viewport.frozen_visual_bottom,
+                        "auto_follow": viewport.auto_follow,
+                    }));
                     model.mark_dirty();
                 }
                 input::Action::JumpToLatest => {
+                    crate::scrolllog::log_json(serde_json::json!({
+                        "ev": "jump_to_latest",
+                        "offset_before": viewport.scroll_offset,
+                    }));
                     viewport.jump_to_latest();
                     model.clear_history();
                     model.mark_dirty();
@@ -1025,6 +1211,12 @@ pub async fn run(cfg: Config) -> Result<()> {
                         };
                         let _ = tx.send(OutgoingEvent(ev)).await;
                     }
+                    // Optimistic local cancel so the user gets immediate
+                    // visual feedback: stop background-task spinners and
+                    // flip the status phase out of "thinking". The host's
+                    // later events (BackgroundTaskUpdate / StatusUpdate)
+                    // can still overwrite either of these.
+                    model.local_cancel_all(now_ms());
                     status = "canceled".into();
                     model.mark_dirty();
                 }
@@ -1396,8 +1588,14 @@ pub async fn run(cfg: Config) -> Result<()> {
         if !history_inflight {
             if let Some(earliest_visible) = model.earliest_visible_seq() {
                 if earliest_visible > 0 {
-                    let near_top = (viewport.scroll_offset + viewport.viewport_height as i64)
-                        >= model.combined_len() as i64 - 8;
+                    // "Near the top" in the visual-line scroll model: the
+                    // user has scrolled most of the way up the frozen
+                    // window (within viewport_h of the top).
+                    let near_top = viewport.frozen_visual_bottom.is_some()
+                        && (viewport.scroll_offset
+                            >= viewport.last_total_visual
+                                - viewport.viewport_height as i64
+                                - 8);
                     if near_top {
                         let to = earliest_visible;
                         let from = (to - HISTORY_CHUNK).max(0);
@@ -1426,6 +1624,14 @@ pub async fn run(cfg: Config) -> Result<()> {
             }
             Some(ev) = rendered_rx.recv() => {
                 crash_ring_push(&ev);
+                if crate::scrolllog::event_enabled() {
+                    crate::scrolllog::log_event(serde_json::json!({
+                        "dir": "in",
+                        "event_type": format!("{:?}", ev.event_type),
+                        "seq": ev.seq,
+                        "payload_preview": ev.payload.to_string().chars().take(160).collect::<String>(),
+                    }));
+                }
                 model.apply(&ev);
                 total_events += 1;
                 events_since_window += 1;
@@ -1442,6 +1648,14 @@ pub async fn run(cfg: Config) -> Result<()> {
                     match rendered_rx.try_recv() {
                         Ok(ev2) => {
                             crash_ring_push(&ev2);
+                            if crate::scrolllog::event_enabled() {
+                                crate::scrolllog::log_event(serde_json::json!({
+                                    "dir": "in",
+                                    "event_type": format!("{:?}", ev2.event_type),
+                                    "seq": ev2.seq,
+                                    "payload_preview": ev2.payload.to_string().chars().take(160).collect::<String>(),
+                                }));
+                            }
                             model.apply(&ev2);
                             total_events += 1;
                             events_since_window += 1;
@@ -1545,7 +1759,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                     draw::render(
                         &mut terminal,
                         &model,
-                        &viewport,
+                        &mut viewport,
                         &input_buf,
                         input_cursor,
                         &status,
@@ -1560,6 +1774,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                         &permission_feedback,
                         slash_picker_index,
                         mention_picker_index,
+                        slash_sub_state.as_ref(),
                     )?;
                     last_frame_time_us = draw_start.elapsed().as_micros();
                     model.mark_clean();
@@ -1636,6 +1851,10 @@ fn run_search(model: &RenderModel, query: &str) -> Vec<i64> {
 }
 
 /// Adjust the viewport scroll so the row matching `seq` is visible.
+/// scroll_offset is in visual lines now, but we don't have width info
+/// here — so we approximate row-offset-from-bottom as a visual-line
+/// offset (each row contributes >= 1 line). Close enough to put the
+/// target row inside the viewport for search-jump.
 fn scroll_to_seq(viewport: &mut ViewportState, model: &RenderModel, seq: i64) {
     let mut idx_from_bottom: Option<i64> = None;
     let mut cnt: i64 = 0;
@@ -1647,10 +1866,13 @@ fn scroll_to_seq(viewport: &mut ViewportState, model: &RenderModel, seq: i64) {
         cnt += 1;
     }
     if let Some(offset) = idx_from_bottom {
-        let total = model.combined_len() as i64;
-        let target_scroll = offset.saturating_sub(viewport.viewport_height as i64 / 2);
-        viewport.scroll_offset = target_scroll.clamp(0, (total - 1).max(0));
-        viewport.auto_follow = viewport.scroll_offset == 0;
+        if offset == 0 {
+            viewport.jump_to_latest();
+        } else {
+            viewport.frozen_visual_bottom = Some(viewport.last_total_visual);
+            viewport.scroll_offset = (offset - viewport.viewport_height as i64 / 2).max(0);
+            viewport.auto_follow = false;
+        }
     }
 }
 
@@ -1876,4 +2098,72 @@ fn last_mention_partial(buf: &str) -> Option<String> {
         return None;
     }
     Some(tail.to_string())
+}
+
+/// Parse a slash command's `args_hint` into a set of discrete options
+/// for the sub-picker. Returns `Some((options, optional))` only when
+/// the hint is a pipe-separated list of bare words — e.g. `edit|plan|auto`
+/// or `[on|off]`. Hints containing `<placeholder>` (free text required)
+/// or nested brackets are rejected — they need real typing, not a list.
+/// A trailing `...` marker (e.g. `[on|off|search ...]`) is stripped so
+/// the leading discrete tokens still drive a picker.
+pub(crate) fn parse_discrete_args(hint: &str) -> Option<(Vec<String>, bool)> {
+    let trimmed = hint.trim();
+    let (inner, optional) = if let Some(stripped) = trimmed
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+    {
+        (stripped, true)
+    } else {
+        (trimmed, false)
+    };
+    if inner.is_empty() {
+        return None;
+    }
+    // Free-text placeholders and nested optional groups can't be picked.
+    if inner.contains('<') || inner.contains('[') {
+        return None;
+    }
+    let inner = inner.trim_end_matches("...").trim();
+    let opts: Vec<String> = inner
+        .split('|')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if opts.is_empty() {
+        return None;
+    }
+    Some((opts, optional))
+}
+
+#[cfg(test)]
+mod arg_parser_tests {
+    use super::parse_discrete_args;
+    #[test]
+    fn bare_pipes() {
+        assert_eq!(
+            parse_discrete_args("edit|plan|auto"),
+            Some((vec!["edit".into(), "plan".into(), "auto".into()], false))
+        );
+    }
+    #[test]
+    fn optional_bracketed() {
+        assert_eq!(
+            parse_discrete_args("[on|off]"),
+            Some((vec!["on".into(), "off".into()], true))
+        );
+    }
+    #[test]
+    fn trailing_dots() {
+        assert_eq!(
+            parse_discrete_args("[on|off|clear|search ...]"),
+            Some((vec!["on".into(), "off".into(), "clear".into(), "search".into()], true))
+        );
+    }
+    #[test]
+    fn rejects_placeholders() {
+        assert!(parse_discrete_args("<prompt>").is_none());
+        assert!(parse_discrete_args("[<name>]").is_none());
+        assert!(parse_discrete_args("[send] [note]").is_none());
+    }
 }

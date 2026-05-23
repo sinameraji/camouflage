@@ -696,6 +696,35 @@ impl RenderModel {
         });
     }
 
+    /// Optimistic local cancel applied when the user hits Esc / Ctrl+C
+    /// before the host echoes back terminal events. Flips every running
+    /// background task to `Error` (so the spinner stops) and resets the
+    /// status `phase` segment to `idle`. The host's authoritative
+    /// updates can still override either of these later.
+    pub fn local_cancel_all(&mut self, now_ms: i64) {
+        let mut changed = false;
+        for t in self.background_tasks.iter_mut() {
+            if matches!(t.state, BackgroundTaskState::Running) {
+                t.state = BackgroundTaskState::Error;
+                t.finished_at_ms = Some(now_ms);
+                changed = true;
+            }
+        }
+        if self
+            .status_segments
+            .get("phase")
+            .map(|s| s.as_str())
+            != Some("idle")
+        {
+            self.status_segments
+                .insert("phase".to_string(), "idle".to_string());
+            changed = true;
+        }
+        if changed {
+            self.dirty = true;
+        }
+    }
+
     /// Called by the TUI when the user has answered. The pending state clears
     /// regardless of the choice; the outbound PermissionResponse event has
     /// already been emitted to the host by the caller.

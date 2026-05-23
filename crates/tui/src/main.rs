@@ -1,6 +1,8 @@
 mod app;
 mod draw;
 mod input;
+pub(crate) mod scrolllog;
+pub(crate) mod settings;
 mod tty;
 
 use anyhow::{Context, Result};

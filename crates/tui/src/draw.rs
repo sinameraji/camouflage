@@ -8,7 +8,7 @@ use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use ratatui::Terminal;
 use unicode_width::UnicodeWidthStr;
 
@@ -143,7 +143,7 @@ impl RowFilterKind {
 pub fn render<B: Backend>(
     terminal: &mut Terminal<B>,
     model: &RenderModel,
-    viewport: &ViewportState,
+    viewport: &mut ViewportState,
     input_buf: &str,
     input_cursor: usize,
     status: &str,
@@ -158,6 +158,7 @@ pub fn render<B: Backend>(
     permission_feedback: &str,
     slash_picker_index: usize,
     mention_picker_index: usize,
+    slash_sub_state: Option<&(String, Vec<String>, bool, usize)>,
 ) -> Result<()> {
     terminal.draw(|f| {
         let area = f.area();
@@ -198,11 +199,18 @@ pub fn render<B: Backend>(
             let content_lines = ((input_w + inner_w - 1) / inner_w).max(1).min(3) as u16;
             content_lines + 2 // top + bottom border
         };
+        // Layout regions in order: header / transcript / spacer /
+        // task ribbon (optional) / status / input. The 1-row spacer
+        // between the transcript and the status row gives the last
+        // line of streamed content visual breathing room from the
+        // status bar — without it, a fully-filled viewport puts text
+        // flush against the next chunk and reads as "cut off".
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1),
                 Constraint::Min(1),
+                Constraint::Length(1), // bottom spacer
                 Constraint::Length(task_line),
                 Constraint::Length(status_height),
                 Constraint::Length(bottom_height),
@@ -236,48 +244,142 @@ pub fn render<B: Backend>(
         // When the viewport is "frozen" at a scroll position, anchor the
         // window to the snapshot taken at scroll-time so new streaming
         // rows don't push the user's view.
-        let anchor = viewport.frozen_total.unwrap_or(total_rows);
-        let end = (anchor - viewport.scroll_offset)
-            .max(0)
-            .min(total_rows) as usize;
-        // Walk backwards from `end` until we've accumulated enough visual
-        // lines to fill the viewport (plus a small safety margin).
-        let mut rows_taken: Vec<&camouflage_renderer::Row> = Vec::new();
-        let mut visual_so_far: usize = 0;
-        let combined: Vec<&camouflage_renderer::Row> = history
+        // Per-row visual line count (post-wrap). Used both for visual
+        // extent computation and the windowed render below.
+        let visual_count = |r: &camouflage_renderer::Row| -> usize {
+            if r.kind == RowKind::Assistant && r.text.contains('\n') {
+                r.text
+                    .split('\n')
+                    .map(|seg| {
+                        let w = UnicodeWidthStr::width(seg).max(1);
+                        (w + avail - 1) / avail
+                    })
+                    .sum()
+            } else {
+                let w = UnicodeWidthStr::width(r.text.as_str()).max(1);
+                (w + avail - 1) / avail
+            }
+        };
+        let combined_all: Vec<&camouflage_renderer::Row> = history
             .iter()
             .chain(live.iter())
-            .take(end)
             .filter(|r| row_filter.map_or(true, |f| f.matches(r)))
             .collect();
-        for r in combined.iter().rev() {
-            rows_taken.push(*r);
-            // Match row_to_lines: assistant rows split on `\n` into one
-            // visual paragraph per segment; everything else counts as one
-            // logical row that wraps at `avail` width.
-            if r.kind == RowKind::Assistant && r.text.contains('\n') {
-                for seg in r.text.split('\n') {
-                    let w = UnicodeWidthStr::width(seg).max(1);
-                    visual_so_far += (w + avail - 1) / avail;
-                }
-            } else {
-                let text_w = UnicodeWidthStr::width(r.text.as_str()).max(1);
-                visual_so_far += (text_w + avail - 1) / avail;
+        // Total visual lines for the *whole* (filtered) transcript. The
+        // previous implementation truncated to `anchor` rows here, which
+        // is what made the user's scroll "stuck": once frozen at e.g.
+        // row 3 the viewport could never see anything past row 3 even
+        // as 25 more streamed in below.
+        let total_visual_now: i64 = combined_all.iter().map(|r| visual_count(r) as i64).sum();
+        // Push the latest total_visual back to the viewport so the
+        // input loop's `scroll_up` knows where to freeze on the *next*
+        // press, and so input-history fetches can detect "near top".
+        viewport.last_total_visual = total_visual_now;
+        // Effective bottom-of-viewport visual line. With auto-follow,
+        // it's the live tail. While frozen, it's the snapshot minus
+        // however far the user has scrolled up. scroll_offset can go
+        // negative — that's the user scrolling *down past* the frozen
+        // bottom into content that streamed in during the freeze.
+        let effective_bottom: i64 = match viewport.frozen_visual_bottom {
+            Some(f) => (f - viewport.scroll_offset)
+                .max(viewport_h as i64)
+                .min(total_visual_now),
+            None => total_visual_now,
+        };
+        // Unfreeze + resume auto-follow once the view actually catches
+        // up to the live tail (the user has scrolled all the way down
+        // through content that arrived during the freeze). Doing it
+        // here, not in scroll_down, avoids the "page jump" the user
+        // saw: the gap between the frozen bottom and the live tail is
+        // traversed line-by-line, not in a single snap.
+        if let Some(f) = viewport.frozen_visual_bottom {
+            if (f - viewport.scroll_offset) >= total_visual_now {
+                viewport.frozen_visual_bottom = None;
+                viewport.scroll_offset = 0;
+                viewport.auto_follow = true;
             }
-            if visual_so_far >= viewport_h + 4 {
+            // Re-clamp the offset against the actual top of the
+            // transcript so PageUp past the start doesn't pile up
+            // phantom offset (which would force equal-and-opposite
+            // PageDowns to recover).
+            let max_off = (f - viewport_h as i64).max(0);
+            if viewport.scroll_offset > max_off {
+                viewport.scroll_offset = max_off;
+            }
+        }
+        // Walk backward through the row list accumulating visual lines
+        // until we have rows that cover the visible window. We need to
+        // track *where* the bottommost pushed row ends within the
+        // transcript so the Paragraph scroll math doesn't drift.
+        let mut rows_taken_rev: Vec<&camouflage_renderer::Row> = Vec::new();
+        let below_visible = (total_visual_now - effective_bottom).max(0);
+        let needed_above_bottom = viewport_h as i64 + 4;
+        let mut cum_from_end: i64 = 0;
+        // Transcript line index of the bottom of the slice (1-indexed
+        // visual line of the bottommost cell of the bottommost row we
+        // included). Computed when we push the first row.
+        let mut slice_bottom_line: i64 = effective_bottom;
+        for r in combined_all.iter().rev() {
+            let prev_cum = cum_from_end;
+            cum_from_end += visual_count(r) as i64;
+            if cum_from_end > below_visible {
+                if rows_taken_rev.is_empty() {
+                    // Row's bottom transcript line = total_visual - prev_cum.
+                    slice_bottom_line = total_visual_now - prev_cum;
+                }
+                rows_taken_rev.push(*r);
+            }
+            if cum_from_end >= below_visible + needed_above_bottom {
                 break;
             }
         }
+        let mut rows_taken = rows_taken_rev;
         rows_taken.reverse();
         let active_tools = model.tools();
         let lines: Vec<Line> = rows_taken
             .iter()
             .flat_map(|r| row_to_lines(r, frame, active_tools, theme, model.has_active_stream()))
             .collect();
-        // Scroll so the bottom of the wrapped content sits on the bottom of
-        // the chunk. `visual_so_far` is the total visual lines of the slice;
-        // when it exceeds the viewport, skip the leading ones.
-        let scroll_top = visual_so_far.saturating_sub(viewport_h) as u16;
+        // Use ratatui's own wrap engine to count visible lines — our
+        // own visual_count is an approximation (it doesn't perfectly
+        // model prefix glyphs, list markers, code-fence styling, etc.).
+        // The under-count meant `scroll_top` was several lines too low,
+        // so the bottom of the transcript (the most recent assistant
+        // response and the user's "hi") got clipped off the viewport.
+        // line_count(chunks[1].width) returns the exact post-wrap line
+        // total that the Paragraph will produce, so subtracting
+        // viewport_h gives a scroll_top that aligns the bottom of the
+        // content with the bottom of the viewport.
+        let probe = Paragraph::new(lines.clone()).wrap(Wrap { trim: false });
+        let actual_visual = probe.line_count(chunks[1].width) as i64;
+        let lines_below_visible_in_slice = (slice_bottom_line - effective_bottom).max(0);
+        let scroll_top =
+            (actual_visual - viewport_h as i64 - lines_below_visible_in_slice).max(0) as u16;
+        let slice_visual: i64 = rows_taken.iter().map(|r| visual_count(r) as i64).sum();
+        if crate::scrolllog::enabled() {
+            crate::scrolllog::log_json(serde_json::json!({
+                "ev": "render",
+                "frame": frame,
+                "scroll_offset": viewport.scroll_offset,
+                "frozen_visual_bottom": viewport.frozen_visual_bottom,
+                "auto_follow": viewport.auto_follow,
+                "viewport_h": viewport_h,
+                "total_rows": total_rows,
+                "total_visual_now": total_visual_now,
+                "effective_bottom": effective_bottom,
+                "below_visible": below_visible,
+                "rows_taken": rows_taken.len(),
+                "slice_visual": slice_visual,
+                "actual_visual": actual_visual,
+                "slice_bottom_line": slice_bottom_line,
+                "lines_below_visible_in_slice": lines_below_visible_in_slice,
+                "scroll_top": scroll_top,
+                "transcript_width": transcript_width,
+                "avail": avail,
+                "first_row_text_prefix": rows_taken.first().map(|r| r.text.chars().take(40).collect::<String>()),
+                "last_row_text_prefix": rows_taken.last().map(|r| r.text.chars().take(40).collect::<String>()),
+            }));
+        }
         let transcript = Paragraph::new(lines)
             .wrap(Wrap { trim: false })
             .scroll((scroll_top, 0));
@@ -311,6 +413,29 @@ pub fn render<B: Backend>(
             f.render_widget(panel, split[1]);
         } else {
             f.render_widget(transcript, chunks[1]);
+        }
+
+        // Vertical scrollbar pinned to the right edge of the transcript
+        // chunk. The position is in visual lines: top = 0, bottom =
+        // `total_visual_now - viewport_h`. While auto-following the
+        // live tail the thumb sits at the bottom. We skip rendering it
+        // entirely if the transcript fits without scrolling (no point
+        // showing a full-length thumb).
+        if total_visual_now > viewport_h as i64 && inspector.is_none() {
+            let scrollable_extent = (total_visual_now - viewport_h as i64).max(1) as usize;
+            let position = (total_visual_now - effective_bottom).max(0) as usize;
+            // Invert: position should be 0 at the top (oldest content
+            // visible) and at max when bottom (latest visible).
+            let bar_pos = scrollable_extent.saturating_sub(position);
+            let mut state = ScrollbarState::new(scrollable_extent)
+                .position(bar_pos)
+                .viewport_content_length(viewport_h);
+            let bar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .style(Style::default().fg(Color::DarkGray))
+                .thumb_style(Style::default().fg(Color::Cyan));
+            f.render_stateful_widget(bar, chunks[1], &mut state);
         }
 
         // Status line — multi-segment, host-driven. Convention: known keys
@@ -428,14 +553,14 @@ pub fn render<B: Backend>(
                 ribbon_spans.push(Span::styled(label, label_style));
             }
             let ribbon = Paragraph::new(Line::from(ribbon_spans));
-            f.render_widget(ribbon, chunks[2]);
+            f.render_widget(ribbon, chunks[3]);
         }
 
         let status_line = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: false });
-        f.render_widget(status_line, chunks[3]);
+        f.render_widget(status_line, chunks[4]);
 
         // Bottom box: search prompt > permission widget > input prompt.
-        let input_chunk = chunks[4];
+        let input_chunk = chunks[5];
         if let Some(sv) = search.as_ref() {
             let widget = Paragraph::new(Line::from(vec![
                 Span::styled("/", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
@@ -536,27 +661,55 @@ pub fn render<B: Backend>(
                 );
             f.render_widget(widget, input_chunk);
         } else {
+            // Cursor + scroll math. The input box has a fixed visible
+            // height (3 content lines max — see bottom_height above), so
+            // long voice-dictated prompts wrap past the bottom of the box.
+            // We compute the total wrapped line count and, when it exceeds
+            // what fits, scroll the Paragraph so the cursor's line is the
+            // bottom visible line — and show a "+N lines · M chars" badge
+            // in the title so the user knows nothing was truncated.
+            let prompt_w: u16 = 2; // "› "
+            let typed_before_cursor: String = input_buf.chars().take(input_cursor).collect();
+            let cursor_col_advance = UnicodeWidthStr::width(typed_before_cursor.as_str()) as u16;
+            let total_w = UnicodeWidthStr::width(input_buf) as u16 + prompt_w;
+            let inner_w = input_chunk.width.saturating_sub(2).max(1);
+            let total_x = 1u16 + prompt_w + cursor_col_advance; // 1 = left border
+            let cursor_line = (total_x.saturating_sub(1)) / inner_w; // 0-indexed visual line
+            let total_lines = if total_w == 0 { 1 } else { (total_w + inner_w - 1) / inner_w }.max(1);
+            let visible_lines = input_chunk.height.saturating_sub(2).max(1);
+            // Scroll so the cursor stays in view; clamp so we never scroll
+            // past the end of the buffer.
+            let scroll_off: u16 = cursor_line
+                .saturating_sub(visible_lines.saturating_sub(1))
+                .min(total_lines.saturating_sub(visible_lines));
+            let title: String = if total_lines > visible_lines {
+                let chars = input_buf.chars().count();
+                format!(
+                    "input · {} chars · {} lines (full text captured)",
+                    chars, total_lines,
+                )
+            } else {
+                "input".to_string()
+            };
+            let title_style = if total_lines > visible_lines {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            };
             let input = Paragraph::new(Line::from(vec![
                 Span::styled("› ", Style::default().fg(Color::Cyan)),
                 Span::raw(input_buf),
             ]))
             .wrap(Wrap { trim: false })
-            .block(Block::default().borders(Borders::ALL).title("input"));
+            .scroll((scroll_off, 0))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(Span::styled(title, title_style)),
+            );
             f.render_widget(input, input_chunk);
-            // Show the terminal cursor at the insertion point so the user
-            // can SEE where typing will land. Cursor position math: box
-            // top border (+1), prompt "› " is 2 cells, then char cursor
-            // mapped to visual width. For multi-line wrap we fall through
-            // to whatever ratatui draws — best-effort for now.
-            let prompt_w: u16 = 2; // "› "
-            let typed_before_cursor: String = input_buf.chars().take(input_cursor).collect();
-            let cursor_col_advance = UnicodeWidthStr::width(typed_before_cursor.as_str()) as u16;
-            let inner_w = input_chunk.width.saturating_sub(2).max(1);
-            let total_x = 1u16 + prompt_w + cursor_col_advance; // 1 = left border
-            // Wrap into multiple visual lines when the prompt overflows.
-            let cursor_line = total_x / inner_w;
             let cursor_x = input_chunk.x + (total_x % inner_w);
-            let cursor_y = input_chunk.y + 1 + cursor_line;
+            let cursor_y = input_chunk.y + 1 + cursor_line.saturating_sub(scroll_off);
             f.set_cursor(cursor_x, cursor_y);
         }
         if help_open {
@@ -568,7 +721,11 @@ pub fn render<B: Backend>(
         if tool_output_open {
             draw_tool_output_overlay(f, area, model);
         }
-        if input_buf.starts_with('/') && !model.slash_commands().is_empty()
+        if let Some(sub) = slash_sub_state {
+            if model.pending_permission().is_none() && search.is_none() {
+                draw_slash_sub_picker_overlay(f, area, sub);
+            }
+        } else if input_buf.starts_with('/') && !model.slash_commands().is_empty()
             && model.pending_permission().is_none()
             && search.is_none()
         {
@@ -611,6 +768,14 @@ pub fn render<B: Backend>(
         // display-only modal (Form is interactive).
         if let Some(form) = model.active_form() {
             draw_form_overlay(f, area, form, theme);
+        }
+        // Optional: dump literal cell contents to disk so we can review
+        // what actually hit the screen at this frame. Gated by env var
+        // since the output is large.
+        if crate::scrolllog::screen_enabled() {
+            let buf = f.buffer_mut();
+            crate::scrolllog::log_screen(area, buf, "full", frame);
+            crate::scrolllog::log_screen(chunks[1], buf, "transcript", frame);
         }
     })?;
     Ok(())
@@ -861,6 +1026,75 @@ fn draw_slash_picker_overlay(
                 .title(" slash commands  ↑/↓ wrap  Enter insert ")
                 .border_style(Style::default().fg(Color::Cyan)),
         );
+    f.render_widget(widget, overlay);
+}
+
+fn draw_slash_sub_picker_overlay(
+    f: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    state: &(String, Vec<String>, bool, usize),
+) {
+    let (parent, options, optional, idx) = state;
+    // Include a "(no arg)" trailing entry when the argument is optional.
+    let mut entries: Vec<String> = options.clone();
+    if *optional {
+        entries.push("(no argument)".to_string());
+    }
+    if entries.is_empty() {
+        return;
+    }
+    let visible = entries.len().min(8);
+    let w: u16 = 50;
+    let h: u16 = (visible as u16) + 2;
+    if area.width < w + 2 || area.height < h + 6 {
+        return;
+    }
+    let bottom_height: u16 = 5;
+    let x = area.x + 2;
+    let y = area
+        .y
+        .saturating_add(area.height)
+        .saturating_sub(bottom_height)
+        .saturating_sub(h);
+    let overlay = ratatui::layout::Rect { x, y, width: w, height: h };
+    f.render_widget(Clear, overlay);
+
+    let dim = Style::default().fg(Color::DarkGray);
+    let sel = Style::default()
+        .fg(Color::Black)
+        .bg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let plain = Style::default().fg(Color::White);
+
+    let sel_idx = (*idx).min(entries.len() - 1);
+    let scroll_off = sel_idx.saturating_sub(visible - 1);
+    let end = (scroll_off + visible).min(entries.len());
+    let lines: Vec<Line> = entries[scroll_off..end]
+        .iter()
+        .enumerate()
+        .map(|(i, label)| {
+            let absolute_i = scroll_off + i;
+            let style = if absolute_i == sel_idx { sel } else { plain };
+            let preview = if absolute_i + 1 > options.len() {
+                // sentinel for the optional "no argument" entry
+                format!("   /{}", parent)
+            } else {
+                format!("   /{} {}", parent, label)
+            };
+            Line::from(vec![
+                Span::styled(format!(" {}", label), style),
+                Span::styled(preview, dim),
+            ])
+        })
+        .collect();
+
+    let title = format!(" /{} — pick · ↑/↓ · Enter submit · ←/Esc back ", parent);
+    let widget = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(Style::default().fg(Color::Cyan)),
+    );
     f.render_widget(widget, overlay);
 }
 
