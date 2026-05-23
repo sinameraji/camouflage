@@ -180,6 +180,12 @@ pub async fn run(cfg: Config) -> Result<()> {
     // a second Ctrl+C within CTRL_C_DOUBLE_PRESS_WINDOW disarms and
     // shuts the app down.
     let mut last_ctrl_c: Option<std::time::Instant> = None;
+    // Mouse-capture toggle (Shift+S). Default ON because the wheel-scroll
+    // UX is more important than text selection — but users on terminals
+    // without Option/Shift-click bypass need a way to turn it off so they
+    // can copy snippets with their mouse. Initialised to true to match
+    // setup_terminal()'s emitted sequence.
+    let mut mouse_capture_on = true;
     const CTRL_C_DOUBLE_PRESS_WINDOW: std::time::Duration =
         std::time::Duration::from_millis(1500);
 
@@ -1457,6 +1463,27 @@ pub async fn run(cfg: Config) -> Result<()> {
                 }
                 input::Action::ToggleToolOutput => {
                     tool_output_open = !tool_output_open;
+                    model.mark_dirty();
+                }
+                input::Action::ToggleMouseCapture => {
+                    // Write the SGR mouse enable/disable sequences directly
+                    // to stdout so the terminal flips reporting on next
+                    // poll. We keep bracketed paste alone (handled
+                    // separately at setup/teardown).
+                    use std::io::Write;
+                    mouse_capture_on = !mouse_capture_on;
+                    let seq: &[u8] = if mouse_capture_on {
+                        b"\x1b[?1000h\x1b[?1006h"
+                    } else {
+                        b"\x1b[?1006l\x1b[?1000l"
+                    };
+                    let _ = terminal.backend_mut().write_all(seq);
+                    let _ = terminal.backend_mut().flush();
+                    status = if mouse_capture_on {
+                        "mouse capture ON (wheel scrolls)".into()
+                    } else {
+                        "mouse capture OFF (drag to select; press Shift+S to re-enable)".into()
+                    };
                     model.mark_dirty();
                 }
                 input::Action::InspectorCursorUp => {

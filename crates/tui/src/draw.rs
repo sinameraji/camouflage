@@ -855,6 +855,7 @@ fn draw_help_overlay(f: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
         kv("M", "toggle live-metrics overlay", key, dim),
         kv("T", "cycle theme", key, dim),
         kv("X", "tool-output overlay (most recent)", key, dim),
+        kv("S", "toggle mouse capture (turn off to drag-select text)", key, dim),
         kv("q · Ctrl+C", "quit", key, dim),
         Line::from(""),
         Line::from(vec![

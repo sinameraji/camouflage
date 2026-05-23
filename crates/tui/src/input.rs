@@ -55,6 +55,12 @@ pub enum Action {
     /// v0.4.5+: toggle the tool-output overlay (shows most-recent tool's
     /// captured stdout/stderr).
     ToggleToolOutput,
+    /// v0.4.9+: toggle terminal mouse capture. While ON the wheel scrolls
+    /// the transcript (default). While OFF the user can drag-select text
+    /// with the cursor — at the cost of losing wheel scroll until they
+    /// turn it back on. Workaround for terminals where Option/Shift-click
+    /// doesn't bypass mouse reporting.
+    ToggleMouseCapture,
 }
 
 /// Variant of `handle_key` used while a PermissionRequested is pending.
@@ -133,6 +139,7 @@ pub fn handle_key(k: Key, buf: &mut String, cursor: &mut usize) -> Action {
         Key::Char('M') if buf.is_empty() => Action::ToggleMetrics,
         Key::Char('T') if buf.is_empty() => Action::CycleTheme,
         Key::Char('X') if buf.is_empty() => Action::ToggleToolOutput,
+        Key::Char('S') if buf.is_empty() => Action::ToggleMouseCapture,
         // Readline-style deletions:
         //   Ctrl+W (0x17) → delete word before cursor
         //   Ctrl+U (0x15) → delete to start of line
