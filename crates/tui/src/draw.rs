@@ -1512,12 +1512,21 @@ fn draw_toasts(
         if t.expires_ms <= now_ms { continue; }
         let max_w = area.width.saturating_sub(4).min(60).max(20);
         let text_w = UnicodeWidthStr::width(t.text.as_str()) as u16;
-        let inner_w = text_w.min(max_w.saturating_sub(4));
-        let w = inner_w + 4;
-        if next_y + 3 > area.y + area.height { break; }
+        // Width: cap at max_w (which already leaves room for screen
+        // padding). The inner text width is the box width minus 4
+        // (2 border cols + the " i " label + 1 space gutter).
+        let w = text_w.saturating_add(4 + 3 + 1).min(max_w).max(20);
+        let inner_text_w = w.saturating_sub(4 + 3 + 1).max(1);
+        // Height: count the wrapped text rows so multi-line toasts
+        // (e.g. the 70-char welcome banner) render their full text
+        // instead of leaving only a clipped first row + dangling
+        // corner borders.
+        let rows: u16 = ((text_w + inner_text_w - 1) / inner_text_w).max(1).min(5);
+        let h = rows + 2; // +2 for top + bottom border
+        if next_y + h > area.y + area.height { break; }
         if w > area.width { continue; }
         let x = area.x + area.width.saturating_sub(w + 1);
-        let rect = ratatui::layout::Rect { x, y: next_y, width: w, height: 3 };
+        let rect = ratatui::layout::Rect { x, y: next_y, width: w, height: h };
         f.render_widget(Clear, rect);
         let (label, color) = match t.kind {
             ToastKind::Info    => (" i ", rgb_to_color(theme.accent)),
@@ -1537,7 +1546,7 @@ fn draw_toasts(
                 .border_style(Style::default().fg(color)),
         );
         f.render_widget(widget, rect);
-        next_y += 3;
+        next_y += h;
     }
 }
 
