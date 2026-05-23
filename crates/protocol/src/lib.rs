@@ -768,6 +768,31 @@ mod tests {
     }
 
     #[test]
+    fn permission_response_choice_wire_format() {
+        // Host-side parsers key off these exact strings. Pin them down so a
+        // rename in PermissionChoice can't silently break "allow for the
+        // turn" / "allow for the session" semantics across the boundary.
+        for (choice, expected) in [
+            (payloads::PermissionChoice::AllowOnce, "allow_once"),
+            (payloads::PermissionChoice::AllowSession, "allow_session"),
+            (payloads::PermissionChoice::Deny, "deny"),
+        ] {
+            let p = payloads::PermissionResponse {
+                request_id: "req-1".into(),
+                choice,
+                feedback: None,
+            };
+            let s = serde_json::to_string(&p).unwrap();
+            assert!(
+                s.contains(&format!("\"choice\":\"{}\"", expected)),
+                "expected choice={} in {}", expected, s
+            );
+            let back: payloads::PermissionResponse = serde_json::from_str(&s).unwrap();
+            assert_eq!(p, back);
+        }
+    }
+
+    #[test]
     fn status_update_payload_roundtrip() {
         let mut segs = std::collections::BTreeMap::new();
         segs.insert("mode".to_string(), "edit".to_string());

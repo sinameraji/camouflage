@@ -329,3 +329,47 @@ pub fn handle_key_replay(k: Key, buf: &str) -> Option<Action> {
         _ => return None,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn is_allow_once(a: &Action) -> bool { matches!(a, Action::PermissionAllowOnce) }
+    fn is_allow_session(a: &Action) -> bool { matches!(a, Action::PermissionAllowSession) }
+    fn is_deny(a: &Action) -> bool { matches!(a, Action::PermissionDeny) }
+    fn is_prev(a: &Action) -> bool { matches!(a, Action::PermissionSelectPrev) }
+    fn is_next(a: &Action) -> bool { matches!(a, Action::PermissionSelectNext) }
+    fn is_confirm(a: &Action) -> bool { matches!(a, Action::PermissionConfirmSelected) }
+
+    #[test]
+    fn permission_digit_shortcuts_map_to_choices() {
+        let mut fb = String::new();
+        assert!(is_allow_once(&handle_key_permission(Key::Char('1'), &mut fb)));
+        assert!(is_allow_session(&handle_key_permission(Key::Char('2'), &mut fb)));
+        assert!(is_deny(&handle_key_permission(Key::Char('3'), &mut fb)));
+        // Digits MUST NOT also leak into the feedback buffer.
+        assert!(fb.is_empty());
+    }
+
+    #[test]
+    fn permission_arrow_keys_navigate_and_enter_confirms() {
+        let mut fb = String::new();
+        assert!(is_next(&handle_key_permission(Key::Down, &mut fb)));
+        assert!(is_prev(&handle_key_permission(Key::Up, &mut fb)));
+        assert!(is_next(&handle_key_permission(Key::Char('j'), &mut fb)));
+        assert!(is_prev(&handle_key_permission(Key::Char('k'), &mut fb)));
+        assert!(is_confirm(&handle_key_permission(Key::Enter, &mut fb)));
+    }
+
+    #[test]
+    fn permission_non_digit_chars_go_into_feedback() {
+        let mut fb = String::new();
+        for c in "deny because path is unsafe".chars() {
+            let _ = handle_key_permission(Key::Char(c), &mut fb);
+        }
+        assert_eq!(fb, "deny because path is unsafe");
+        // Backspace removes the last char.
+        let _ = handle_key_permission(Key::Backspace, &mut fb);
+        assert_eq!(fb, "deny because path is unsaf");
+    }
+}
