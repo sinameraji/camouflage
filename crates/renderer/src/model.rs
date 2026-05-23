@@ -630,6 +630,41 @@ impl RenderModel {
         &self.toasts
     }
 
+    /// Drop every live toast. Used by the Esc handler so the user has a
+    /// guaranteed way to dismiss persistent banners.
+    pub fn clear_toasts(&mut self) -> bool {
+        if self.toasts.is_empty() {
+            return false;
+        }
+        self.toasts.clear();
+        self.dirty = true;
+        true
+    }
+
+    /// Drop the pinned splash banner. Used by the Esc handler so the
+    /// user can hide the logo before their first submit.
+    pub fn clear_splash(&mut self) -> bool {
+        if self.splash.is_none() {
+            return false;
+        }
+        self.splash = None;
+        self.dirty = true;
+        true
+    }
+
+    /// Push a toast locally (not in response to a ShowToast event).
+    /// Used by the renderer to acknowledge Esc when there's nothing
+    /// else to dismiss, so the keystroke has guaranteed visible
+    /// feedback even at idle.
+    pub fn push_local_toast(&mut self, text: impl Into<String>, kind: ToastKind, ttl_ms: i64, now_ms: i64) {
+        self.toasts.push(ToastState {
+            text: text.into(),
+            kind,
+            expires_ms: now_ms + ttl_ms,
+        });
+        self.dirty = true;
+    }
+
     /// CC-6 — currently-open Table modal, if any.
     pub fn active_table(&self) -> Option<&TableState> {
         self.active_table.as_ref()

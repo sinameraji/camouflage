@@ -1219,6 +1219,33 @@ pub async fn run(cfg: Config) -> Result<()> {
                 }
                 input::Action::CancelStream => {
                     esc_log("Action::CancelStream → emitting CancelRequested");
+                    // First: give the user a visible local dismiss for
+                    // persistent UI clutter — toasts and the pinned
+                    // splash. Without this, Esc at idle (no in-flight
+                    // turn) looks like a no-op and the user thinks Esc
+                    // is broken. We do this BEFORE the host emit so the
+                    // dismiss is instant even if the pipe is slow.
+                    let cleared_toasts = model.clear_toasts();
+                    let cleared_splash = model.clear_splash();
+                    if cleared_toasts || cleared_splash {
+                        esc_log(&format!(
+                            "local dismiss: toasts={} splash={}",
+                            cleared_toasts, cleared_splash
+                        ));
+                    } else if !model.has_active_stream()
+                        && !model.tools().values().any(|s| !s.finished)
+                    {
+                        // Idle: no in-flight work and no UI clutter to
+                        // dismiss. Flash a local toast so the user has
+                        // visible confirmation that Esc was received,
+                        // instead of thinking the key is broken.
+                        model.push_local_toast(
+                            "nothing to cancel",
+                            camouflage_renderer::model::ToastKind::Info,
+                            1200,
+                            now_ms(),
+                        );
+                    }
                     // Esc → interrupt. Same semantics as Ctrl+C now;
                     // emit CancelRequested so the host (e.g. KimiFlare's
                     // ui-mode) calls controller.abort() on the in-flight
