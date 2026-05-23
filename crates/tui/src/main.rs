@@ -90,7 +90,7 @@ fn main() -> Result<()> {
         anyhow::bail!("--responses-fd and --emit-responses=true are mutually exclusive");
     }
 
-    rt.block_on(app::run(app::Config {
+    let result = rt.block_on(app::run(app::Config {
         store,
         stdin_events: args.stdin_events,
         replay: args.replay,
@@ -98,5 +98,12 @@ fn main() -> Result<()> {
         row_cap: args.row_cap,
         emit_responses,
         responses_fd: args.responses_fd,
-    }))
+    }));
+    // Don't let `rt`'s Drop block on the spawn_blocking thread that owns
+    // `tokio::io::stdin()`. That read() is uninterruptible from userspace,
+    // so a clean teardown would otherwise hang until the host closes the
+    // pipe — which manifests as the user having to press Ctrl+C a third
+    // time (now SIGINT, since raw mode is already off) to actually exit.
+    rt.shutdown_background();
+    result
 }

@@ -1085,6 +1085,11 @@ pub async fn run(cfg: Config) -> Result<()> {
                         return shutdown(&mut terminal, Ok(()));
                     }
                     last_ctrl_c = Some(now);
+                    // Visible feedback: without this, a first Ctrl+C while
+                    // idle looks like a no-op and the user assumes the TUI
+                    // is broken.
+                    status = "press Ctrl+C again to quit".into();
+                    model.mark_dirty();
                     if let Some(tx) = outbound_tx.as_ref() {
                         let ev = Event {
                             id: Uuid::new_v4(),
