@@ -19,7 +19,7 @@
     {
       "seq": 28,
       "kind": "tool",
-      "text": "✓ bash npm test src/auth/login.test.ts (4ms, exit=1, stdout=50B, stderr=0B)",
+      "text": "bash npm test src/auth/login.test.ts (4ms, exit=1, stdout=50B, stderr=0B)",
       "tool_id": "t1"
     },
     {
@@ -52,5 +52,11 @@
     "tokens": "in 14k (2k cached)",
     "warn": "ctx 82% — /compact recommended"
   },
-  "tasks": []
+  "tasks": [
+    {
+      "task_id": "skills",
+      "label": "indexing skills",
+      "state": "done"
+    }
+  ]
 }

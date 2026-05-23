@@ -890,7 +890,13 @@ impl RenderModel {
                 // via the X-overlay (tool-output captured) or `i`-inspector.
                 let command_display = compact_command(command_raw);
                 let command = command_raw.to_string();
-                let display = format!("▸ {} {}", tool, command_display);
+                // No leading glyph — `draw.rs` owns the row prefix and would
+                // otherwise render it twice (e.g. `▸ ▸ grep …`).
+                let display = if command_display.is_empty() {
+                    tool.clone()
+                } else {
+                    format!("{} {}", tool, command_display)
+                };
                 let idx = self.push_row(Row {
                     seq: ev.seq,
                     kind: RowKind::Tool,
@@ -984,23 +990,30 @@ impl RenderModel {
                     state.finished_ms = Some(ev.timestamp_ms);
                     let elapsed_ms = (ev.timestamp_ms - state.started_ms).max(0);
                     let elapsed_str = format_elapsed_ms(elapsed_ms);
-                    let glyph = match state.status {
-                        Some(ToolStatus::Done)      => "✓",
-                        Some(ToolStatus::Error)     => "✗",
-                        Some(ToolStatus::Cancelled) => "■",
-                        Some(ToolStatus::Rejected)  => "!",
-                        None => "·",
+                    // No glyph — draw.rs renders the status prefix once.
+                    // Success: just elapsed time. Failure / non-zero exit:
+                    // include exit code + byte counts since the user needs
+                    // them to diagnose.
+                    let command_display = compact_command(&state.command);
+                    let head = if command_display.is_empty() {
+                        state.tool.clone()
+                    } else {
+                        format!("{} {}", state.tool, command_display)
                     };
-                    let summary = format!(
-                        "{} {} {} ({}, exit={}, stdout={}B, stderr={}B)",
-                        glyph,
-                        state.tool,
-                        state.command,
-                        elapsed_str,
-                        exit.map(|i| i.to_string()).unwrap_or_else(|| "?".into()),
-                        state.stdout_bytes,
-                        state.stderr_bytes,
-                    );
+                    let success = matches!(state.status, Some(ToolStatus::Done))
+                        && exit.map(|i| i == 0).unwrap_or(true);
+                    let summary = if success {
+                        format!("{} ({})", head, elapsed_str)
+                    } else {
+                        format!(
+                            "{} ({}, exit={}, stdout={}B, stderr={}B)",
+                            head,
+                            elapsed_str,
+                            exit.map(|i| i.to_string()).unwrap_or_else(|| "?".into()),
+                            state.stdout_bytes,
+                            state.stderr_bytes,
+                        )
+                    };
                     if let Some(idx) = state.row_index_hint {
                         // The hint may be stale after eviction; compare seq if reachable.
                         if let Some(row) = self.rows.get_mut(idx) {
@@ -1825,6 +1838,26 @@ fn current_time_ms() -> i64 {
 /// chars with an ellipsis. Used for the `▸ tool …` display string; the
 /// original full payload is preserved on `ToolState.command`.
 pub fn compact_command(raw: &str) -> String {
+    // If the raw command is a JSON object (the shape KimiFlare's
+    // `call.function.arguments` arrives in), summarise it as
+    // `k=v, k=v` instead of dumping braces and quoted keys. Strings get
+    // their quotes stripped; nested values fall back to JSON so the
+    // user still sees their structure. Anything that doesn't parse as
+    // a JSON object falls through to the literal-collapse path below.
+    if raw.trim_start().starts_with('{') {
+        if let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(raw) {
+            let mut parts: Vec<String> = Vec::with_capacity(map.len());
+            for (k, v) in &map {
+                let vs = match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Null => "null".into(),
+                    other => other.to_string(),
+                };
+                parts.push(format!("{k}={vs}"));
+            }
+            return truncate_to_width(&parts.join(", "), 120);
+        }
+    }
     // Collapse any whitespace run (including \n / \r / \t) to a single
     // space, drop other control chars. Tracks UTF-8 codepoints so we
     // truncate on a char boundary.
@@ -1854,6 +1887,24 @@ pub fn compact_command(raw: &str) -> String {
     // Trim trailing space we may have left while iterating.
     if out.ends_with(' ') {
         out.pop();
+    }
+    out
+}
+
+/// Char-aware truncation to `max` visible characters with a trailing ellipsis.
+fn truncate_to_width(s: &str, max: usize) -> String {
+    let mut out = String::with_capacity(s.len().min(max + 1));
+    let mut count = 0usize;
+    for ch in s.chars() {
+        if ch.is_control() {
+            continue;
+        }
+        if count >= max {
+            out.push('…');
+            return out;
+        }
+        out.push(ch);
+        count += 1;
     }
     out
 }
@@ -2072,7 +2123,57 @@ mod tests {
         })));
         let tool_rows: Vec<_> = m.rows().iter().filter(|r| r.kind == RowKind::Tool).collect();
         assert_eq!(tool_rows.len(), 1);
-        assert!(tool_rows[0].text.contains("stdout=10000B"));
-        assert!(tool_rows[0].text.contains("exit=0"));
+        // Success rows now show only elapsed; no exit / stdout / stderr noise.
+        assert!(!tool_rows[0].text.contains("stdout="));
+        assert!(!tool_rows[0].text.contains("exit="));
+        assert!(tool_rows[0].text.contains("bash"));
+    }
+
+    #[test]
+    fn failed_tool_keeps_diagnostics() {
+        let mut m = RenderModel::new();
+        m.apply(&ev(0, EventType::ToolExecutionStarted, json!({
+            "tool_id":"t1","tool":"bash","command":"false"
+        })));
+        m.apply(&ev(1, EventType::ToolExecutionFinished, json!({
+            "tool_id":"t1","exit_code":1
+        })));
+        let row = m.rows().iter().find(|r| r.kind == RowKind::Tool).unwrap();
+        assert!(row.text.contains("exit=1"));
+        assert!(row.text.contains("stdout=0B"));
+    }
+
+    #[test]
+    fn tool_row_text_has_no_leading_glyph() {
+        // draw.rs owns the row prefix; row.text must not embed ✓ / ✗ / ▸.
+        let mut m = RenderModel::new();
+        m.apply(&ev(0, EventType::ToolExecutionStarted, json!({
+            "tool_id":"t1","tool":"grep","command":"foo"
+        })));
+        let started = m.rows().iter().find(|r| r.kind == RowKind::Tool).unwrap();
+        assert!(!started.text.starts_with('▸'), "got: {}", started.text);
+        m.apply(&ev(1, EventType::ToolExecutionFinished, json!({
+            "tool_id":"t1","exit_code":0
+        })));
+        let done = m.rows().iter().find(|r| r.kind == RowKind::Tool).unwrap();
+        for g in ['✓', '✗', '■', '!', '·', '▸'] {
+            assert!(!done.text.starts_with(g), "got: {}", done.text);
+        }
+    }
+
+    #[test]
+    fn compact_command_renders_json_object_as_kv() {
+        let s = compact_command(r#"{"pattern":"hello","path":"src"}"#);
+        // Order of keys is preserved by serde_json::Map (insertion order).
+        assert!(s.contains("pattern=hello"), "got: {s}");
+        assert!(s.contains("path=src"), "got: {s}");
+        assert!(!s.contains('{'));
+        assert!(!s.contains('"'));
+    }
+
+    #[test]
+    fn compact_command_falls_through_for_non_json() {
+        let s = compact_command("ls -la /tmp");
+        assert_eq!(s, "ls -la /tmp");
     }
 }

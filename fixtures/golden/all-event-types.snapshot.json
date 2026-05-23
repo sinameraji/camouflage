@@ -19,7 +19,7 @@
     {
       "seq": 9,
       "kind": "tool",
-      "text": "✓ bash ls (3ms, exit=0, stdout=6B, stderr=5B)",
+      "text": "bash ls (3ms)",
       "tool_id": "t1"
     },
     {
@@ -78,7 +78,13 @@
     "mode": "edit",
     "phase": "idle"
   },
-  "tasks": [],
+  "tasks": [
+    {
+      "task_id": "skills",
+      "label": "indexing",
+      "state": "done"
+    }
+  ],
   "confirm": {
     "id": "agree",
     "prompt": "Accept terms?",
@@ -91,7 +97,7 @@
     {
       "text": "Saved",
       "kind": "success",
-      "expires_ms": 1779033024955
+      "expires_ms": 1779539902417
     }
   ],
   "table": {
