@@ -24,6 +24,7 @@ pub enum SnapshotRowKind {
     Error,
     Marker,
     Diff,
+    Control,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

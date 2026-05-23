@@ -24,12 +24,12 @@
     },
     {
       "seq": 34,
-      "kind": "system",
+      "kind": "control",
       "text": "permission requested: apply patch to src/auth/login.ts (3 lines changed) (edit)"
     },
     {
       "seq": 35,
-      "kind": "system",
+      "kind": "control",
       "text": "permission granted"
     },
     {

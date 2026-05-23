@@ -34,17 +34,17 @@
     },
     {
       "seq": 15,
-      "kind": "system",
+      "kind": "control",
       "text": "permission requested: apply patch (edit)"
     },
     {
       "seq": 16,
-      "kind": "system",
+      "kind": "control",
       "text": "permission granted"
     },
     {
       "seq": 17,
-      "kind": "system",
+      "kind": "control",
       "text": "permission denied"
     },
     {
@@ -97,7 +97,7 @@
     {
       "text": "Saved",
       "kind": "success",
-      "expires_ms": 1779539902417
+      "expires_ms": 1779540509364
     }
   ],
   "table": {

@@ -17,6 +17,11 @@ pub enum RowKind {
     /// `Row.text` is the diff marker (`+`, `-`, ` `, `@`, or empty for the
     /// header). Renderers color-code based on that marker.
     Diff,
+    /// Permission lifecycle ("permission requested / granted / denied")
+    /// and stream-control outcomes ("aborted"). Visually distinct so the
+    /// user can spot the things that gate progress without scanning past
+    /// a wall of system/tool rows.
+    Control,
 }
 
 #[derive(Debug, Clone)]
@@ -1136,7 +1141,7 @@ impl RenderModel {
                     .to_string();
                 self.push_row(Row {
                     seq: ev.seq,
-                    kind: RowKind::System,
+                    kind: RowKind::Control,
                     text: format!("permission requested: {} ({})", action, tool),
                     tool_id: None,
                 });
@@ -1161,7 +1166,7 @@ impl RenderModel {
                 self.pending_permission = None;
                 self.push_row(Row {
                     seq: ev.seq,
-                    kind: RowKind::System,
+                    kind: RowKind::Control,
                     text: "permission granted".into(),
                     tool_id: None,
                 });
@@ -1170,7 +1175,7 @@ impl RenderModel {
                 self.pending_permission = None;
                 self.push_row(Row {
                     seq: ev.seq,
-                    kind: RowKind::System,
+                    kind: RowKind::Control,
                     text: "permission denied".into(),
                     tool_id: None,
                 });

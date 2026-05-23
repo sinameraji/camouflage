@@ -133,9 +133,7 @@ impl RowFilterKind {
                 r.kind == RowKind::Diff
                     || (r.kind == RowKind::System && r.text.starts_with("patch "))
             }
-            Self::Permissions => {
-                r.kind == RowKind::System && r.text.starts_with("permission ")
-            }
+            Self::Permissions => r.kind == RowKind::Control,
         }
     }
 }
@@ -1794,6 +1792,12 @@ fn row_to_line<'a>(
             }
         }
         RowKind::Error => ("✗".to_string(), error_color),
+        RowKind::Control => {
+            // Permission requested/granted/denied + abort outcomes — paint
+            // with the spinner accent (amber-ish) so they're visually
+            // distinct from the gray system stream that surrounds them.
+            ("•".to_string(), spinner_color)
+        }
         RowKind::Marker => ("¶".to_string(), marker_color),
         RowKind::Diff => {
             let marker = r.text.chars().next().unwrap_or(' ');
@@ -1838,6 +1842,8 @@ fn row_to_line<'a>(
         // Paint user-submitted text in the user color (not just the
         // prefix). Without this, the user's own input renders white
         // and loses its place in the transcript.
+        spans.push(Span::styled(r.text.as_str(), Style::default().fg(color)));
+    } else if r.kind == RowKind::Control {
         spans.push(Span::styled(r.text.as_str(), Style::default().fg(color)));
     } else {
         spans.push(Span::raw(r.text.as_str()));
