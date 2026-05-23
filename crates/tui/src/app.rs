@@ -392,9 +392,21 @@ pub async fn run(cfg: Config) -> Result<()> {
         let _ = persist_tx.send(ev).await;
     }
 
+    // Loud env-gated log for tracing the Esc → CancelRequested chain.
+    // Set CAMOUFLAGE_DEBUG_ESC=1 in the host env to enable; output
+    // lands on stderr which the SDK inherits in renderToTerminal=true,
+    // so messages show up in the user's terminal alongside host logs.
+    fn esc_log(s: &str) {
+        if std::env::var_os("CAMOUFLAGE_DEBUG_ESC").is_some() {
+            eprintln!("[camouflage:esc] {s}");
+        }
+    }
     loop {
         // Non-blocking poll for keys before each frame.
         while let Ok(key) = key_rx.try_recv() {
+            if matches!(key, crate::tty::Key::Esc) {
+                esc_log("key Esc received");
+            }
             // Sub-picker short-circuit: when the user picked a top-level
             // slash command whose args parse as a discrete option list,
             // we display a second picker and consume Up/Down/Enter/Esc
@@ -1206,10 +1218,14 @@ pub async fn run(cfg: Config) -> Result<()> {
                     model.mark_dirty();
                 }
                 input::Action::CancelStream => {
+                    esc_log("Action::CancelStream → emitting CancelRequested");
                     // Esc → interrupt. Same semantics as Ctrl+C now;
                     // emit CancelRequested so the host (e.g. KimiFlare's
                     // ui-mode) calls controller.abort() on the in-flight
                     // agent turn.
+                    if outbound_tx.is_none() {
+                        esc_log("WARN outbound_tx is None — no host pipe wired up");
+                    }
                     if let Some(tx) = outbound_tx.as_ref() {
                         // If a permission modal is currently open, deny
                         // it before aborting so the tool gets a clean
@@ -1243,7 +1259,11 @@ pub async fn run(cfg: Config) -> Result<()> {
                             event_type: EventType::CancelRequested,
                             payload: serde_json::json!({}),
                         };
-                        let _ = tx.send(OutgoingEvent(ev)).await;
+                        let send_res = tx.send(OutgoingEvent(ev)).await;
+                        esc_log(&format!(
+                            "CancelRequested send → {}",
+                            if send_res.is_ok() { "ok" } else { "ERR (receiver dropped)" }
+                        ));
                     }
                     // Optimistic local cancel so the user gets immediate
                     // visual feedback: stop background-task spinners and
