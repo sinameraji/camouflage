@@ -162,7 +162,8 @@ fn validate_payload(event_type: EventType, payload: serde_json::Value) -> Result
         | PermissionDenied
         | SessionCompacted
         | TranscriptCleared
-        | ViewportMarker => {}
+        | ViewportMarker
+        | Splash => {}
     }
     Ok(())
 }

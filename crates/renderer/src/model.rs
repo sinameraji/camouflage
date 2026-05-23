@@ -167,6 +167,14 @@ pub struct RenderModel {
     /// shown on its behalf). Responses to that sub-modal are intercepted
     /// by the app layer and routed back into `wizard_advance_*`.
     active_wizard: Option<WizardState>,
+    /// v0.4.9+: host-supplied splash (e.g. CLI logo) pinned above the
+    /// transcript until the user submits their first prompt. None once
+    /// the splash has been auto-dismissed; subsequent Splash events can
+    /// re-pin it (the host owns the lifecycle).
+    splash: Option<String>,
+    /// True after the first `UserMessageCreated` arrives — used to
+    /// auto-drop the splash so it doesn't permanently consume rows.
+    user_has_submitted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -460,6 +468,8 @@ impl RenderModel {
             active_kv: None,
             active_form: None,
             active_wizard: None,
+            splash: None,
+            user_has_submitted: false,
         }
     }
 
@@ -554,6 +564,12 @@ impl RenderModel {
     /// Status-bar segments as currently set by the host.
     pub fn status_segments(&self) -> &BTreeMap<String, String> {
         &self.status_segments
+    }
+
+    /// Host-supplied splash (e.g. CLI logo) pinned above the transcript.
+    /// `None` after the user has submitted their first prompt.
+    pub fn splash(&self) -> Option<&str> {
+        self.splash.as_deref()
     }
 
     /// Currently-pending permission request, if any. The TUI renders the
@@ -826,6 +842,15 @@ impl RenderModel {
                     text,
                     tool_id: None,
                 });
+                // Auto-drop the splash on first user submission so the host's
+                // logo doesn't permanently consume rows above the transcript.
+                if !self.user_has_submitted {
+                    self.user_has_submitted = true;
+                    if self.splash.is_some() {
+                        self.splash = None;
+                        self.dirty = true;
+                    }
+                }
             }
             EventType::AssistantStreamStarted => {
                 let sid = ev
@@ -1222,6 +1247,20 @@ impl RenderModel {
                     text: "session compacted".into(),
                     tool_id: None,
                 });
+            }
+            EventType::Splash => {
+                let text = ev
+                    .payload
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if text.is_empty() {
+                    self.splash = None;
+                } else {
+                    self.splash = Some(text);
+                }
+                self.dirty = true;
             }
             EventType::TranscriptCleared => {
                 // Wipe live rows + history. Keep status segments, registered
@@ -2199,5 +2238,28 @@ mod tests {
     fn compact_command_falls_through_for_non_json() {
         let s = compact_command("ls -la /tmp");
         assert_eq!(s, "ls -la /tmp");
+    }
+
+    #[test]
+    fn splash_pins_until_first_user_submit() {
+        let mut m = RenderModel::new();
+        m.apply(&ev(0, EventType::Splash, json!({"text":"LOGO\nv1.2.3"})));
+        assert_eq!(m.splash(), Some("LOGO\nv1.2.3"));
+        // Some events pass without dismissing.
+        m.apply(&ev(1, EventType::SessionStarted, json!({})));
+        m.apply(&ev(2, EventType::StatusUpdate, json!({"segments":{"mode":"plan"}})));
+        assert_eq!(m.splash(), Some("LOGO\nv1.2.3"));
+        // First UserMessageCreated drops the splash automatically.
+        m.apply(&ev(3, EventType::UserMessageCreated, json!({"text":"hi"})));
+        assert_eq!(m.splash(), None);
+    }
+
+    #[test]
+    fn splash_with_empty_text_clears() {
+        let mut m = RenderModel::new();
+        m.apply(&ev(0, EventType::Splash, json!({"text":"LOGO"})));
+        assert_eq!(m.splash(), Some("LOGO"));
+        m.apply(&ev(1, EventType::Splash, json!({"text":""})));
+        assert_eq!(m.splash(), None);
     }
 }

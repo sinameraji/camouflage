@@ -197,16 +197,31 @@ pub fn render<B: Backend>(
             let content_lines = ((input_w + inner_w - 1) / inner_w).max(1).min(3) as u16;
             content_lines + 2 // top + bottom border
         };
-        // Layout regions in order: header / transcript / spacer /
-        // task ribbon (optional) / status / input. The 1-row spacer
-        // between the transcript and the status row gives the last
-        // line of streamed content visual breathing room from the
-        // status bar — without it, a fully-filled viewport puts text
-        // flush against the next chunk and reads as "cut off".
+        // Splash: host-supplied multi-line ANSI text (e.g. CLI logo)
+        // pinned above the transcript until the user submits their
+        // first prompt. Allocated height is capped so a huge banner
+        // can't swallow the transcript on a small terminal.
+        let splash_text = model.splash();
+        let splash_height: u16 = splash_text
+            .map(|s| {
+                let lines = s.lines().count() as u16;
+                // Cap at 1/3 of the terminal height (and never more than
+                // 12 rows) so the transcript always has working space.
+                let cap = (area.height / 3).min(12).max(1);
+                lines.min(cap).saturating_add(1) // +1 for trailing blank line
+            })
+            .unwrap_or(0);
+        // Layout regions in order: header / splash (optional) /
+        // transcript / spacer / task ribbon (optional) / status / input.
+        // The 1-row spacer between the transcript and the status row
+        // gives the last line of streamed content visual breathing room
+        // from the status bar — without it, a fully-filled viewport puts
+        // text flush against the next chunk and reads as "cut off".
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1),
+                Constraint::Length(splash_height),
                 Constraint::Min(1),
                 Constraint::Length(1), // bottom spacer
                 Constraint::Length(task_line),
@@ -231,6 +246,15 @@ pub fn render<B: Backend>(
         ]));
         f.render_widget(header, chunks[0]);
 
+        // Render the splash (if any) into chunks[1]. The text may contain
+        // raw ANSI; we pass it through `tui::text::Text::raw` which keeps
+        // newlines but doesn't try to re-interpret escape sequences (the
+        // terminal does that itself when ratatui writes the bytes).
+        if let Some(text) = splash_text {
+            let para = Paragraph::new(text);
+            f.render_widget(para, chunks[1]);
+        }
+
         // Transcript viewport. Long rows wrap onto multiple visual lines so
         // the full content is visible. To keep auto-follow aligned to the
         // bottom edge we:
@@ -242,8 +266,8 @@ pub fn render<B: Backend>(
         let history = model.history_rows();
         let live = model.rows();
         let total_rows = (history.len() + live.len()) as i64;
-        let viewport_h = chunks[1].height as usize;
-        let transcript_width = chunks[1].width as usize;
+        let viewport_h = chunks[2].height as usize;
+        let transcript_width = chunks[2].width as usize;
         let avail = transcript_width.saturating_sub(2).max(1); // prefix glyph + space
         // When the viewport is "frozen" at a scroll position, anchor the
         // window to the snapshot taken at scroll-time so new streaming
@@ -355,7 +379,7 @@ pub fn render<B: Backend>(
         // viewport_h gives a scroll_top that aligns the bottom of the
         // content with the bottom of the viewport.
         let probe = Paragraph::new(lines.clone()).wrap(Wrap { trim: false });
-        let actual_visual = probe.line_count(chunks[1].width) as i64;
+        let actual_visual = probe.line_count(chunks[2].width) as i64;
         let lines_below_visible_in_slice = (slice_bottom_line - effective_bottom).max(0);
         let scroll_top =
             (actual_visual - viewport_h as i64 - lines_below_visible_in_slice).max(0) as u16;
@@ -388,13 +412,14 @@ pub fn render<B: Backend>(
             .wrap(Wrap { trim: false })
             .scroll((scroll_top, 0));
 
-        // When the inspector is open, split chunks[1] horizontally so the
-        // transcript shares the row with a JSON detail panel on the right.
+        // When the inspector is open, split the transcript region
+        // horizontally so the transcript shares the row with a JSON
+        // detail panel on the right.
         if let Some(insp) = inspector.as_ref() {
             let split = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([Constraint::Min(20), Constraint::Length((chunks[1].width / 2).min(60).max(30))])
-                .split(chunks[1]);
+                .constraints([Constraint::Min(20), Constraint::Length((chunks[2].width / 2).min(60).max(30))])
+                .split(chunks[2]);
             f.render_widget(transcript, split[0]);
             // Inspector pane.
             let header_text = match insp.focused_seq {
@@ -416,7 +441,7 @@ pub fn render<B: Backend>(
                 );
             f.render_widget(panel, split[1]);
         } else {
-            f.render_widget(transcript, chunks[1]);
+            f.render_widget(transcript, chunks[2]);
         }
 
         // Vertical scrollbar pinned to the right edge of the transcript
@@ -439,7 +464,7 @@ pub fn render<B: Backend>(
                 .end_symbol(None)
                 .style(Style::default().fg(Color::DarkGray))
                 .thumb_style(Style::default().fg(Color::Cyan));
-            f.render_stateful_widget(bar, chunks[1], &mut state);
+            f.render_stateful_widget(bar, chunks[2], &mut state);
         }
 
         // Status line — multi-segment, host-driven. Convention: known keys
@@ -557,14 +582,14 @@ pub fn render<B: Backend>(
                 ribbon_spans.push(Span::styled(label, label_style));
             }
             let ribbon = Paragraph::new(Line::from(ribbon_spans));
-            f.render_widget(ribbon, chunks[3]);
+            f.render_widget(ribbon, chunks[4]);
         }
 
         let status_line = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: false });
-        f.render_widget(status_line, chunks[4]);
+        f.render_widget(status_line, chunks[5]);
 
         // Bottom box: search prompt > permission widget > input prompt.
-        let input_chunk = chunks[5];
+        let input_chunk = chunks[6];
         if let Some(sv) = search.as_ref() {
             let widget = Paragraph::new(Line::from(vec![
                 Span::styled("/", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
@@ -779,7 +804,7 @@ pub fn render<B: Backend>(
         if crate::scrolllog::screen_enabled() {
             let buf = f.buffer_mut();
             crate::scrolllog::log_screen(area, buf, "full", frame);
-            crate::scrolllog::log_screen(chunks[1], buf, "transcript", frame);
+            crate::scrolllog::log_screen(chunks[2], buf, "transcript", frame);
         }
     })?;
     Ok(())

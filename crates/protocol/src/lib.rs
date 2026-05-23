@@ -137,6 +137,12 @@ pub enum EventType {
     /// `/clear` in host CLIs). Auto-follow resumes at the bottom; status
     /// bar and registered slash-commands persist. No payload.
     TranscriptCleared,
+    /// v0.4.9+ — Host → renderer: pin a multi-line ANSI splash above the
+    /// transcript (e.g. the host's CLI logo + version line). Renderer
+    /// keeps it visible until the user submits their first prompt, then
+    /// drops it so it doesn't eat transcript real-estate forever.
+    /// Payload: `{ "text": "...multi-line ANSI string..." }`.
+    Splash,
 }
 
 impl EventType {
@@ -181,6 +187,7 @@ impl EventType {
             EventType::ModeChangeRequested => "ModeChangeRequested",
             EventType::CancelRequested => "CancelRequested",
             EventType::TranscriptCleared => "TranscriptCleared",
+            EventType::Splash => "Splash",
         }
     }
 
