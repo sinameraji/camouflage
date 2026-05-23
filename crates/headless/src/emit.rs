@@ -45,6 +45,15 @@ where
                                     }
                                 }
                             }
+                            // Flush immediately — Esc/Ctrl+C emit
+                            // CancelRequested and the host needs it
+                            // *now*, not in up to 16ms. The previous
+                            // tick-only flush was the difference between
+                            // an Esc that aborted in 5ms vs one that
+                            // looked dead for a full frame.
+                            if let Ok(mut g) = w.lock() {
+                                let _ = g.flush();
+                            }
                         }
                         None => break,
                     }
