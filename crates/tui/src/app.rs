@@ -1200,6 +1200,29 @@ pub async fn run(cfg: Config) -> Result<()> {
                     // ui-mode) calls controller.abort() on the in-flight
                     // agent turn.
                     if let Some(tx) = outbound_tx.as_ref() {
+                        // If a permission modal is currently open, deny
+                        // it before aborting so the tool gets a clean
+                        // "rejected" response and the modal closes — the
+                        // user reads Esc as "back out of everything",
+                        // and we shouldn't leave the modal stranded.
+                        if let Some(pp) = model.pending_permission() {
+                            let resp = Event {
+                                id: Uuid::new_v4(),
+                                session_id,
+                                seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                                timestamp_ms: now_ms(),
+                                schema_version: SCHEMA_VERSION,
+                                event_type: EventType::PermissionResponse,
+                                payload: serde_json::json!({
+                                    "request_id": pp.request_id,
+                                    "choice": "deny",
+                                    "feedback": permission_feedback,
+                                }),
+                            };
+                            let _ = tx.send(OutgoingEvent(resp)).await;
+                            model.clear_pending_permission();
+                            permission_feedback.clear();
+                        }
                         let ev = Event {
                             id: Uuid::new_v4(),
                             session_id,
@@ -1597,8 +1620,12 @@ pub async fn run(cfg: Config) -> Result<()> {
                                 - viewport.viewport_height as i64
                                 - 8);
                     if near_top {
+                        // Cap the lower bound at the post-/clear floor so we
+                        // don't fetch (and the model wouldn't accept) events
+                        // older than the most recent TranscriptCleared.
+                        let floor = model.history_floor_seq();
                         let to = earliest_visible;
-                        let from = (to - HISTORY_CHUNK).max(0);
+                        let from = (to - HISTORY_CHUNK).max(floor);
                         if from < to {
                             tracing::info!(from, to, "history fetch requested");
                             let _ = history_req_tx

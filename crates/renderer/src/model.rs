@@ -113,6 +113,11 @@ pub struct RenderModel {
     /// Reconstructed older rows, displayed *before* `rows` in the viewport.
     /// Grows as the user scrolls upward; cleared on `clear_history`.
     history: Vec<Row>,
+    /// Lowest seq the renderer will accept into history. Set by
+    /// `TranscriptCleared` to the clear event's seq so subsequent
+    /// scroll-up history fetches can't resurrect cleared content from
+    /// the host's persisted store.
+    history_floor_seq: i64,
     /// v0.1.5+ — host-supplied status-bar segments. Renderer draws these in
     /// a fixed conventional order plus any extras in registration order.
     status_segments: BTreeMap<String, String>,
@@ -436,6 +441,7 @@ impl RenderModel {
             tools: HashMap::new(),
             dirty: true,
             history: Vec::new(),
+            history_floor_seq: 0,
             status_segments: BTreeMap::new(),
             pending_permission: None,
             background_tasks: Vec::new(),
@@ -462,6 +468,14 @@ impl RenderModel {
     /// responsible for passing rows in increasing-seq order and for ensuring
     /// they belong strictly before any row already in this model.
     pub fn prepend_history(&mut self, rows: Vec<Row>) {
+        // Drop anything older than the last TranscriptCleared. Without
+        // this, scrolling up after /clear refetches the wiped rows
+        // from the host's persisted store and they "come back" — which
+        // defeats the whole point of clearing.
+        let rows: Vec<Row> = rows
+            .into_iter()
+            .filter(|r| r.seq >= self.history_floor_seq)
+            .collect();
         if rows.is_empty() {
             return;
         }
@@ -471,6 +485,13 @@ impl RenderModel {
         new_history.extend(self.history.drain(..));
         self.history = new_history;
         self.dirty = true;
+    }
+
+    /// Lowest seq the host should bother to send back on a history
+    /// fetch. App.rs uses this to clamp `from_seq` so we don't even
+    /// ask the store for events we'd just discard.
+    pub fn history_floor_seq(&self) -> i64 {
+        self.history_floor_seq
     }
 
     /// Drop all history rows (e.g. on jump-to-latest). Memory-bounding the
@@ -1172,6 +1193,11 @@ impl RenderModel {
                 self.rows.clear();
                 self.history.clear();
                 self.tools.clear();
+                // Block subsequent scroll-up history fetches from
+                // resurrecting the cleared content from the host's
+                // persisted store. Anything with seq < this is
+                // permanently invisible for the rest of the session.
+                self.history_floor_seq = ev.seq;
                 self.push_row(Row {
                     seq: ev.seq,
                     kind: RowKind::System,

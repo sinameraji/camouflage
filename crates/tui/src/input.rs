@@ -80,7 +80,12 @@ pub fn handle_key_permission(k: Key, feedback: &mut String) -> Action {
         // ? overlays a help panel. Any subsequent key dismisses (handled
         // in app.rs by clearing help_open on the next iteration).
         Key::Char('?') => Action::PermissionToggleHelp,
-        Key::Esc => Action::PermissionDeny,
+        // Esc here used to *only* deny the current permission, which
+        // made it feel like Esc "did nothing" when the user actually
+        // wanted to abort the whole running turn. Map it to the same
+        // path as Ctrl+C's single press: the CancelStream handler in
+        // app.rs denies the pending permission AND emits CancelRequested.
+        Key::Esc => Action::CancelStream,
         Key::Backspace => {
             feedback.pop();
             Action::None
