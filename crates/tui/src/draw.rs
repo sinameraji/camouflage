@@ -217,12 +217,18 @@ pub fn render<B: Backend>(
             ])
             .split(area);
 
-        // Header
+        // Header. Accent-colored "Camouflage" title + dim session id so
+        // the brand has visual weight without dominating the transcript.
+        let accent = rgb_to_color(theme.accent);
+        let dim_sys = rgb_to_color(theme.system);
         let header = Paragraph::new(Line::from(vec![
-            Span::styled("Camouflage ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Camouflage ",
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(
                 format!("session={}", short_uuid(&viewport.session_id.to_string())),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(dim_sys),
             ),
         ]));
         f.render_widget(header, chunks[0]);
@@ -1802,9 +1808,14 @@ fn row_to_line<'a>(
     };
     // For an in-flight tool row, append the running elapsed time so the
     // user can see how long the tool has been executing.
-    let mut spans: Vec<Span> = vec![
-        Span::styled(format!("{} ", prefix), Style::default().fg(color)),
-    ];
+    // User-turn prefix gets bold so the user's own input visually anchors
+    // the transcript instead of vanishing into the wall of tool output.
+    let prefix_style = if r.kind == RowKind::User {
+        Style::default().fg(color).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(color)
+    };
+    let mut spans: Vec<Span> = vec![Span::styled(format!("{} ", prefix), prefix_style)];
     if r.kind == RowKind::Assistant && !r.text.is_empty() {
         let code_fg = rgb_to_color(theme.code_fg);
         let code_bg = rgb_to_color(theme.code_bg);
@@ -1822,6 +1833,11 @@ fn row_to_line<'a>(
             spans.push(Span::styled(sp.text, style));
         }
     } else if r.kind == RowKind::Diff {
+        spans.push(Span::styled(r.text.as_str(), Style::default().fg(color)));
+    } else if r.kind == RowKind::User {
+        // Paint user-submitted text in the user color (not just the
+        // prefix). Without this, the user's own input renders white
+        // and loses its place in the transcript.
         spans.push(Span::styled(r.text.as_str(), Style::default().fg(color)));
     } else {
         spans.push(Span::raw(r.text.as_str()));
