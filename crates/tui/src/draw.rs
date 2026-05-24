@@ -205,9 +205,12 @@ pub fn render<B: Backend>(
         let splash_height: u16 = splash_text
             .map(|s| {
                 let lines = s.lines().count() as u16;
-                // Cap at 1/3 of the terminal height (and never more than
-                // 12 rows) so the transcript always has working space.
-                let cap = (area.height / 3).min(12).max(1);
+                // Cap at half the terminal height (and never more than
+                // 30 rows) so the transcript still has working space,
+                // while leaving room for tall pixel-art logos like
+                // Kimiflare's (~26 rows). Splash auto-dismisses on first
+                // user submission, so generosity here is cheap.
+                let cap = (area.height / 2).min(30).max(1);
                 lines.min(cap).saturating_add(1) // +1 for trailing blank line
             })
             .unwrap_or(0);
