@@ -1,0 +1,13 @@
+{"event_type":"SessionStarted","payload":{"user_label":"You","assistant_label":"kimiflare"}}
+{"event_type":"StatusUpdate","payload":{"segments":{"mode":"edit","phase":"idle"}}}
+{"event_type":"UserMessageCreated","payload":{"text":"can you summarize the file src/auth/login.ts?"}}
+{"event_type":"AssistantStreamStarted","payload":{"stream_id":"s1"}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"Sure — "}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"that file defines the login flow. "}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"It exports a single `login()` handler that validates credentials, "}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"issues a session token, and writes it to a secure cookie."}}
+{"event_type":"AssistantMessageCompleted","payload":{"stream_id":"s1"}}
+{"event_type":"UserMessageCreated","payload":{"text":"thanks, that helps"}}
+{"event_type":"AssistantStreamStarted","payload":{"stream_id":"s2"}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s2","token":"You're welcome — let me know if you want to dig into the session-token rotation logic next."}}
+{"event_type":"AssistantMessageCompleted","payload":{"stream_id":"s2"}}

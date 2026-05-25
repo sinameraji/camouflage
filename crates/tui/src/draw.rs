@@ -201,16 +201,27 @@ pub fn render<B: Backend>(
         // pinned above the transcript until the user submits their
         // first prompt. Allocated height is capped so a huge banner
         // can't swallow the transcript on a small terminal.
-        let splash_text = model.splash();
+        // v0.5+: trim purely-empty leading/trailing rows from the
+        // host-supplied splash. Hosts that build pixel-art splashes
+        // (e.g. Kimiflare) tend to pad their logo with several blank
+        // rows for alignment in the original Ink layout — those rows
+        // are pure waste in the TUI, and on a 20-row terminal they
+        // push the actual content off-screen.
+        let splash_raw = model.splash();
+        let splash_trimmed: Option<String> = splash_raw.map(|s| trim_empty_splash_lines(s));
+        let splash_text: Option<&str> = splash_trimmed.as_deref();
         let splash_height: u16 = splash_text
             .map(|s| {
                 let lines = s.lines().count() as u16;
-                // Cap at half the terminal height (and never more than
-                // 30 rows) so the transcript still has working space,
-                // while leaving room for tall pixel-art logos like
-                // Kimiflare's (~26 rows). Splash auto-dismisses on first
-                // user submission, so generosity here is cheap.
-                let cap = (area.height / 2).min(30).max(1);
+                // Responsive cap: give splash as much vertical room as
+                // possible while still leaving room for the header
+                // (1 row), status (~1 row), input (~3 rows) and at
+                // least 2 transcript rows so the user sees their first
+                // submit ack land somewhere. Hard-capped at 30 rows so
+                // very tall terminals don't dedicate half the screen.
+                // Splash auto-dismisses on first user submission, so
+                // generosity here is cheap.
+                let cap = area.height.saturating_sub(6).min(30).max(1);
                 lines.min(cap).saturating_add(1) // +1 for trailing blank line
             })
             .unwrap_or(0);
@@ -260,6 +271,8 @@ pub fn render<B: Backend>(
             f.render_widget(para, chunks[1]);
         }
 
+        // ── trim_empty_splash_lines defined below row_to_lines ──
+
         // Transcript viewport. Long rows wrap onto multiple visual lines so
         // the full content is visible. To keep auto-follow aligned to the
         // bottom edge we:
@@ -280,18 +293,23 @@ pub fn render<B: Backend>(
         // Per-row visual line count (post-wrap). Used both for visual
         // extent computation and the windowed render below.
         let visual_count = |r: &camouflage_renderer::Row| -> usize {
-            if r.kind == RowKind::Assistant && r.text.contains('\n') {
+            // v0.5+: user / assistant rows render a turn separator
+            // (pad / rule / pad = 3 extra visual lines) underneath, so
+            // the scroll math needs to know about them up-front.
+            let separator_lines = matches!(r.kind, RowKind::User | RowKind::Assistant) as usize * 3;
+            let body = if r.kind == RowKind::Assistant && r.text.contains('\n') {
                 r.text
                     .split('\n')
                     .map(|seg| {
                         let w = UnicodeWidthStr::width(seg).max(1);
                         (w + avail - 1) / avail
                     })
-                    .sum()
+                    .sum::<usize>()
             } else {
                 let w = UnicodeWidthStr::width(r.text.as_str()).max(1);
                 (w + avail - 1) / avail
-            }
+            };
+            body + separator_lines
         };
         let combined_all: Vec<&camouflage_renderer::Row> = history
             .iter()
@@ -369,9 +387,22 @@ pub fn render<B: Backend>(
         let mut rows_taken = rows_taken_rev;
         rows_taken.reverse();
         let active_tools = model.tools();
+        let user_label = model.user_label();
+        let assistant_label = model.assistant_label();
         let lines: Vec<Line> = rows_taken
             .iter()
-            .flat_map(|r| row_to_lines(r, frame, active_tools, theme, model.has_active_stream()))
+            .flat_map(|r| {
+                row_to_lines(
+                    r,
+                    frame,
+                    active_tools,
+                    theme,
+                    model.has_active_stream(),
+                    user_label,
+                    assistant_label,
+                    transcript_width,
+                )
+            })
             .collect();
         // Use ratatui's own wrap engine to count visible lines — our
         // own visual_count is an approximation (it doesn't perfectly
@@ -1785,6 +1816,8 @@ fn row_to_line<'a>(
     active_tools: &std::collections::HashMap<String, camouflage_renderer::ToolState>,
     theme: &camouflage_renderer::theme::Theme,
     has_active_stream: bool,
+    user_label: &str,
+    assistant_label: &str,
 ) -> Line<'a> {
     let spinner_color = rgb_to_color(theme.spinner);
     let user_color = rgb_to_color(theme.user);
@@ -1800,7 +1833,7 @@ fn row_to_line<'a>(
     // Tool row whose ToolState is not yet finished → spinner instead of ✓.
     let (prefix, color) = match r.kind {
         RowKind::System => ("·".to_string(), system_color),
-        RowKind::User => ("›".to_string(), user_color),
+        RowKind::User => (format!("{}:", user_label), user_color),
         RowKind::Assistant => {
             // Only show the spinner on an empty assistant row when a stream
             // is actually in flight. Without this check, completed-but-
@@ -1808,7 +1841,7 @@ fn row_to_line<'a>(
             if r.text.is_empty() && has_active_stream {
                 (spinner_glyph(spinner_frame_now()).to_string(), spinner_color)
             } else {
-                (" ".to_string(), assistant_color)
+                (format!("{}:", assistant_label), assistant_color)
             }
         }
         RowKind::Tool => {
@@ -1927,9 +1960,36 @@ fn row_to_lines<'a>(
     active_tools: &std::collections::HashMap<String, camouflage_renderer::ToolState>,
     theme: &camouflage_renderer::theme::Theme,
     has_active_stream: bool,
+    user_label: &str,
+    assistant_label: &str,
+    transcript_width: usize,
 ) -> Vec<Line<'a>> {
+    // v0.5+: after each user/assistant turn render a horizontal rule with
+    // a blank pad above and below it. Visually separates conversational
+    // turns so the eye stops sliding between speakers.
+    let append_turn_separator = |out: &mut Vec<Line<'a>>, kind: RowKind| {
+        if !matches!(kind, RowKind::User | RowKind::Assistant) {
+            return;
+        }
+        let rule_width = transcript_width.saturating_sub(2).max(1);
+        let rule: String = "─".repeat(rule_width);
+        let dim = Style::default().fg(Color::DarkGray);
+        out.push(Line::from(""));
+        out.push(Line::from(Span::styled(rule, dim)));
+        out.push(Line::from(""));
+    };
     if r.kind != RowKind::Assistant || !r.text.contains('\n') {
-        return vec![row_to_line(r, frame, active_tools, theme, has_active_stream)];
+        let mut out = vec![row_to_line(
+            r,
+            frame,
+            active_tools,
+            theme,
+            has_active_stream,
+            user_label,
+            assistant_label,
+        )];
+        append_turn_separator(&mut out, r.kind.clone());
+        return out;
     }
     let assistant_color = rgb_to_color(theme.assistant);
     let code_fg = rgb_to_color(theme.code_fg);
@@ -1938,12 +1998,17 @@ fn row_to_lines<'a>(
     let mut out: Vec<Line> = Vec::new();
     let segments: Vec<&str> = r.text.split('\n').collect();
     let mut in_code = false;
+    let label_prefix = format!("{}: ", assistant_label);
+    let continuation_indent: String = " ".repeat(label_prefix.chars().count());
     for (i, seg) in segments.iter().enumerate() {
         let mut spans: Vec<Span> = Vec::new();
         if i == 0 {
-            spans.push(Span::styled("  ", Style::default().fg(assistant_color)));
+            spans.push(Span::styled(
+                label_prefix.clone(),
+                Style::default().fg(assistant_color).add_modifier(Modifier::BOLD),
+            ));
         } else {
-            spans.push(Span::raw("  "));
+            spans.push(Span::raw(continuation_indent.clone()));
         }
         let trimmed = seg.trim_start();
         // ── code fence handling ──────────────────────────────────────
@@ -2004,11 +2069,47 @@ fn row_to_lines<'a>(
         }
         out.push(Line::from(spans));
     }
+    append_turn_separator(&mut out, r.kind.clone());
     out
 }
 
 fn rgb_to_color(rgb: camouflage_renderer::theme::Rgb) -> Color {
     Color::Rgb(rgb.0, rgb.1, rgb.2)
+}
+
+/// Strip purely-empty leading/trailing lines from a splash blob. A line
+/// counts as "empty" if removing every ANSI SGR escape leaves nothing
+/// but whitespace — so a row that just sets a background color but
+/// prints no glyphs is still considered empty. Interior empty rows are
+/// kept (they're often deliberate spacing).
+fn trim_empty_splash_lines(text: &str) -> String {
+    fn visually_empty(line: &str) -> bool {
+        let bytes = line.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+                let mut j = i + 2;
+                while j < bytes.len() && !(0x40..=0x7e).contains(&bytes[j]) {
+                    j += 1;
+                }
+                i = j.saturating_add(1).min(bytes.len());
+                continue;
+            }
+            let ch = bytes[i] as char;
+            if !ch.is_whitespace() {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+    let lines: Vec<&str> = text.split('\n').collect();
+    let first_keep = lines.iter().position(|l| !visually_empty(l)).unwrap_or(lines.len());
+    let last_keep = lines.iter().rposition(|l| !visually_empty(l));
+    match last_keep {
+        Some(last) if last >= first_keep => lines[first_keep..=last].join("\n"),
+        _ => String::new(),
+    }
 }
 
 fn short_uuid(s: &str) -> String {

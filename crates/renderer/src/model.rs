@@ -175,6 +175,15 @@ pub struct RenderModel {
     /// True after the first `UserMessageCreated` arrives — used to
     /// auto-drop the splash so it doesn't permanently consume rows.
     user_has_submitted: bool,
+    /// v0.5+: per-turn label rendered as the prefix on user rows
+    /// (e.g. "You"). Defaults to "You". The host may override it by
+    /// passing `user_label` in the `SessionStarted` payload.
+    user_label: String,
+    /// v0.5+: per-turn label rendered as the prefix on assistant rows
+    /// (e.g. "kimiflare", "Claude"). Defaults to "Assistant". The host
+    /// may override it by passing `assistant_label` in the
+    /// `SessionStarted` payload.
+    assistant_label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -470,6 +479,8 @@ impl RenderModel {
             active_wizard: None,
             splash: None,
             user_has_submitted: false,
+            user_label: "You".to_string(),
+            assistant_label: "Assistant".to_string(),
         }
     }
 
@@ -570,6 +581,19 @@ impl RenderModel {
     /// `None` after the user has submitted their first prompt.
     pub fn splash(&self) -> Option<&str> {
         self.splash.as_deref()
+    }
+
+    /// v0.5+: label printed before each user turn in the transcript.
+    /// Defaults to "You". Host can override via `SessionStarted.user_label`.
+    pub fn user_label(&self) -> &str {
+        &self.user_label
+    }
+
+    /// v0.5+: label printed before each assistant turn in the transcript.
+    /// Defaults to "Assistant". Host can override via
+    /// `SessionStarted.assistant_label` (e.g. "kimiflare", "Claude").
+    pub fn assistant_label(&self) -> &str {
+        &self.assistant_label
     }
 
     /// Currently-pending permission request, if any. The TUI renders the
@@ -848,6 +872,21 @@ impl RenderModel {
                         text: "session started".to_string(),
                         tool_id: None,
                     });
+                }
+                // Optional host-supplied transcript labels. Re-pickable on
+                // any SessionStarted so an adapter can update branding
+                // mid-session without restarting the TUI.
+                if let Some(s) = ev.payload.get("user_label").and_then(|v| v.as_str()) {
+                    let s = s.trim();
+                    if !s.is_empty() {
+                        self.user_label = s.to_string();
+                    }
+                }
+                if let Some(s) = ev.payload.get("assistant_label").and_then(|v| v.as_str()) {
+                    let s = s.trim();
+                    if !s.is_empty() {
+                        self.assistant_label = s.to_string();
+                    }
                 }
             }
             EventType::SessionEnded => {
