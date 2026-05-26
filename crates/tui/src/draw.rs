@@ -159,7 +159,25 @@ pub fn render<B: Backend>(
     slash_sub_state: Option<&(String, Vec<String>, bool, usize)>,
 ) -> Result<()> {
     terminal.draw(|f| {
-        let area = f.area();
+        let raw_area = f.area();
+        // v0.5+: apply a small horizontal margin around the entire UI so
+        // text doesn't stick to the terminal edge. Matches the breathing
+        // room that React/Ink and Claude Code provide. Affects header,
+        // splash, transcript, status, input, and overlays uniformly so
+        // everything aligns. Capped via saturating_sub so very narrow
+        // terminals (<= 4 cols) just degrade to no margin.
+        let h_margin: u16 = 2;
+        let total_h_margin = h_margin.saturating_mul(2);
+        let area = if raw_area.width > total_h_margin {
+            ratatui::layout::Rect {
+                x: raw_area.x.saturating_add(h_margin),
+                y: raw_area.y,
+                width: raw_area.width.saturating_sub(total_h_margin),
+                height: raw_area.height,
+            }
+        } else {
+            raw_area
+        };
         // Layout regions: header / transcript / task-ribbon (optional) /
         // status / input or permission. Permission widget needs 4 rows
         // (top border + title row + button row + bottom border).
