@@ -11,13 +11,14 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { encode, validate } from "./types.js";
 
-/**
- * Default executable name. Looked up on PATH unless `opts.bin` is set
- * to an absolute or relative path.
- */
-const DEFAULT_BIN = "camouflage-tui";
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const LOCAL_BIN = join(__dirname, "..", "bin", "camouflage-tui");
+const DEFAULT_BIN = existsSync(LOCAL_BIN) ? LOCAL_BIN : "camouflage-tui";
 
 class CamouflageHandle extends EventEmitter {
   constructor(child, stdin) {
@@ -173,7 +174,7 @@ export async function mount(opts = {}) {
   //   stdout carries outbound NDJSON; we parse it line-by-line.
   //
   // renderToTerminal: true (the "host wraps the renderer" mode for
-  // Option-B-style integrations like KimiFlare):
+  // Option-B-style integrations where the host wraps the renderer):
   //   stdio = [pipe, inherit, inherit, pipe]
   //   args  = --stdin-events --responses-fd 3
   //   stdout goes directly to the user's terminal (rendering is visible);
@@ -430,8 +431,9 @@ function spawnError(err, bin) {
   if (err && err.code === "ENOENT") {
     return new Error(
       `camouflage: could not find renderer binary "${bin}". ` +
-      `Install it via \`cargo install --path crates/tui\` from a checkout of ` +
-      `https://github.com/sinameraji/camouflage, or pass { bin: "/absolute/path/to/camouflage-tui" } to mount().`,
+      `Try reinstalling: npm rebuild camouflage-tui\n` +
+      `Or install from source: cargo install --git https://github.com/sinameraji/camouflage camouflage-tui\n` +
+      `Or pass { bin: "/absolute/path/to/camouflage-tui" } to mount().`,
     );
   }
   return err;
