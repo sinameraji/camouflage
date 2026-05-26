@@ -128,6 +128,21 @@ Each component ships as a self-contained slice (one commit series): protocol eve
 | DR-5 | ⬜ TODO | Remote stream synchronization |
 | DR-6 | ⬜ TODO | Persistent local session library |
 
+### Documentation hygiene & CI (surfaced 2026-05-26 via full-repo doc audit)
+
+Audit found multiple docs that drifted away from the code as the project shipped through v0.2–v0.6. Items below are about catching the docs up to reality; none are code bugs.
+
+| ID | Status | Item | Reasoning / details | Where |
+|----|--------|------|---------------------|-------|
+| DOC-1 | ⬜ TODO | `docs/protocol.md` lists ~20 event types; code has 43. Missing from docs: `SlashCommandsRegistered`, `MentionCandidatesRegistered`, `ShowSelectList`/`SelectListResponse`, `ShowConfirm`/`ConfirmResponse`, `ShowToast`, `ShowTable`, `ShowKeyValueView`, `ShowForm`/`FormResponse`, `ShowWizard`/`WizardCompleted`/`WizardCancelled`, `ModeChangeRequested`, `CancelRequested`, `TranscriptCleared`, `Splash` (17 events from v0.4.5+ undocumented). | These are all shipped in `crates/protocol/src/lib.rs` — protocol.md just needs the section entries. | `docs/protocol.md` vs `crates/protocol/src/lib.rs` |
+| DOC-2 | ⬜ TODO | `docs/specs/PRODUCT_SPEC_AND_ROADMAP.md` marks v0.2 through v0.6 as `[NOT STARTED]` even though all six are tagged + shipped. | One-shot status sweep — replace `[NOT STARTED]` with `[DONE — tagged vX.Y.Z]` and link the milestone commits already captured in PROGRESS.md. | `docs/specs/PRODUCT_SPEC_AND_ROADMAP.md` |
+| DOC-3 | ⬜ TODO | `ARCHITECTURE.md` describes Ctrl+F search and lazy-paging-on-scroll as `(future)` / `(v0.2)`. Both have shipped (search in v0.2 Slice D, lazy paging in v0.1 #17). | Same one-shot wording cleanup. | `ARCHITECTURE.md` |
+| DOC-4 | ⬜ TODO | `viewer/README.md:40-41` claims the permission box is read-only "in v0.3 until KimiFlare adapter exposes bidirectional permissions" — but `viewer/index.html:213` already handles `PermissionResponse`. | Doc lag, feature already shipped. | `viewer/README.md` |
+| DOC-5 | ⬜ TODO | `sdk/node/README.md:20-21` has a placeholder link `[issue X]` that was never replaced with a real GitHub issue URL. | Either resolve the issue + link it, or remove the line. | `sdk/node/README.md` |
+| DOC-6 | ⬜ TODO | `docs/specs/MVP_BUILD_PROMPT.md` acceptance test for "Terminal/Scrolling" is marked `[NEEDS MANUAL VERIFY]` with the note "no pty harness yet" — `scripts/bench_input_latency.py` and the v0.1 #19 PTY harness landed and measured p95 = 23.99 ms under flood. | Status flip on existing checklist item. | `docs/specs/MVP_BUILD_PROMPT.md` |
+| CI-1 | ⬜ TODO | No `.github/workflows/` at all in the repo. `DEPENDENCIES.md:30` notes "cargo audit in CI (future)"; nothing is gated automatically. Builds, formatting, security audit, golden-image diffs (TP-6), and the soak run (MN-1) all currently rely on the human. | First slice: `cargo build`, `cargo fmt --check`, `cargo audit` on push. Later slices fold in TP-6 visual diffs + a scheduled MN-1 soak. | `.github/workflows/*` (new), `DEPENDENCIES.md` |
+| TEST-1 | ⬜ TODO | "Renderer never loads the full transcript" and "only renders the visible viewport" are listed in `MVP_BUILD_PROMPT.md` as acceptance tests but are enforced only by data-structure choice (bounded `VecDeque`) — no formal property test asserts them. Cheap to add and prevents future regressions if someone reintroduces an unbounded vector. | `crates/renderer/src/model.rs` test module; property test using `proptest` or hand-written stress test injecting 100k rows. |
+
 ### Maintenance / housekeeping
 
 | ID | Status | Item |
