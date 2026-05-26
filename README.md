@@ -8,21 +8,21 @@ A high-performance terminal renderer for AI agent applications. A React Ink alte
 
 If you're building an LLM-powered CLI tool — streaming responses, tool execution, permission prompts — React Ink starts to hurt:
 
-- **Unbounded memory**: Ink re-renders the full component tree. Long sessions eat RAM.
-- **Per-token re-renders**: Every streamed token triggers a full React reconciliation.
-- **No persistence**: Close the terminal, lose the session.
-- **No replay**: Can't inspect or debug past sessions.
+- **Full-tree re-render on every commit**: Each state update triggers a React reconciliation pass, Yoga layout recalculation, and a recursive walk of the entire node tree to rebuild the output buffer. Ink throttles terminal writes to 30 FPS, but the tree walk and buffer rebuild happen on every React commit.
+- **No scrollable viewport**: Ink manages cursor position, but has no built-in scrolling. When content exceeds terminal height, rendering breaks ([ink#359](https://github.com/vadimdemedes/ink/issues/359)). Historical output from `<Static>` is pushed to terminal scrollback with no way to navigate it programmatically.
+- **No persistence**: Close the terminal, lose the session. There's no built-in way to save or restore state.
+- **No replay**: Can't record, inspect, or debug past sessions.
 
-Camouflage fixes all of these:
+Camouflage takes a different approach:
 
-| Concern          | React Ink                              | Camouflage                                |
-|------------------|----------------------------------------|-------------------------------------------|
-| State model      | retained UI tree                       | append-only event log + bounded view      |
-| Memory           | grows with transcript length           | bounded (2000-row cap, pages from SQLite) |
-| Streaming        | re-renders on each token               | mutates one active row, 60 FPS throttle   |
-| Persistence      | none                                   | SQLite WAL, persisted before render       |
-| Replay           | not supported                          | first-class, deterministic                |
-| Terminal scrollback | trusted                             | not trusted — own viewport                |
+| Concern            | React Ink                                          | Camouflage                                |
+|--------------------|-------------------------------------------------------|-------------------------------------------|
+| State model        | retained React component tree                         | append-only event log + bounded view      |
+| Rendering          | full tree walk + buffer rebuild per React commit (output throttled to 30 FPS) | mutates one active row in place, 60 FPS   |
+| Memory             | application must manage its own transcript state      | bounded (2000-row cap, older rows paged from SQLite) |
+| Viewport           | no built-in scrolling; overflows break rendering      | own viewport with scroll, search, bookmarks |
+| Persistence        | none                                                  | SQLite WAL, every event persisted before render |
+| Replay             | not supported                                         | first-class, deterministic from event log |
 
 ## Install
 
