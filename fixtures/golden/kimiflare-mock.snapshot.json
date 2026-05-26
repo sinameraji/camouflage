@@ -19,17 +19,17 @@
     {
       "seq": 28,
       "kind": "tool",
-      "text": "✓ bash npm test src/auth/login.test.ts (4ms, exit=1, stdout=50B, stderr=0B)",
+      "text": "bash npm test src/auth/login.test.ts (4ms, exit=1, stdout=50B, stderr=0B)",
       "tool_id": "t1"
     },
     {
       "seq": 34,
-      "kind": "system",
+      "kind": "control",
       "text": "permission requested: apply patch to src/auth/login.ts (3 lines changed) (edit)"
     },
     {
       "seq": 35,
-      "kind": "system",
+      "kind": "control",
       "text": "permission granted"
     },
     {
@@ -52,5 +52,11 @@
     "tokens": "in 14k (2k cached)",
     "warn": "ctx 82% — /compact recommended"
   },
-  "tasks": []
+  "tasks": [
+    {
+      "task_id": "skills",
+      "label": "indexing skills",
+      "state": "done"
+    }
+  ]
 }

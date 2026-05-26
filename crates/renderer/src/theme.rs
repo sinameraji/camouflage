@@ -87,7 +87,7 @@ static BUILTIN: std::sync::LazyLock<Vec<Theme>> = std::sync::LazyLock::new(|| {
             assistant:      Rgb(0xc9, 0xd1, 0xd9),
             tool:           Rgb(0x79, 0xc0, 0xff),
             error:          Rgb(0xff, 0x7b, 0x72),
-            system:         Rgb(0x76, 0x83, 0x90),
+            system:         Rgb(0x8b, 0x96, 0xa3),
             marker:         Rgb(0x69, 0x39, 0xff),
             diff_add:       Rgb(0x56, 0xd3, 0x64),
             diff_remove:    Rgb(0xff, 0x7b, 0x72),

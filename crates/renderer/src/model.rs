@@ -17,6 +17,11 @@ pub enum RowKind {
     /// `Row.text` is the diff marker (`+`, `-`, ` `, `@`, or empty for the
     /// header). Renderers color-code based on that marker.
     Diff,
+    /// Permission lifecycle ("permission requested / granted / denied")
+    /// and stream-control outcomes ("aborted"). Visually distinct so the
+    /// user can spot the things that gate progress without scanning past
+    /// a wall of system/tool rows.
+    Control,
 }
 
 #[derive(Debug, Clone)]
@@ -113,6 +118,11 @@ pub struct RenderModel {
     /// Reconstructed older rows, displayed *before* `rows` in the viewport.
     /// Grows as the user scrolls upward; cleared on `clear_history`.
     history: Vec<Row>,
+    /// Lowest seq the renderer will accept into history. Set by
+    /// `TranscriptCleared` to the clear event's seq so subsequent
+    /// scroll-up history fetches can't resurrect cleared content from
+    /// the host's persisted store.
+    history_floor_seq: i64,
     /// v0.1.5+ — host-supplied status-bar segments. Renderer draws these in
     /// a fixed conventional order plus any extras in registration order.
     status_segments: BTreeMap<String, String>,
@@ -157,6 +167,23 @@ pub struct RenderModel {
     /// shown on its behalf). Responses to that sub-modal are intercepted
     /// by the app layer and routed back into `wizard_advance_*`.
     active_wizard: Option<WizardState>,
+    /// v0.4.9+: host-supplied splash (e.g. CLI logo) pinned above the
+    /// transcript until the user submits their first prompt. None once
+    /// the splash has been auto-dismissed; subsequent Splash events can
+    /// re-pin it (the host owns the lifecycle).
+    splash: Option<String>,
+    /// True after the first `UserMessageCreated` arrives — used to
+    /// auto-drop the splash so it doesn't permanently consume rows.
+    user_has_submitted: bool,
+    /// v0.5+: per-turn label rendered as the prefix on user rows
+    /// (e.g. "You"). Defaults to "You". The host may override it by
+    /// passing `user_label` in the `SessionStarted` payload.
+    user_label: String,
+    /// v0.5+: per-turn label rendered as the prefix on assistant rows
+    /// (e.g. "kimiflare", "Claude"). Defaults to "Assistant". The host
+    /// may override it by passing `assistant_label` in the
+    /// `SessionStarted` payload.
+    assistant_label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -436,6 +463,7 @@ impl RenderModel {
             tools: HashMap::new(),
             dirty: true,
             history: Vec::new(),
+            history_floor_seq: 0,
             status_segments: BTreeMap::new(),
             pending_permission: None,
             background_tasks: Vec::new(),
@@ -449,6 +477,10 @@ impl RenderModel {
             active_kv: None,
             active_form: None,
             active_wizard: None,
+            splash: None,
+            user_has_submitted: false,
+            user_label: "You".to_string(),
+            assistant_label: "Assistant".to_string(),
         }
     }
 
@@ -462,6 +494,14 @@ impl RenderModel {
     /// responsible for passing rows in increasing-seq order and for ensuring
     /// they belong strictly before any row already in this model.
     pub fn prepend_history(&mut self, rows: Vec<Row>) {
+        // Drop anything older than the last TranscriptCleared. Without
+        // this, scrolling up after /clear refetches the wiped rows
+        // from the host's persisted store and they "come back" — which
+        // defeats the whole point of clearing.
+        let rows: Vec<Row> = rows
+            .into_iter()
+            .filter(|r| r.seq >= self.history_floor_seq)
+            .collect();
         if rows.is_empty() {
             return;
         }
@@ -471,6 +511,13 @@ impl RenderModel {
         new_history.extend(self.history.drain(..));
         self.history = new_history;
         self.dirty = true;
+    }
+
+    /// Lowest seq the host should bother to send back on a history
+    /// fetch. App.rs uses this to clamp `from_seq` so we don't even
+    /// ask the store for events we'd just discard.
+    pub fn history_floor_seq(&self) -> i64 {
+        self.history_floor_seq
     }
 
     /// Drop all history rows (e.g. on jump-to-latest). Memory-bounding the
@@ -530,6 +577,25 @@ impl RenderModel {
         &self.status_segments
     }
 
+    /// Host-supplied splash (e.g. CLI logo) pinned above the transcript.
+    /// `None` after the user has submitted their first prompt.
+    pub fn splash(&self) -> Option<&str> {
+        self.splash.as_deref()
+    }
+
+    /// v0.5+: label printed before each user turn in the transcript.
+    /// Defaults to "You". Host can override via `SessionStarted.user_label`.
+    pub fn user_label(&self) -> &str {
+        &self.user_label
+    }
+
+    /// v0.5+: label printed before each assistant turn in the transcript.
+    /// Defaults to "Assistant". Host can override via
+    /// `SessionStarted.assistant_label` (e.g. "kimiflare", "Claude").
+    pub fn assistant_label(&self) -> &str {
+        &self.assistant_label
+    }
+
     /// Currently-pending permission request, if any. The TUI renders the
     /// modal widget while this is `Some`.
     pub fn pending_permission(&self) -> Option<&PendingPermission> {
@@ -586,6 +652,41 @@ impl RenderModel {
     /// `active_toasts()` (which prunes) instead.
     pub fn peek_toasts(&self) -> &[ToastState] {
         &self.toasts
+    }
+
+    /// Drop every live toast. Used by the Esc handler so the user has a
+    /// guaranteed way to dismiss persistent banners.
+    pub fn clear_toasts(&mut self) -> bool {
+        if self.toasts.is_empty() {
+            return false;
+        }
+        self.toasts.clear();
+        self.dirty = true;
+        true
+    }
+
+    /// Drop the pinned splash banner. Used by the Esc handler so the
+    /// user can hide the logo before their first submit.
+    pub fn clear_splash(&mut self) -> bool {
+        if self.splash.is_none() {
+            return false;
+        }
+        self.splash = None;
+        self.dirty = true;
+        true
+    }
+
+    /// Push a toast locally (not in response to a ShowToast event).
+    /// Used by the renderer to acknowledge Esc when there's nothing
+    /// else to dismiss, so the keystroke has guaranteed visible
+    /// feedback even at idle.
+    pub fn push_local_toast(&mut self, text: impl Into<String>, kind: ToastKind, ttl_ms: i64, now_ms: i64) {
+        self.toasts.push(ToastState {
+            text: text.into(),
+            kind,
+            expires_ms: now_ms + ttl_ms,
+        });
+        self.dirty = true;
     }
 
     /// CC-6 — currently-open Table modal, if any.
@@ -696,6 +797,35 @@ impl RenderModel {
         });
     }
 
+    /// Optimistic local cancel applied when the user hits Esc / Ctrl+C
+    /// before the host echoes back terminal events. Flips every running
+    /// background task to `Error` (so the spinner stops) and resets the
+    /// status `phase` segment to `idle`. The host's authoritative
+    /// updates can still override either of these later.
+    pub fn local_cancel_all(&mut self, now_ms: i64) {
+        let mut changed = false;
+        for t in self.background_tasks.iter_mut() {
+            if matches!(t.state, BackgroundTaskState::Running) {
+                t.state = BackgroundTaskState::Error;
+                t.finished_at_ms = Some(now_ms);
+                changed = true;
+            }
+        }
+        if self
+            .status_segments
+            .get("phase")
+            .map(|s| s.as_str())
+            != Some("idle")
+        {
+            self.status_segments
+                .insert("phase".to_string(), "idle".to_string());
+            changed = true;
+        }
+        if changed {
+            self.dirty = true;
+        }
+    }
+
     /// Called by the TUI when the user has answered. The pending state clears
     /// regardless of the choice; the outbound PermissionResponse event has
     /// already been emitted to the host by the caller.
@@ -743,6 +873,21 @@ impl RenderModel {
                         tool_id: None,
                     });
                 }
+                // Optional host-supplied transcript labels. Re-pickable on
+                // any SessionStarted so an adapter can update branding
+                // mid-session without restarting the TUI.
+                if let Some(s) = ev.payload.get("user_label").and_then(|v| v.as_str()) {
+                    let s = s.trim();
+                    if !s.is_empty() {
+                        self.user_label = s.to_string();
+                    }
+                }
+                if let Some(s) = ev.payload.get("assistant_label").and_then(|v| v.as_str()) {
+                    let s = s.trim();
+                    if !s.is_empty() {
+                        self.assistant_label = s.to_string();
+                    }
+                }
             }
             EventType::SessionEnded => {
                 self.push_row(Row {
@@ -771,6 +916,15 @@ impl RenderModel {
                     text,
                     tool_id: None,
                 });
+                // Auto-drop the splash on first user submission so the host's
+                // logo doesn't permanently consume rows above the transcript.
+                if !self.user_has_submitted {
+                    self.user_has_submitted = true;
+                    if self.splash.is_some() {
+                        self.splash = None;
+                        self.dirty = true;
+                    }
+                }
             }
             EventType::AssistantStreamStarted => {
                 let sid = ev
@@ -840,7 +994,13 @@ impl RenderModel {
                 // via the X-overlay (tool-output captured) or `i`-inspector.
                 let command_display = compact_command(command_raw);
                 let command = command_raw.to_string();
-                let display = format!("▸ {} {}", tool, command_display);
+                // No leading glyph — `draw.rs` owns the row prefix and would
+                // otherwise render it twice (e.g. `▸ ▸ grep …`).
+                let display = if command_display.is_empty() {
+                    tool.clone()
+                } else {
+                    format!("{} {}", tool, command_display)
+                };
                 let idx = self.push_row(Row {
                     seq: ev.seq,
                     kind: RowKind::Tool,
@@ -919,6 +1079,25 @@ impl RenderModel {
                     .get("status")
                     .and_then(|v| v.as_str())
                     .and_then(ToolStatus::from_str);
+                if !self.tools.contains_key(&tool_id) {
+                    // Adapter bug: a Finished event arrived for a tool we
+                    // never saw Started for. The matching row (if any) will
+                    // be left spinning. Behind CAMOUFLAGE_DEBUG_TOOLS so it
+                    // doesn't spam normal runs.
+                    if std::env::var_os("CAMOUFLAGE_DEBUG_TOOLS").is_some() {
+                        eprintln!(
+                            "[camouflage] ToolExecutionFinished for unknown tool_id={} (seq={})",
+                            tool_id, ev.seq
+                        );
+                    }
+                } else if self.tools.get(&tool_id).map(|s| s.finished).unwrap_or(false) {
+                    if std::env::var_os("CAMOUFLAGE_DEBUG_TOOLS").is_some() {
+                        eprintln!(
+                            "[camouflage] duplicate ToolExecutionFinished tool_id={} (seq={})",
+                            tool_id, ev.seq
+                        );
+                    }
+                }
                 if let Some(state) = self.tools.get_mut(&tool_id) {
                     state.finished = true;
                     state.exit_code = exit;
@@ -934,23 +1113,30 @@ impl RenderModel {
                     state.finished_ms = Some(ev.timestamp_ms);
                     let elapsed_ms = (ev.timestamp_ms - state.started_ms).max(0);
                     let elapsed_str = format_elapsed_ms(elapsed_ms);
-                    let glyph = match state.status {
-                        Some(ToolStatus::Done)      => "✓",
-                        Some(ToolStatus::Error)     => "✗",
-                        Some(ToolStatus::Cancelled) => "■",
-                        Some(ToolStatus::Rejected)  => "!",
-                        None => "·",
+                    // No glyph — draw.rs renders the status prefix once.
+                    // Success: just elapsed time. Failure / non-zero exit:
+                    // include exit code + byte counts since the user needs
+                    // them to diagnose.
+                    let command_display = compact_command(&state.command);
+                    let head = if command_display.is_empty() {
+                        state.tool.clone()
+                    } else {
+                        format!("{} {}", state.tool, command_display)
                     };
-                    let summary = format!(
-                        "{} {} {} ({}, exit={}, stdout={}B, stderr={}B)",
-                        glyph,
-                        state.tool,
-                        state.command,
-                        elapsed_str,
-                        exit.map(|i| i.to_string()).unwrap_or_else(|| "?".into()),
-                        state.stdout_bytes,
-                        state.stderr_bytes,
-                    );
+                    let success = matches!(state.status, Some(ToolStatus::Done))
+                        && exit.map(|i| i == 0).unwrap_or(true);
+                    let summary = if success {
+                        format!("{} ({})", head, elapsed_str)
+                    } else {
+                        format!(
+                            "{} ({}, exit={}, stdout={}B, stderr={}B)",
+                            head,
+                            elapsed_str,
+                            exit.map(|i| i.to_string()).unwrap_or_else(|| "?".into()),
+                            state.stdout_bytes,
+                            state.stderr_bytes,
+                        )
+                    };
                     if let Some(idx) = state.row_index_hint {
                         // The hint may be stale after eviction; compare seq if reachable.
                         if let Some(row) = self.rows.get_mut(idx) {
@@ -1054,7 +1240,7 @@ impl RenderModel {
                     .to_string();
                 self.push_row(Row {
                     seq: ev.seq,
-                    kind: RowKind::System,
+                    kind: RowKind::Control,
                     text: format!("permission requested: {} ({})", action, tool),
                     tool_id: None,
                 });
@@ -1079,7 +1265,7 @@ impl RenderModel {
                 self.pending_permission = None;
                 self.push_row(Row {
                     seq: ev.seq,
-                    kind: RowKind::System,
+                    kind: RowKind::Control,
                     text: "permission granted".into(),
                     tool_id: None,
                 });
@@ -1088,7 +1274,7 @@ impl RenderModel {
                 self.pending_permission = None;
                 self.push_row(Row {
                     seq: ev.seq,
-                    kind: RowKind::System,
+                    kind: RowKind::Control,
                     text: "permission denied".into(),
                     tool_id: None,
                 });
@@ -1136,6 +1322,20 @@ impl RenderModel {
                     tool_id: None,
                 });
             }
+            EventType::Splash => {
+                let text = ev
+                    .payload
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if text.is_empty() {
+                    self.splash = None;
+                } else {
+                    self.splash = Some(text);
+                }
+                self.dirty = true;
+            }
             EventType::TranscriptCleared => {
                 // Wipe live rows + history. Keep status segments, registered
                 // slash-commands, mention candidates etc. — those are
@@ -1143,6 +1343,11 @@ impl RenderModel {
                 self.rows.clear();
                 self.history.clear();
                 self.tools.clear();
+                // Block subsequent scroll-up history fetches from
+                // resurrecting the cleared content from the host's
+                // persisted store. Anything with seq < this is
+                // permanently invisible for the rest of the session.
+                self.history_floor_seq = ev.seq;
                 self.push_row(Row {
                     seq: ev.seq,
                     kind: RowKind::System,
@@ -1770,6 +1975,26 @@ fn current_time_ms() -> i64 {
 /// chars with an ellipsis. Used for the `▸ tool …` display string; the
 /// original full payload is preserved on `ToolState.command`.
 pub fn compact_command(raw: &str) -> String {
+    // If the raw command is a JSON object (the shape KimiFlare's
+    // `call.function.arguments` arrives in), summarise it as
+    // `k=v, k=v` instead of dumping braces and quoted keys. Strings get
+    // their quotes stripped; nested values fall back to JSON so the
+    // user still sees their structure. Anything that doesn't parse as
+    // a JSON object falls through to the literal-collapse path below.
+    if raw.trim_start().starts_with('{') {
+        if let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(raw) {
+            let mut parts: Vec<String> = Vec::with_capacity(map.len());
+            for (k, v) in &map {
+                let vs = match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Null => "null".into(),
+                    other => other.to_string(),
+                };
+                parts.push(format!("{k}={vs}"));
+            }
+            return truncate_to_width(&parts.join(", "), 120);
+        }
+    }
     // Collapse any whitespace run (including \n / \r / \t) to a single
     // space, drop other control chars. Tracks UTF-8 codepoints so we
     // truncate on a char boundary.
@@ -1799,6 +2024,24 @@ pub fn compact_command(raw: &str) -> String {
     // Trim trailing space we may have left while iterating.
     if out.ends_with(' ') {
         out.pop();
+    }
+    out
+}
+
+/// Char-aware truncation to `max` visible characters with a trailing ellipsis.
+fn truncate_to_width(s: &str, max: usize) -> String {
+    let mut out = String::with_capacity(s.len().min(max + 1));
+    let mut count = 0usize;
+    for ch in s.chars() {
+        if ch.is_control() {
+            continue;
+        }
+        if count >= max {
+            out.push('…');
+            return out;
+        }
+        out.push(ch);
+        count += 1;
     }
     out
 }
@@ -2017,7 +2260,80 @@ mod tests {
         })));
         let tool_rows: Vec<_> = m.rows().iter().filter(|r| r.kind == RowKind::Tool).collect();
         assert_eq!(tool_rows.len(), 1);
-        assert!(tool_rows[0].text.contains("stdout=10000B"));
-        assert!(tool_rows[0].text.contains("exit=0"));
+        // Success rows now show only elapsed; no exit / stdout / stderr noise.
+        assert!(!tool_rows[0].text.contains("stdout="));
+        assert!(!tool_rows[0].text.contains("exit="));
+        assert!(tool_rows[0].text.contains("bash"));
+    }
+
+    #[test]
+    fn failed_tool_keeps_diagnostics() {
+        let mut m = RenderModel::new();
+        m.apply(&ev(0, EventType::ToolExecutionStarted, json!({
+            "tool_id":"t1","tool":"bash","command":"false"
+        })));
+        m.apply(&ev(1, EventType::ToolExecutionFinished, json!({
+            "tool_id":"t1","exit_code":1
+        })));
+        let row = m.rows().iter().find(|r| r.kind == RowKind::Tool).unwrap();
+        assert!(row.text.contains("exit=1"));
+        assert!(row.text.contains("stdout=0B"));
+    }
+
+    #[test]
+    fn tool_row_text_has_no_leading_glyph() {
+        // draw.rs owns the row prefix; row.text must not embed ✓ / ✗ / ▸.
+        let mut m = RenderModel::new();
+        m.apply(&ev(0, EventType::ToolExecutionStarted, json!({
+            "tool_id":"t1","tool":"grep","command":"foo"
+        })));
+        let started = m.rows().iter().find(|r| r.kind == RowKind::Tool).unwrap();
+        assert!(!started.text.starts_with('▸'), "got: {}", started.text);
+        m.apply(&ev(1, EventType::ToolExecutionFinished, json!({
+            "tool_id":"t1","exit_code":0
+        })));
+        let done = m.rows().iter().find(|r| r.kind == RowKind::Tool).unwrap();
+        for g in ['✓', '✗', '■', '!', '·', '▸'] {
+            assert!(!done.text.starts_with(g), "got: {}", done.text);
+        }
+    }
+
+    #[test]
+    fn compact_command_renders_json_object_as_kv() {
+        let s = compact_command(r#"{"pattern":"hello","path":"src"}"#);
+        // Order of keys is preserved by serde_json::Map (insertion order).
+        assert!(s.contains("pattern=hello"), "got: {s}");
+        assert!(s.contains("path=src"), "got: {s}");
+        assert!(!s.contains('{'));
+        assert!(!s.contains('"'));
+    }
+
+    #[test]
+    fn compact_command_falls_through_for_non_json() {
+        let s = compact_command("ls -la /tmp");
+        assert_eq!(s, "ls -la /tmp");
+    }
+
+    #[test]
+    fn splash_pins_until_first_user_submit() {
+        let mut m = RenderModel::new();
+        m.apply(&ev(0, EventType::Splash, json!({"text":"LOGO\nv1.2.3"})));
+        assert_eq!(m.splash(), Some("LOGO\nv1.2.3"));
+        // Some events pass without dismissing.
+        m.apply(&ev(1, EventType::SessionStarted, json!({})));
+        m.apply(&ev(2, EventType::StatusUpdate, json!({"segments":{"mode":"plan"}})));
+        assert_eq!(m.splash(), Some("LOGO\nv1.2.3"));
+        // First UserMessageCreated drops the splash automatically.
+        m.apply(&ev(3, EventType::UserMessageCreated, json!({"text":"hi"})));
+        assert_eq!(m.splash(), None);
+    }
+
+    #[test]
+    fn splash_with_empty_text_clears() {
+        let mut m = RenderModel::new();
+        m.apply(&ev(0, EventType::Splash, json!({"text":"LOGO"})));
+        assert_eq!(m.splash(), Some("LOGO"));
+        m.apply(&ev(1, EventType::Splash, json!({"text":""})));
+        assert_eq!(m.splash(), None);
     }
 }

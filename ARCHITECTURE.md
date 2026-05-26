@@ -56,9 +56,9 @@ This guarantees that anything visible on screen has already been durably written
 
 ## Replay
 
-`--replay <SESSION_UUID>` is implemented by calling `load_session(sid)` and feeding events through `RenderModel::apply` before entering the event loop. Once loaded, the user can scroll, search (future), or continue the session.
+`--replay <SESSION_UUID>` is implemented by calling `load_session(sid)` and feeding events through `RenderModel::apply` before entering the event loop. Once loaded, the user can scroll, search (Ctrl+F, shipped in v0.2 Slice D), or continue the session.
 
-The bounded row cap means very long sessions don't fit in the rendered buffer simultaneously — the bottom 2000 rows are kept; scrolling up will (v0.2) lazily page older ranges from `load_range`.
+The bounded row cap means very long sessions don't fit in the rendered buffer simultaneously — the bottom 2000 rows are kept; scrolling up lazily pages older ranges from `load_range` via `prepend_history` (shipped in v0.1 milestone #17).
 
 ## How this differs from React Ink
 

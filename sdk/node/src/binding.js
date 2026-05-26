@@ -278,6 +278,9 @@ export async function mount(opts = {}) {
         direction: ev.payload?.direction,
       });
     } else if (ev.event_type === "CancelRequested") {
+      if (process.env.CAMOUFLAGE_DEBUG_ESC) {
+        process.stderr.write(`[sdk:esc] CancelRequested line arrived, emitting cancelRequested\n`);
+      }
       handle.emit("cancelRequested", {});
     }
     // Always also emit the raw Event for advanced consumers.

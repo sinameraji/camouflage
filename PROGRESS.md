@@ -2,7 +2,7 @@
 
 **Single source of truth for "where are we."** Read this first when resuming work, especially after a conversation compaction.
 
-Specs: [`docs/specs/MVP_BUILD_PROMPT.md`](docs/specs/MVP_BUILD_PROMPT.md), [`docs/specs/PRODUCT_SPEC_AND_ROADMAP.md`](docs/specs/PRODUCT_SPEC_AND_ROADMAP.md).
+Specs: [`docs/historical/MVP_BUILD_PROMPT.md`](docs/historical/MVP_BUILD_PROMPT.md), [`docs/historical/PRODUCT_SPEC_AND_ROADMAP.md`](docs/historical/PRODUCT_SPEC_AND_ROADMAP.md).
 
 ## File layout (read in this order)
 
@@ -24,6 +24,19 @@ Items below are **not yet done**. Pick the highest-priority one (top of each sec
 
 Status legend: ⬜ TODO · ⏳ IN PROGRESS · ✅ DONE (kept in place for archeology) · ⏸ DEFERRED (intentionally on hold, reason given)
 
+### Transcript polish & visual harness (2026-05-24 → 2026-05-26)
+
+Surfaced while dogfooding `--ui camouflage` against Kimiflare and looking at real screenshots through the new vhs harness.
+
+| ID | Status | Item | Reasoning / details | Where |
+|----|--------|-----|---------------------|-------|
+| TP-1 | ✅ DONE — `c0d529a` | vhs-based visual test harness for the TUI | Closes the rendering-loop blind spot: code-review-only feedback couldn't catch splash SGR breakage, toast sizing, or Esc dismissal because they're all visual. `tests/visual/run.sh <scenario>` builds and runs a tape; outputs PNG frames + GIF for the Read tool to ingest. First run downloads a headless Chromium (~3 min, cached after). | `tests/visual/`, `fixtures/{splash-sgr,toast-variants}.ndjson` |
+| TP-2 | ✅ DONE — `1782753` | Splash height cap was 12 rows; clipped Kimiflare's 26-row pixel-art logo | Raised cap to `min(area.height/2, 30)`. Splash auto-dismisses on first user submit, so generosity is cheap. Later widened further in TP-4. | `crates/tui/src/draw.rs` |
+| TP-3 | ✅ DONE — `da80961` | Per-turn labels + separator rules in the transcript | Configurable `user_label` / `assistant_label` on `SessionStarted` payload (defaults `You` / `Assistant`). Each user/assistant row is followed by pad / dim horizontal rule / pad so successive speakers are visually anchored. `visual_count` updated to match so scroll math stays aligned. | `crates/renderer/src/model.rs`, `crates/tui/src/draw.rs` |
+| TP-4 | ✅ DONE — `da80961` | Splash responsive on small terminals | ANSI-aware `trim_empty_splash_lines` strips visually-empty leading/trailing rows from host-supplied splash (Kimiflare's logo had 5+6 wasted blank rows). Height cap widened from `area.height/2` to `area.height - 6`. Verified visually at 900×520. | `crates/tui/src/draw.rs` |
+| TP-5 | ⬜ TODO | vhs Enter keystroke may not auto-dismiss splash | While running `kimiflare-splash.tape`, after `Type "hello" / Enter` the splash stayed pinned and `hello` stayed in the input box. Could be (a) vhs Enter not reaching the TUI through the pipeline, or (b) auto-dismiss-on-first-submit not firing under `--stdin-events`. Repro: `tests/visual/run.sh splash` — frame `03-after-submit.png`. | `crates/renderer/src/model.rs` auto-dismiss path, or vhs/PTY |
+| TP-6 | ⬜ TODO | Optional: golden-image diff gating in CI | Once tapes stabilise, add ImageMagick `compare` to flag unintended visual regressions on every push. | `tests/visual/`, CI config |
+
 ### TUI bugs surfaced by real `--ui camouflage` testing (2026-05-17)
 
 These came out of running `kimiflare --ui camouflage --dangerously-allow-all -p "..."` end-to-end against a real Cloudflare turn. They're real, reproducible, and block daily use.
@@ -44,7 +57,7 @@ Recognized 2026-05-17. Today Camouflage exposes a fixed set of widgets (StatusBa
 
 Design: each component is one inbound event (`Show<Component>`) carrying a unique `id`, plus an optional outbound response event (`<Component>Response`) keyed by the same id. Renderer owns layout/theme; host owns the data and the eventual handling of the response.
 
-The full catalog conversation from 2026-05-17 lives in [`docs/specs/components-catalog.md`](docs/specs/components-catalog.md) (to be created in the next slice). Quick reference of components in priority order:
+The full catalog conversation from 2026-05-17 lives in [`docs/historical/components-catalog.md`](docs/historical/components-catalog.md) (to be created in the next slice). Quick reference of components in priority order:
 
 | ID | Component | Status | KimiFlare consumers it unblocks | Reasoning |
 |----|-----------|--------|----------------------------------|-----------|
@@ -63,6 +76,8 @@ Each component ships as a self-contained slice (one commit series): protocol eve
 | ID | Status | Item | Reasoning |
 |----|--------|------|-----------|
 | ADP-1 | ⬜ TODO | Emit `SlashCommandsRegistered` listing KimiFlare's 28 slash commands | Unblocks TBR-5. Source list in `~/kimi-code-clone-3/src/commands/builtins.ts`. |
+| ADP-6 | ⬜ TODO | Set `user_label` / `assistant_label` on `SessionStarted` (e.g. `"kimiflare"`) | Unblocks the TP-3 branding for the real adapter. One-line change in `src/ui-mode.ts` where the first `cam.send("SessionStarted", …)` happens, plus `npm run build`. |
+| ADP-7 | ⬜ TODO | Stale-dist guardrail — KimiFlare's `dist/index.js` shipped without the Splash-send code for an unknown period | Discovered 2026-05-24: the splash code lived in `src/` but the bundled `dist/` was older, so the logo never reached the renderer in practice. Either add a `prepack`/`prepublish` hook that fails when dist is older than src, or move to `tsx`/just-in-time so dist drift can't happen. |
 | ADP-2 | ⬜ TODO | Wire `--ui camouflage` to use a SelectList for the resume picker (first CC-1 driver) | After CC-1 ships, replace KimiFlare's `src/ui/resume-picker.tsx` with a `ShowSelectList` emit + `SelectListResponse` handler. Validates the catalog design. |
 | ADP-3 | ⬜ TODO | KimiFlare → npm-published `camouflage` package | Currently uses `file:../camouflage/sdk/node` for local development. Switch to a real npm version once we publish. |
 | ADP-4 | ⏸ DEFERRED | Cost segment in `StatusUpdate` (mode/phase/elapsed/tokens/cost/branch) | Requires KimiFlare's cost-attribution machinery (complex; lives in `src/cost-attribution/`). Land after CC-1 → CC-3 demonstrate the catalog works. |
@@ -112,6 +127,21 @@ Each component ships as a self-contained slice (one commit series): protocol eve
 | DR-4 | ⬜ TODO | Session archive browser |
 | DR-5 | ⬜ TODO | Remote stream synchronization |
 | DR-6 | ⬜ TODO | Persistent local session library |
+
+### Documentation hygiene & CI (surfaced 2026-05-26 via full-repo doc audit)
+
+Audit found multiple docs that drifted away from the code as the project shipped through v0.2–v0.6. Items below are about catching the docs up to reality; none are code bugs.
+
+| ID | Status | Item | Reasoning / details | Where |
+|----|--------|------|---------------------|-------|
+| DOC-1 | ✅ DONE | `docs/protocol.md` lists ~20 event types; code has 43. Missing from docs: 17 events from v0.4.5+ (pickers, components catalog, Splash, TranscriptCleared, ModeChangeRequested, CancelRequested). | Added Pickers & registries section, Components catalog section, Splash + TranscriptCleared entries, ModeChangeRequested + CancelRequested entries; Direction table updated. | `docs/protocol.md` |
+| DOC-2 | ✅ DONE | `PRODUCT_SPEC_AND_ROADMAP.md` marked v0.2–v0.6 as `[NOT STARTED]` even though all six are tagged + shipped. | Resolved by moving `docs/specs/` to `docs/historical/` and banner-marking each file as HISTORICAL. Stale per-version markers are no longer authoritative; live state is here in PROGRESS.md. | `docs/historical/PRODUCT_SPEC_AND_ROADMAP.md` |
+| DOC-3 | ✅ DONE | `ARCHITECTURE.md` described Ctrl+F search and lazy-paging-on-scroll as `(future)` / `(v0.2)`. | Updated both lines to reference the shipped slices (v0.2 Slice D for search, v0.1 #17 for lazy paging). | `ARCHITECTURE.md` |
+| DOC-4 | ✅ DONE | `viewer/README.md` claimed the permission box was read-only; `viewer/index.html:213` already handles `PermissionResponse`. | Updated to describe the actual bidirectional behaviour. | `viewer/README.md` |
+| DOC-5 | ✅ DONE | `sdk/node/README.md` had a placeholder `[issue X]` link. | Replaced with explicit reference to ECO-6 in PROGRESS.md. | `sdk/node/README.md` |
+| DOC-6 | ✅ DONE | `MVP_BUILD_PROMPT.md` acceptance test "Terminal/Scrolling" marked `[NEEDS MANUAL VERIFY]` — PTY harness shipped in v0.1 #19. | Resolved by historical-banner on the spec file: inline markers are no longer authoritative. | `docs/historical/MVP_BUILD_PROMPT.md` |
+| CI-1 | ⬜ TODO | No `.github/workflows/` at all in the repo. `DEPENDENCIES.md:30` notes "cargo audit in CI (future)"; nothing is gated automatically. Builds, formatting, security audit, golden-image diffs (TP-6), and the soak run (MN-1) all currently rely on the human. | First slice: `cargo build`, `cargo fmt --check`, `cargo audit` on push. Later slices fold in TP-6 visual diffs + a scheduled MN-1 soak. | `.github/workflows/*` (new), `DEPENDENCIES.md` |
+| TEST-1 | ⬜ TODO | "Renderer never loads the full transcript" and "only renders the visible viewport" are listed in `MVP_BUILD_PROMPT.md` as acceptance tests but are enforced only by data-structure choice (bounded `VecDeque`) — no formal property test asserts them. Cheap to add and prevents future regressions if someone reintroduces an unbounded vector. | `crates/renderer/src/model.rs` test module; property test using `proptest` or hand-written stress test injecting 100k rows. |
 
 ### Maintenance / housekeeping
 
@@ -308,7 +338,7 @@ v0.3 added `tokio-tungstenite` + `futures-util` for the WebSocket transport. The
 ## How to use this file
 
 - **At the start of any work session**, open this file first. The "Current stage" line is the elevator pitch.
-- **When a milestone changes state**, edit its row here AND the inline `[STATUS]` marker in the relevant spec under `docs/specs/`.
+- **When a milestone changes state**, edit its row here. (The original specs under `docs/historical/` are no longer maintained; they're kept for archeology only.)
 - **When a new milestone surfaces**, append it to the appropriate version's checklist with status `NOT DONE`.
 - **Commit this file** alongside the code changes that move it forward — git history then explains "how" while this file explains "what's left."
 
@@ -348,7 +378,7 @@ Brief one-liners per session. Keep this short — git log has the detail.
 | Date       | Summary                                                                                  |
 |------------|------------------------------------------------------------------------------------------|
 | 2026-05-15 | Scaffolded workspace; v0.1 code-complete; all unit tests pass; bench hits 4/4 targets.   |
-| 2026-05-16 | Initialized git, imported specs into `docs/specs/`, added PROGRESS.md tracker.           |
+| 2026-05-16 | Initialized git, imported specs into `docs/specs/` (later moved to `docs/historical/`), added PROGRESS.md tracker.           |
 | 2026-05-16 | Created public GitHub repo, pushed. Fixed pipe-stdin raw-mode bug (open /dev/tty directly).|
 | 2026-05-16 | Fixed deeper pipe-stdin bug: crossterm's mio-based event poll fails (EINVAL on macOS kqueue+/dev/tty). Replaced with custom blocking /dev/tty reader + ANSI parser. Verified via pty harness: 290 events round-tripped, full UI rendered. |
 | 2026-05-16 | Fixed status-line layout bug (Borders::TOP consumed the only available line). Status now renders as `idle [follow] rows=N total=M` between transcript and input. |

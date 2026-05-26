@@ -8,7 +8,7 @@ use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use ratatui::Terminal;
 use unicode_width::UnicodeWidthStr;
 
@@ -86,6 +86,18 @@ fn spinner_frame_now() -> u64 {
     ms / 80
 }
 
+/// Wall-clock-driven on/off for the streaming caret. ~1Hz blink (500ms
+/// each phase) is the macOS / VS Code default — calm enough to read
+/// over, alive enough to signal "still streaming."
+fn caret_visible_now() -> bool {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    (ms / 500) % 2 == 0
+}
+
 /// View-time projection of the event inspector. None = panel closed.
 pub struct InspectorView<'a> {
     /// Rows-from-newest of the focused row (0 = bottom).
@@ -99,6 +111,14 @@ pub struct InspectorView<'a> {
 /// Inline search prompt projection. None = closed.
 pub struct SearchView<'a> {
     pub query: &'a str,
+}
+
+/// Replay-mode scrubber state. None = not in replay mode (don't draw the bar).
+pub struct ReplayView {
+    pub position: usize,
+    pub total: usize,
+    pub playing: bool,
+    pub speed_mult: f32,
 }
 
 /// v0.4: live runtime metrics shown in the toggleable overlay.
@@ -133,9 +153,7 @@ impl RowFilterKind {
                 r.kind == RowKind::Diff
                     || (r.kind == RowKind::System && r.text.starts_with("patch "))
             }
-            Self::Permissions => {
-                r.kind == RowKind::System && r.text.starts_with("permission ")
-            }
+            Self::Permissions => r.kind == RowKind::Control,
         }
     }
 }
@@ -143,7 +161,7 @@ impl RowFilterKind {
 pub fn render<B: Backend>(
     terminal: &mut Terminal<B>,
     model: &RenderModel,
-    viewport: &ViewportState,
+    viewport: &mut ViewportState,
     input_buf: &str,
     input_cursor: usize,
     status: &str,
@@ -153,14 +171,34 @@ pub fn render<B: Backend>(
     search: Option<SearchView<'_>>,
     help_open: bool,
     metrics: Option<MetricsView>,
+    replay: Option<ReplayView>,
     theme: &camouflage_renderer::theme::Theme,
     tool_output_open: bool,
     permission_feedback: &str,
     slash_picker_index: usize,
     mention_picker_index: usize,
+    slash_sub_state: Option<&(String, Vec<String>, bool, usize)>,
 ) -> Result<()> {
     terminal.draw(|f| {
-        let area = f.area();
+        let raw_area = f.area();
+        // v0.5+: apply a small horizontal margin around the entire UI so
+        // text doesn't stick to the terminal edge. Matches the breathing
+        // room that React/Ink and Claude Code provide. Affects header,
+        // splash, transcript, status, input, and overlays uniformly so
+        // everything aligns. Capped via saturating_sub so very narrow
+        // terminals (<= 4 cols) just degrade to no margin.
+        let h_margin: u16 = 2;
+        let total_h_margin = h_margin.saturating_mul(2);
+        let area = if raw_area.width > total_h_margin {
+            ratatui::layout::Rect {
+                x: raw_area.x.saturating_add(h_margin),
+                y: raw_area.y,
+                width: raw_area.width.saturating_sub(total_h_margin),
+                height: raw_area.height,
+            }
+        } else {
+            raw_area
+        };
         // Layout regions: header / transcript / task-ribbon (optional) /
         // status / input or permission. Permission widget needs 4 rows
         // (top border + title row + button row + bottom border).
@@ -170,6 +208,7 @@ pub fn render<B: Backend>(
         // protect the transcript from being squeezed on tiny terminals.
         let has_tasks = !model.background_tasks().is_empty();
         let task_line: u16 = if has_tasks { 1 } else { 0 };
+        let replay_line: u16 = if replay.is_some() { 1 } else { 0 };
         let status_text_width = status_total_width(model, viewport, status);
         let inner_w = area.width.saturating_sub(2).max(1) as usize; // box content width (subtract borders)
         let status_height: u16 = {
@@ -198,26 +237,82 @@ pub fn render<B: Backend>(
             let content_lines = ((input_w + inner_w - 1) / inner_w).max(1).min(3) as u16;
             content_lines + 2 // top + bottom border
         };
+        // Splash: host-supplied multi-line ANSI text (e.g. CLI logo)
+        // pinned above the transcript until the user submits their
+        // first prompt. Allocated height is capped so a huge banner
+        // can't swallow the transcript on a small terminal.
+        // v0.5+: trim purely-empty leading/trailing rows from the
+        // host-supplied splash. Hosts that build pixel-art splashes
+        // (e.g. Kimiflare) tend to pad their logo with several blank
+        // rows for alignment in the original Ink layout — those rows
+        // are pure waste in the TUI, and on a 20-row terminal they
+        // push the actual content off-screen.
+        let splash_raw = model.splash();
+        let splash_trimmed: Option<String> = splash_raw.map(|s| trim_empty_splash_lines(s));
+        let splash_text: Option<&str> = splash_trimmed.as_deref();
+        let splash_height: u16 = splash_text
+            .map(|s| {
+                let lines = s.lines().count() as u16;
+                // Responsive cap: give splash as much vertical room as
+                // possible while still leaving room for the header
+                // (1 row), status (~1 row), input (~3 rows) and at
+                // least 2 transcript rows so the user sees their first
+                // submit ack land somewhere. Hard-capped at 30 rows so
+                // very tall terminals don't dedicate half the screen.
+                // Splash auto-dismisses on first user submission, so
+                // generosity here is cheap.
+                let cap = area.height.saturating_sub(6).min(30).max(1);
+                lines.min(cap).saturating_add(1) // +1 for trailing blank line
+            })
+            .unwrap_or(0);
+        // Layout regions in order: header / splash (optional) /
+        // transcript / spacer / task ribbon (optional) / status / input.
+        // The 1-row spacer between the transcript and the status row
+        // gives the last line of streamed content visual breathing room
+        // from the status bar — without it, a fully-filled viewport puts
+        // text flush against the next chunk and reads as "cut off".
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1),
+                Constraint::Length(splash_height),
                 Constraint::Min(1),
+                Constraint::Length(1), // bottom spacer
                 Constraint::Length(task_line),
+                Constraint::Length(replay_line),
                 Constraint::Length(status_height),
                 Constraint::Length(bottom_height),
             ])
             .split(area);
 
-        // Header
+        // Header. Accent-colored "Camouflage" title + dim session id so
+        // the brand has visual weight without dominating the transcript.
+        let accent = rgb_to_color(theme.accent);
+        let dim_sys = rgb_to_color(theme.system);
         let header = Paragraph::new(Line::from(vec![
-            Span::styled("Camouflage ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Camouflage ",
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(
                 format!("session={}", short_uuid(&viewport.session_id.to_string())),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(dim_sys),
             ),
         ]));
         f.render_widget(header, chunks[0]);
+
+        // Render the splash (if any) into chunks[1]. The text typically
+        // contains ANSI SGR escape sequences (RGB fg/bg, reset) — we
+        // parse those into per-Span Style so ratatui knows the visual
+        // width per cell. Without parsing, ratatui treats the ESC bytes
+        // as printable text and the resulting layout looks shredded.
+        if let Some(text) = splash_text {
+            let lines = parse_ansi_lines(text);
+            let para = Paragraph::new(lines);
+            f.render_widget(para, chunks[1]);
+        }
+
+        // ── trim_empty_splash_lines defined below row_to_lines ──
 
         // Transcript viewport. Long rows wrap onto multiple visual lines so
         // the full content is visible. To keep auto-follow aligned to the
@@ -230,65 +325,184 @@ pub fn render<B: Backend>(
         let history = model.history_rows();
         let live = model.rows();
         let total_rows = (history.len() + live.len()) as i64;
-        let viewport_h = chunks[1].height as usize;
-        let transcript_width = chunks[1].width as usize;
+        let viewport_h = chunks[2].height as usize;
+        let transcript_width = chunks[2].width as usize;
         let avail = transcript_width.saturating_sub(2).max(1); // prefix glyph + space
         // When the viewport is "frozen" at a scroll position, anchor the
         // window to the snapshot taken at scroll-time so new streaming
         // rows don't push the user's view.
-        let anchor = viewport.frozen_total.unwrap_or(total_rows);
-        let end = (anchor - viewport.scroll_offset)
-            .max(0)
-            .min(total_rows) as usize;
-        // Walk backwards from `end` until we've accumulated enough visual
-        // lines to fill the viewport (plus a small safety margin).
-        let mut rows_taken: Vec<&camouflage_renderer::Row> = Vec::new();
-        let mut visual_so_far: usize = 0;
-        let combined: Vec<&camouflage_renderer::Row> = history
+        // Per-row visual line count (post-wrap). Used both for visual
+        // extent computation and the windowed render below.
+        let visual_count = |r: &camouflage_renderer::Row| -> usize {
+            // v0.5+: user / assistant rows render a turn separator
+            // (pad / rule / pad = 3 extra visual lines) underneath, so
+            // the scroll math needs to know about them up-front.
+            let separator_lines = matches!(r.kind, RowKind::User | RowKind::Assistant) as usize * 3;
+            let body = if r.kind == RowKind::Assistant && r.text.contains('\n') {
+                r.text
+                    .split('\n')
+                    .map(|seg| {
+                        let w = UnicodeWidthStr::width(seg).max(1);
+                        (w + avail - 1) / avail
+                    })
+                    .sum::<usize>()
+            } else {
+                let w = UnicodeWidthStr::width(r.text.as_str()).max(1);
+                (w + avail - 1) / avail
+            };
+            body + separator_lines
+        };
+        let combined_all: Vec<&camouflage_renderer::Row> = history
             .iter()
             .chain(live.iter())
-            .take(end)
             .filter(|r| row_filter.map_or(true, |f| f.matches(r)))
             .collect();
-        for r in combined.iter().rev() {
-            rows_taken.push(*r);
-            // Match row_to_lines: assistant rows split on `\n` into one
-            // visual paragraph per segment; everything else counts as one
-            // logical row that wraps at `avail` width.
-            if r.kind == RowKind::Assistant && r.text.contains('\n') {
-                for seg in r.text.split('\n') {
-                    let w = UnicodeWidthStr::width(seg).max(1);
-                    visual_so_far += (w + avail - 1) / avail;
-                }
-            } else {
-                let text_w = UnicodeWidthStr::width(r.text.as_str()).max(1);
-                visual_so_far += (text_w + avail - 1) / avail;
+        // Total visual lines for the *whole* (filtered) transcript. The
+        // previous implementation truncated to `anchor` rows here, which
+        // is what made the user's scroll "stuck": once frozen at e.g.
+        // row 3 the viewport could never see anything past row 3 even
+        // as 25 more streamed in below.
+        let total_visual_now: i64 = combined_all.iter().map(|r| visual_count(r) as i64).sum();
+        // Push the latest total_visual back to the viewport so the
+        // input loop's `scroll_up` knows where to freeze on the *next*
+        // press, and so input-history fetches can detect "near top".
+        viewport.last_total_visual = total_visual_now;
+        // Effective bottom-of-viewport visual line. With auto-follow,
+        // it's the live tail. While frozen, it's the snapshot minus
+        // however far the user has scrolled up. scroll_offset can go
+        // negative — that's the user scrolling *down past* the frozen
+        // bottom into content that streamed in during the freeze.
+        let effective_bottom: i64 = match viewport.frozen_visual_bottom {
+            Some(f) => (f - viewport.scroll_offset)
+                .max(viewport_h as i64)
+                .min(total_visual_now),
+            None => total_visual_now,
+        };
+        // Unfreeze + resume auto-follow once the view actually catches
+        // up to the live tail (the user has scrolled all the way down
+        // through content that arrived during the freeze). Doing it
+        // here, not in scroll_down, avoids the "page jump" the user
+        // saw: the gap between the frozen bottom and the live tail is
+        // traversed line-by-line, not in a single snap.
+        if let Some(f) = viewport.frozen_visual_bottom {
+            if (f - viewport.scroll_offset) >= total_visual_now {
+                viewport.frozen_visual_bottom = None;
+                viewport.scroll_offset = 0;
+                viewport.auto_follow = true;
             }
-            if visual_so_far >= viewport_h + 4 {
+            // Re-clamp the offset against the actual top of the
+            // transcript so PageUp past the start doesn't pile up
+            // phantom offset (which would force equal-and-opposite
+            // PageDowns to recover).
+            let max_off = (f - viewport_h as i64).max(0);
+            if viewport.scroll_offset > max_off {
+                viewport.scroll_offset = max_off;
+            }
+        }
+        // Walk backward through the row list accumulating visual lines
+        // until we have rows that cover the visible window. We need to
+        // track *where* the bottommost pushed row ends within the
+        // transcript so the Paragraph scroll math doesn't drift.
+        let mut rows_taken_rev: Vec<&camouflage_renderer::Row> = Vec::new();
+        let below_visible = (total_visual_now - effective_bottom).max(0);
+        let needed_above_bottom = viewport_h as i64 + 4;
+        let mut cum_from_end: i64 = 0;
+        // Transcript line index of the bottom of the slice (1-indexed
+        // visual line of the bottommost cell of the bottommost row we
+        // included). Computed when we push the first row.
+        let mut slice_bottom_line: i64 = effective_bottom;
+        for r in combined_all.iter().rev() {
+            let prev_cum = cum_from_end;
+            cum_from_end += visual_count(r) as i64;
+            if cum_from_end > below_visible {
+                if rows_taken_rev.is_empty() {
+                    // Row's bottom transcript line = total_visual - prev_cum.
+                    slice_bottom_line = total_visual_now - prev_cum;
+                }
+                rows_taken_rev.push(*r);
+            }
+            if cum_from_end >= below_visible + needed_above_bottom {
                 break;
             }
         }
+        let mut rows_taken = rows_taken_rev;
         rows_taken.reverse();
         let active_tools = model.tools();
+        let user_label = model.user_label();
+        let assistant_label = model.assistant_label();
+        let active_stream_seq: Option<i64> = model
+            .active_stream_row()
+            .and_then(|i| model.rows().get(i))
+            .map(|r| r.seq);
         let lines: Vec<Line> = rows_taken
             .iter()
-            .flat_map(|r| row_to_lines(r, frame, active_tools, theme, model.has_active_stream()))
+            .flat_map(|r| {
+                let is_active = active_stream_seq.map_or(false, |s| s == r.seq);
+                row_to_lines(
+                    r,
+                    frame,
+                    active_tools,
+                    theme,
+                    model.has_active_stream(),
+                    is_active,
+                    user_label,
+                    assistant_label,
+                    transcript_width,
+                )
+            })
             .collect();
-        // Scroll so the bottom of the wrapped content sits on the bottom of
-        // the chunk. `visual_so_far` is the total visual lines of the slice;
-        // when it exceeds the viewport, skip the leading ones.
-        let scroll_top = visual_so_far.saturating_sub(viewport_h) as u16;
+        // Use ratatui's own wrap engine to count visible lines — our
+        // own visual_count is an approximation (it doesn't perfectly
+        // model prefix glyphs, list markers, code-fence styling, etc.).
+        // The under-count meant `scroll_top` was several lines too low,
+        // so the bottom of the transcript (the most recent assistant
+        // response and the user's "hi") got clipped off the viewport.
+        // line_count(chunks[1].width) returns the exact post-wrap line
+        // total that the Paragraph will produce, so subtracting
+        // viewport_h gives a scroll_top that aligns the bottom of the
+        // content with the bottom of the viewport.
+        let probe = Paragraph::new(lines.clone()).wrap(Wrap { trim: false });
+        let actual_visual = probe.line_count(chunks[2].width) as i64;
+        let lines_below_visible_in_slice = (slice_bottom_line - effective_bottom).max(0);
+        let scroll_top =
+            (actual_visual - viewport_h as i64 - lines_below_visible_in_slice).max(0) as u16;
+        let slice_visual: i64 = rows_taken.iter().map(|r| visual_count(r) as i64).sum();
+        if crate::scrolllog::enabled() {
+            crate::scrolllog::log_json(serde_json::json!({
+                "ev": "render",
+                "frame": frame,
+                "scroll_offset": viewport.scroll_offset,
+                "frozen_visual_bottom": viewport.frozen_visual_bottom,
+                "auto_follow": viewport.auto_follow,
+                "viewport_h": viewport_h,
+                "total_rows": total_rows,
+                "total_visual_now": total_visual_now,
+                "effective_bottom": effective_bottom,
+                "below_visible": below_visible,
+                "rows_taken": rows_taken.len(),
+                "slice_visual": slice_visual,
+                "actual_visual": actual_visual,
+                "slice_bottom_line": slice_bottom_line,
+                "lines_below_visible_in_slice": lines_below_visible_in_slice,
+                "scroll_top": scroll_top,
+                "transcript_width": transcript_width,
+                "avail": avail,
+                "first_row_text_prefix": rows_taken.first().map(|r| r.text.chars().take(40).collect::<String>()),
+                "last_row_text_prefix": rows_taken.last().map(|r| r.text.chars().take(40).collect::<String>()),
+            }));
+        }
         let transcript = Paragraph::new(lines)
             .wrap(Wrap { trim: false })
             .scroll((scroll_top, 0));
 
-        // When the inspector is open, split chunks[1] horizontally so the
-        // transcript shares the row with a JSON detail panel on the right.
+        // When the inspector is open, split the transcript region
+        // horizontally so the transcript shares the row with a JSON
+        // detail panel on the right.
         if let Some(insp) = inspector.as_ref() {
             let split = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([Constraint::Min(20), Constraint::Length((chunks[1].width / 2).min(60).max(30))])
-                .split(chunks[1]);
+                .constraints([Constraint::Min(20), Constraint::Length((chunks[2].width / 2).min(60).max(30))])
+                .split(chunks[2]);
             f.render_widget(transcript, split[0]);
             // Inspector pane.
             let header_text = match insp.focused_seq {
@@ -310,7 +524,30 @@ pub fn render<B: Backend>(
                 );
             f.render_widget(panel, split[1]);
         } else {
-            f.render_widget(transcript, chunks[1]);
+            f.render_widget(transcript, chunks[2]);
+        }
+
+        // Vertical scrollbar pinned to the right edge of the transcript
+        // chunk. The position is in visual lines: top = 0, bottom =
+        // `total_visual_now - viewport_h`. While auto-following the
+        // live tail the thumb sits at the bottom. We skip rendering it
+        // entirely if the transcript fits without scrolling (no point
+        // showing a full-length thumb).
+        if total_visual_now > viewport_h as i64 && inspector.is_none() {
+            let scrollable_extent = (total_visual_now - viewport_h as i64).max(1) as usize;
+            let position = (total_visual_now - effective_bottom).max(0) as usize;
+            // Invert: position should be 0 at the top (oldest content
+            // visible) and at max when bottom (latest visible).
+            let bar_pos = scrollable_extent.saturating_sub(position);
+            let mut state = ScrollbarState::new(scrollable_extent)
+                .position(bar_pos)
+                .viewport_content_length(viewport_h);
+            let bar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .style(Style::default().fg(Color::DarkGray))
+                .thumb_style(Style::default().fg(Color::Cyan));
+            f.render_stateful_widget(bar, chunks[2], &mut state);
         }
 
         // Status line — multi-segment, host-driven. Convention: known keys
@@ -428,14 +665,49 @@ pub fn render<B: Backend>(
                 ribbon_spans.push(Span::styled(label, label_style));
             }
             let ribbon = Paragraph::new(Line::from(ribbon_spans));
-            f.render_widget(ribbon, chunks[2]);
+            f.render_widget(ribbon, chunks[4]);
         }
 
+        // Replay timeline scrubber. Drawn just above the status line so
+        // the user always sees their position in the session at a glance.
+        // Half-block fill (▌) gives 2x effective resolution on the bar.
+        if let Some(rv) = &replay {
+            let bar_w = chunks[5].width.max(8) as usize;
+            let suffix = format!(
+                " {:>3}%  {}/{}  {:.2}×  {}",
+                if rv.total == 0 { 0 } else { (rv.position * 100 / rv.total).min(100) },
+                rv.position,
+                rv.total,
+                rv.speed_mult,
+                if rv.position >= rv.total { "■" } else if rv.playing { "▶" } else { "‖" },
+            );
+            let suffix_w = UnicodeWidthStr::width(suffix.as_str());
+            let track_w = bar_w.saturating_sub(suffix_w).max(4);
+            // Compute filled cells at half-block resolution.
+            let halves = if rv.total == 0 {
+                0
+            } else {
+                ((rv.position as u64 * (track_w as u64) * 2) / rv.total as u64) as usize
+            };
+            let full = halves / 2;
+            let half = halves % 2;
+            let mut track = String::with_capacity(track_w * 3);
+            for _ in 0..full { track.push('█'); }
+            if half == 1 { track.push('▌'); }
+            for _ in 0..(track_w.saturating_sub(full + half)) { track.push('·'); }
+            let accent = rgb_to_color(theme.accent);
+            let dim = Style::default().fg(Color::DarkGray);
+            let bar = Paragraph::new(Line::from(vec![
+                Span::styled(track, Style::default().fg(accent)),
+                Span::styled(suffix, dim),
+            ]));
+            f.render_widget(bar, chunks[5]);
+        }
         let status_line = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: false });
-        f.render_widget(status_line, chunks[3]);
+        f.render_widget(status_line, chunks[6]);
 
         // Bottom box: search prompt > permission widget > input prompt.
-        let input_chunk = chunks[4];
+        let input_chunk = chunks[7];
         if let Some(sv) = search.as_ref() {
             let widget = Paragraph::new(Line::from(vec![
                 Span::styled("/", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
@@ -536,27 +808,55 @@ pub fn render<B: Backend>(
                 );
             f.render_widget(widget, input_chunk);
         } else {
+            // Cursor + scroll math. The input box has a fixed visible
+            // height (3 content lines max — see bottom_height above), so
+            // long voice-dictated prompts wrap past the bottom of the box.
+            // We compute the total wrapped line count and, when it exceeds
+            // what fits, scroll the Paragraph so the cursor's line is the
+            // bottom visible line — and show a "+N lines · M chars" badge
+            // in the title so the user knows nothing was truncated.
+            let prompt_w: u16 = 2; // "› "
+            let typed_before_cursor: String = input_buf.chars().take(input_cursor).collect();
+            let cursor_col_advance = UnicodeWidthStr::width(typed_before_cursor.as_str()) as u16;
+            let total_w = UnicodeWidthStr::width(input_buf) as u16 + prompt_w;
+            let inner_w = input_chunk.width.saturating_sub(2).max(1);
+            let total_x = 1u16 + prompt_w + cursor_col_advance; // 1 = left border
+            let cursor_line = (total_x.saturating_sub(1)) / inner_w; // 0-indexed visual line
+            let total_lines = if total_w == 0 { 1 } else { (total_w + inner_w - 1) / inner_w }.max(1);
+            let visible_lines = input_chunk.height.saturating_sub(2).max(1);
+            // Scroll so the cursor stays in view; clamp so we never scroll
+            // past the end of the buffer.
+            let scroll_off: u16 = cursor_line
+                .saturating_sub(visible_lines.saturating_sub(1))
+                .min(total_lines.saturating_sub(visible_lines));
+            let title: String = if total_lines > visible_lines {
+                let chars = input_buf.chars().count();
+                format!(
+                    "input · {} chars · {} lines (full text captured)",
+                    chars, total_lines,
+                )
+            } else {
+                "input".to_string()
+            };
+            let title_style = if total_lines > visible_lines {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            };
             let input = Paragraph::new(Line::from(vec![
                 Span::styled("› ", Style::default().fg(Color::Cyan)),
                 Span::raw(input_buf),
             ]))
             .wrap(Wrap { trim: false })
-            .block(Block::default().borders(Borders::ALL).title("input"));
+            .scroll((scroll_off, 0))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(Span::styled(title, title_style)),
+            );
             f.render_widget(input, input_chunk);
-            // Show the terminal cursor at the insertion point so the user
-            // can SEE where typing will land. Cursor position math: box
-            // top border (+1), prompt "› " is 2 cells, then char cursor
-            // mapped to visual width. For multi-line wrap we fall through
-            // to whatever ratatui draws — best-effort for now.
-            let prompt_w: u16 = 2; // "› "
-            let typed_before_cursor: String = input_buf.chars().take(input_cursor).collect();
-            let cursor_col_advance = UnicodeWidthStr::width(typed_before_cursor.as_str()) as u16;
-            let inner_w = input_chunk.width.saturating_sub(2).max(1);
-            let total_x = 1u16 + prompt_w + cursor_col_advance; // 1 = left border
-            // Wrap into multiple visual lines when the prompt overflows.
-            let cursor_line = total_x / inner_w;
             let cursor_x = input_chunk.x + (total_x % inner_w);
-            let cursor_y = input_chunk.y + 1 + cursor_line;
+            let cursor_y = input_chunk.y + 1 + cursor_line.saturating_sub(scroll_off);
             f.set_cursor(cursor_x, cursor_y);
         }
         if help_open {
@@ -568,7 +868,11 @@ pub fn render<B: Backend>(
         if tool_output_open {
             draw_tool_output_overlay(f, area, model);
         }
-        if input_buf.starts_with('/') && !model.slash_commands().is_empty()
+        if let Some(sub) = slash_sub_state {
+            if model.pending_permission().is_none() && search.is_none() {
+                draw_slash_sub_picker_overlay(f, area, sub);
+            }
+        } else if input_buf.starts_with('/') && !model.slash_commands().is_empty()
             && model.pending_permission().is_none()
             && search.is_none()
         {
@@ -612,6 +916,14 @@ pub fn render<B: Backend>(
         if let Some(form) = model.active_form() {
             draw_form_overlay(f, area, form, theme);
         }
+        // Optional: dump literal cell contents to disk so we can review
+        // what actually hit the screen at this frame. Gated by env var
+        // since the output is large.
+        if crate::scrolllog::screen_enabled() {
+            let buf = f.buffer_mut();
+            crate::scrolllog::log_screen(area, buf, "full", frame);
+            crate::scrolllog::log_screen(chunks[2], buf, "transcript", frame);
+        }
     })?;
     Ok(())
 }
@@ -652,6 +964,8 @@ fn draw_help_overlay(f: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
         kv("→ / ←", "step forward / backward 1 event", key, dim),
         kv("+ / -", "adjust replay speed (0.25× – 64×)", key, dim),
         kv("0", "restart replay", key, dim),
+        kv("1 – 9", "jump to 10% – 90% of timeline", key, dim),
+        kv("G", "jump to end of replay", key, dim),
         Line::from(""),
         Line::from(vec![Span::styled("Other", head)]),
         kv("Enter", "submit input", key, dim),
@@ -661,6 +975,7 @@ fn draw_help_overlay(f: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
         kv("M", "toggle live-metrics overlay", key, dim),
         kv("T", "cycle theme", key, dim),
         kv("X", "tool-output overlay (most recent)", key, dim),
+        kv("S", "toggle mouse capture (turn off to drag-select text)", key, dim),
         kv("q · Ctrl+C", "quit", key, dim),
         Line::from(""),
         Line::from(vec![
@@ -861,6 +1176,75 @@ fn draw_slash_picker_overlay(
                 .title(" slash commands  ↑/↓ wrap  Enter insert ")
                 .border_style(Style::default().fg(Color::Cyan)),
         );
+    f.render_widget(widget, overlay);
+}
+
+fn draw_slash_sub_picker_overlay(
+    f: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    state: &(String, Vec<String>, bool, usize),
+) {
+    let (parent, options, optional, idx) = state;
+    // Include a "(no arg)" trailing entry when the argument is optional.
+    let mut entries: Vec<String> = options.clone();
+    if *optional {
+        entries.push("(no argument)".to_string());
+    }
+    if entries.is_empty() {
+        return;
+    }
+    let visible = entries.len().min(8);
+    let w: u16 = 50;
+    let h: u16 = (visible as u16) + 2;
+    if area.width < w + 2 || area.height < h + 6 {
+        return;
+    }
+    let bottom_height: u16 = 5;
+    let x = area.x + 2;
+    let y = area
+        .y
+        .saturating_add(area.height)
+        .saturating_sub(bottom_height)
+        .saturating_sub(h);
+    let overlay = ratatui::layout::Rect { x, y, width: w, height: h };
+    f.render_widget(Clear, overlay);
+
+    let dim = Style::default().fg(Color::DarkGray);
+    let sel = Style::default()
+        .fg(Color::Black)
+        .bg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let plain = Style::default().fg(Color::White);
+
+    let sel_idx = (*idx).min(entries.len() - 1);
+    let scroll_off = sel_idx.saturating_sub(visible - 1);
+    let end = (scroll_off + visible).min(entries.len());
+    let lines: Vec<Line> = entries[scroll_off..end]
+        .iter()
+        .enumerate()
+        .map(|(i, label)| {
+            let absolute_i = scroll_off + i;
+            let style = if absolute_i == sel_idx { sel } else { plain };
+            let preview = if absolute_i + 1 > options.len() {
+                // sentinel for the optional "no argument" entry
+                format!("   /{}", parent)
+            } else {
+                format!("   /{} {}", parent, label)
+            };
+            Line::from(vec![
+                Span::styled(format!(" {}", label), style),
+                Span::styled(preview, dim),
+            ])
+        })
+        .collect();
+
+    let title = format!(" /{} — pick · ↑/↓ · Enter submit · ←/Esc back ", parent);
+    let widget = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(Style::default().fg(Color::Cyan)),
+    );
     f.render_widget(widget, overlay);
 }
 
@@ -1248,12 +1632,21 @@ fn draw_toasts(
         if t.expires_ms <= now_ms { continue; }
         let max_w = area.width.saturating_sub(4).min(60).max(20);
         let text_w = UnicodeWidthStr::width(t.text.as_str()) as u16;
-        let inner_w = text_w.min(max_w.saturating_sub(4));
-        let w = inner_w + 4;
-        if next_y + 3 > area.y + area.height { break; }
+        // Width: cap at max_w (which already leaves room for screen
+        // padding). The inner text width is the box width minus 4
+        // (2 border cols + the " i " label + 1 space gutter).
+        let w = text_w.saturating_add(4 + 3 + 1).min(max_w).max(20);
+        let inner_text_w = w.saturating_sub(4 + 3 + 1).max(1);
+        // Height: count the wrapped text rows so multi-line toasts
+        // (e.g. the 70-char welcome banner) render their full text
+        // instead of leaving only a clipped first row + dangling
+        // corner borders.
+        let rows: u16 = ((text_w + inner_text_w - 1) / inner_text_w).max(1).min(5);
+        let h = rows + 2; // +2 for top + bottom border
+        if next_y + h > area.y + area.height { break; }
         if w > area.width { continue; }
         let x = area.x + area.width.saturating_sub(w + 1);
-        let rect = ratatui::layout::Rect { x, y: next_y, width: w, height: 3 };
+        let rect = ratatui::layout::Rect { x, y: next_y, width: w, height: h };
         f.render_widget(Clear, rect);
         let (label, color) = match t.kind {
             ToastKind::Info    => (" i ", rgb_to_color(theme.accent)),
@@ -1273,7 +1666,7 @@ fn draw_toasts(
                 .border_style(Style::default().fg(color)),
         );
         f.render_widget(widget, rect);
-        next_y += 3;
+        next_y += h;
     }
 }
 
@@ -1507,6 +1900,9 @@ fn row_to_line<'a>(
     active_tools: &std::collections::HashMap<String, camouflage_renderer::ToolState>,
     theme: &camouflage_renderer::theme::Theme,
     has_active_stream: bool,
+    is_active_stream_row: bool,
+    user_label: &str,
+    assistant_label: &str,
 ) -> Line<'a> {
     let spinner_color = rgb_to_color(theme.spinner);
     let user_color = rgb_to_color(theme.user);
@@ -1522,7 +1918,7 @@ fn row_to_line<'a>(
     // Tool row whose ToolState is not yet finished → spinner instead of ✓.
     let (prefix, color) = match r.kind {
         RowKind::System => ("·".to_string(), system_color),
-        RowKind::User => ("›".to_string(), user_color),
+        RowKind::User => (format!("{}:", user_label), user_color),
         RowKind::Assistant => {
             // Only show the spinner on an empty assistant row when a stream
             // is actually in flight. Without this check, completed-but-
@@ -1530,7 +1926,7 @@ fn row_to_line<'a>(
             if r.text.is_empty() && has_active_stream {
                 (spinner_glyph(spinner_frame_now()).to_string(), spinner_color)
             } else {
-                (" ".to_string(), assistant_color)
+                (format!("{}:", assistant_label), assistant_color)
             }
         }
         RowKind::Tool => {
@@ -1554,6 +1950,12 @@ fn row_to_line<'a>(
             }
         }
         RowKind::Error => ("✗".to_string(), error_color),
+        RowKind::Control => {
+            // Permission requested/granted/denied + abort outcomes — paint
+            // with the spinner accent (amber-ish) so they're visually
+            // distinct from the gray system stream that surrounds them.
+            ("•".to_string(), spinner_color)
+        }
         RowKind::Marker => ("¶".to_string(), marker_color),
         RowKind::Diff => {
             let marker = r.text.chars().next().unwrap_or(' ');
@@ -1568,9 +1970,14 @@ fn row_to_line<'a>(
     };
     // For an in-flight tool row, append the running elapsed time so the
     // user can see how long the tool has been executing.
-    let mut spans: Vec<Span> = vec![
-        Span::styled(format!("{} ", prefix), Style::default().fg(color)),
-    ];
+    // User-turn prefix gets bold so the user's own input visually anchors
+    // the transcript instead of vanishing into the wall of tool output.
+    let prefix_style = if r.kind == RowKind::User {
+        Style::default().fg(color).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(color)
+    };
+    let mut spans: Vec<Span> = vec![Span::styled(format!("{} ", prefix), prefix_style)];
     if r.kind == RowKind::Assistant && !r.text.is_empty() {
         let code_fg = rgb_to_color(theme.code_fg);
         let code_bg = rgb_to_color(theme.code_bg);
@@ -1589,8 +1996,25 @@ fn row_to_line<'a>(
         }
     } else if r.kind == RowKind::Diff {
         spans.push(Span::styled(r.text.as_str(), Style::default().fg(color)));
+    } else if r.kind == RowKind::User {
+        // Paint user-submitted text in the user color (not just the
+        // prefix). Without this, the user's own input renders white
+        // and loses its place in the transcript.
+        spans.push(Span::styled(r.text.as_str(), Style::default().fg(color)));
+    } else if r.kind == RowKind::Control {
+        spans.push(Span::styled(r.text.as_str(), Style::default().fg(color)));
     } else {
         spans.push(Span::raw(r.text.as_str()));
+    }
+    // Streaming caret: blink a half-block at the end of the active
+    // assistant stream row so tokens look like they're being typed in
+    // real time rather than just appearing on a wall.
+    if r.kind == RowKind::Assistant && is_active_stream_row && !r.text.is_empty() {
+        let glyph = if caret_visible_now() { "▌" } else { " " };
+        spans.push(Span::styled(
+            glyph.to_string(),
+            Style::default().fg(assistant_color).add_modifier(Modifier::BOLD),
+        ));
     }
     if r.kind == RowKind::Tool {
         if let Some(state) = r.tool_id.as_ref().and_then(|tid| active_tools.get(tid)) {
@@ -1631,9 +2055,38 @@ fn row_to_lines<'a>(
     active_tools: &std::collections::HashMap<String, camouflage_renderer::ToolState>,
     theme: &camouflage_renderer::theme::Theme,
     has_active_stream: bool,
+    is_active_stream_row: bool,
+    user_label: &str,
+    assistant_label: &str,
+    transcript_width: usize,
 ) -> Vec<Line<'a>> {
+    // v0.5+: after each user/assistant turn render a horizontal rule with
+    // a blank pad above and below it. Visually separates conversational
+    // turns so the eye stops sliding between speakers.
+    let append_turn_separator = |out: &mut Vec<Line<'a>>, kind: RowKind| {
+        if !matches!(kind, RowKind::User | RowKind::Assistant) {
+            return;
+        }
+        let rule_width = transcript_width.saturating_sub(2).max(1);
+        let rule: String = "─".repeat(rule_width);
+        let dim = Style::default().fg(Color::DarkGray);
+        out.push(Line::from(""));
+        out.push(Line::from(Span::styled(rule, dim)));
+        out.push(Line::from(""));
+    };
     if r.kind != RowKind::Assistant || !r.text.contains('\n') {
-        return vec![row_to_line(r, frame, active_tools, theme, has_active_stream)];
+        let mut out = vec![row_to_line(
+            r,
+            frame,
+            active_tools,
+            theme,
+            has_active_stream,
+            is_active_stream_row,
+            user_label,
+            assistant_label,
+        )];
+        append_turn_separator(&mut out, r.kind.clone());
+        return out;
     }
     let assistant_color = rgb_to_color(theme.assistant);
     let code_fg = rgb_to_color(theme.code_fg);
@@ -1642,12 +2095,17 @@ fn row_to_lines<'a>(
     let mut out: Vec<Line> = Vec::new();
     let segments: Vec<&str> = r.text.split('\n').collect();
     let mut in_code = false;
+    let label_prefix = format!("{}: ", assistant_label);
+    let continuation_indent: String = " ".repeat(label_prefix.chars().count());
     for (i, seg) in segments.iter().enumerate() {
         let mut spans: Vec<Span> = Vec::new();
         if i == 0 {
-            spans.push(Span::styled("  ", Style::default().fg(assistant_color)));
+            spans.push(Span::styled(
+                label_prefix.clone(),
+                Style::default().fg(assistant_color).add_modifier(Modifier::BOLD),
+            ));
         } else {
-            spans.push(Span::raw("  "));
+            spans.push(Span::raw(continuation_indent.clone()));
         }
         let trimmed = seg.trim_start();
         // ── code fence handling ──────────────────────────────────────
@@ -1708,11 +2166,59 @@ fn row_to_lines<'a>(
         }
         out.push(Line::from(spans));
     }
+    // Append the streaming caret to the very last line of an active
+    // assistant stream so the cursor sits where the next token will
+    // appear, not at the end of the first line.
+    if is_active_stream_row {
+        if let Some(last) = out.last_mut() {
+            let glyph = if caret_visible_now() { "▌" } else { " " };
+            last.spans.push(Span::styled(
+                glyph.to_string(),
+                Style::default().fg(assistant_color).add_modifier(Modifier::BOLD),
+            ));
+        }
+    }
+    append_turn_separator(&mut out, r.kind.clone());
     out
 }
 
 fn rgb_to_color(rgb: camouflage_renderer::theme::Rgb) -> Color {
     Color::Rgb(rgb.0, rgb.1, rgb.2)
+}
+
+/// Strip purely-empty leading/trailing lines from a splash blob. A line
+/// counts as "empty" if removing every ANSI SGR escape leaves nothing
+/// but whitespace — so a row that just sets a background color but
+/// prints no glyphs is still considered empty. Interior empty rows are
+/// kept (they're often deliberate spacing).
+fn trim_empty_splash_lines(text: &str) -> String {
+    fn visually_empty(line: &str) -> bool {
+        let bytes = line.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+                let mut j = i + 2;
+                while j < bytes.len() && !(0x40..=0x7e).contains(&bytes[j]) {
+                    j += 1;
+                }
+                i = j.saturating_add(1).min(bytes.len());
+                continue;
+            }
+            let ch = bytes[i] as char;
+            if !ch.is_whitespace() {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+    let lines: Vec<&str> = text.split('\n').collect();
+    let first_keep = lines.iter().position(|l| !visually_empty(l)).unwrap_or(lines.len());
+    let last_keep = lines.iter().rposition(|l| !visually_empty(l));
+    match last_keep {
+        Some(last) if last >= first_keep => lines[first_keep..=last].join("\n"),
+        _ => String::new(),
+    }
 }
 
 fn short_uuid(s: &str) -> String {
@@ -1753,4 +2259,139 @@ pub(crate) fn unified_diff_lines(before: &str, after: &str, max: usize) -> Vec<S
         out.push(format!("… ({} more lines)", remaining));
     }
     out
+}
+
+/// Minimal SGR-aware ANSI parser. Handles exactly the subset emitted by
+/// host CLI splash banners: `\x1b[Nm` reset / single param, `\x1b[N;Nm`
+/// multi-param, and 24-bit colour (`38;2;R;G;B` foreground / `48;2;R;G;B`
+/// background / `49` default-bg / `m` or `0m` reset). Everything else
+/// (cursor moves, save/restore, OSC) is ignored. Each input line becomes
+/// one `Line` of `Span`s with the active style baked into each Span.
+pub fn parse_ansi_lines(text: &str) -> Vec<Line<'static>> {
+    let mut out: Vec<Line<'static>> = Vec::new();
+    for raw_line in text.split('\n') {
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        let mut style = Style::default();
+        let bytes = raw_line.as_bytes();
+        let mut i = 0;
+        let mut buf = String::new();
+        while i < bytes.len() {
+            // ESC [ ... letter
+            if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+                if !buf.is_empty() {
+                    spans.push(Span::styled(std::mem::take(&mut buf), style));
+                }
+                // Find the terminating letter (0x40..=0x7e).
+                let start = i + 2;
+                let mut end = start;
+                while end < bytes.len() && !(0x40..=0x7e).contains(&bytes[end]) {
+                    end += 1;
+                }
+                if end >= bytes.len() {
+                    // malformed; bail on this line.
+                    i = bytes.len();
+                    break;
+                }
+                let final_byte = bytes[end];
+                let params: &str = std::str::from_utf8(&bytes[start..end]).unwrap_or("");
+                if final_byte == b'm' {
+                    apply_sgr(&mut style, params);
+                }
+                i = end + 1;
+                continue;
+            }
+            // Decode one UTF-8 codepoint and append.
+            let ch_len = utf8_char_len(bytes[i]);
+            let end = (i + ch_len).min(bytes.len());
+            if let Ok(s) = std::str::from_utf8(&bytes[i..end]) {
+                buf.push_str(s);
+            }
+            i = end;
+        }
+        if !buf.is_empty() {
+            spans.push(Span::styled(buf, style));
+        }
+        out.push(Line::from(spans));
+    }
+    out
+}
+
+fn utf8_char_len(b: u8) -> usize {
+    if b < 0x80 { 1 }
+    else if b < 0xc0 { 1 } // continuation byte (shouldn't happen at start; treat as 1)
+    else if b < 0xe0 { 2 }
+    else if b < 0xf0 { 3 }
+    else { 4 }
+}
+
+fn apply_sgr(style: &mut Style, params: &str) {
+    // Empty `\x1b[m` is the same as `\x1b[0m` — reset.
+    if params.is_empty() {
+        *style = Style::default();
+        return;
+    }
+    let parts: Vec<&str> = params.split(';').collect();
+    let mut idx = 0;
+    while idx < parts.len() {
+        let Ok(n) = parts[idx].parse::<u16>() else {
+            idx += 1;
+            continue;
+        };
+        match n {
+            0 => *style = Style::default(),
+            1 => *style = style.add_modifier(Modifier::BOLD),
+            2 => *style = style.add_modifier(Modifier::DIM),
+            3 => *style = style.add_modifier(Modifier::ITALIC),
+            4 => *style = style.add_modifier(Modifier::UNDERLINED),
+            22 => *style = style.remove_modifier(Modifier::BOLD | Modifier::DIM),
+            38 => {
+                // 38;2;R;G;B  → RGB foreground
+                if parts.get(idx + 1) == Some(&"2") && idx + 4 < parts.len() {
+                    if let (Ok(r), Ok(g), Ok(b)) = (
+                        parts[idx + 2].parse::<u8>(),
+                        parts[idx + 3].parse::<u8>(),
+                        parts[idx + 4].parse::<u8>(),
+                    ) {
+                        *style = style.fg(Color::Rgb(r, g, b));
+                    }
+                    idx += 4;
+                }
+            }
+            48 => {
+                if parts.get(idx + 1) == Some(&"2") && idx + 4 < parts.len() {
+                    if let (Ok(r), Ok(g), Ok(b)) = (
+                        parts[idx + 2].parse::<u8>(),
+                        parts[idx + 3].parse::<u8>(),
+                        parts[idx + 4].parse::<u8>(),
+                    ) {
+                        *style = style.bg(Color::Rgb(r, g, b));
+                    }
+                    idx += 4;
+                }
+            }
+            39 => *style = style.fg(Color::Reset),
+            49 => *style = style.bg(Color::Reset),
+            30..=37 => *style = style.fg(basic_color(n - 30)),
+            40..=47 => *style = style.bg(basic_color(n - 40)),
+            90..=97 => *style = style.fg(bright_color(n - 90)),
+            100..=107 => *style = style.bg(bright_color(n - 100)),
+            _ => {}
+        }
+        idx += 1;
+    }
+}
+
+fn basic_color(c: u16) -> Color {
+    match c {
+        0 => Color::Black, 1 => Color::Red, 2 => Color::Green, 3 => Color::Yellow,
+        4 => Color::Blue,  5 => Color::Magenta, 6 => Color::Cyan, 7 => Color::Gray,
+        _ => Color::Reset,
+    }
+}
+fn bright_color(c: u16) -> Color {
+    match c {
+        0 => Color::DarkGray, 1 => Color::LightRed, 2 => Color::LightGreen, 3 => Color::LightYellow,
+        4 => Color::LightBlue, 5 => Color::LightMagenta, 6 => Color::LightCyan, 7 => Color::White,
+        _ => Color::Reset,
+    }
 }

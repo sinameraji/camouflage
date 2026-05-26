@@ -32,6 +32,7 @@ where
                 maybe = rx.recv() => {
                     match maybe {
                         Some(OutgoingEvent(ev)) => {
+                            let event_name = ev.event_type.as_str();
                             if let Ok(s) = serde_json::to_string(&ev) {
                                 if let Ok(mut g) = w.lock() {
                                     let _ = writeln!(*g, "{}", s);
@@ -44,6 +45,24 @@ where
                                         let _ = writeln!(*g, "{}", s);
                                     }
                                 }
+                            }
+                            // Flush immediately — Esc/Ctrl+C emit
+                            // CancelRequested and the host needs it
+                            // *now*, not in up to 16ms. The previous
+                            // tick-only flush was the difference between
+                            // an Esc that aborted in 5ms vs one that
+                            // looked dead for a full frame.
+                            let flush_res = if let Ok(mut g) = w.lock() {
+                                g.flush()
+                            } else {
+                                Ok(())
+                            };
+                            if std::env::var_os("CAMOUFLAGE_DEBUG_ESC").is_some() {
+                                eprintln!(
+                                    "[camouflage:esc] writer flushed {} (flush={})",
+                                    event_name,
+                                    if flush_res.is_ok() { "ok" } else { "err" }
+                                );
                             }
                         }
                         None => break,

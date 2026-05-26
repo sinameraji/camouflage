@@ -83,7 +83,7 @@ pub enum EventType {
     MentionCandidatesRegistered,
     /// v0.4.6+ (CC-1) — Host → renderer: render a modal SelectList. The
     /// first of the "components catalog" primitives (see
-    /// `docs/specs/components-catalog.md`). User's pick is reported back
+    /// `docs/historical/components-catalog.md`). User's pick is reported back
     /// via `SelectListResponse` keyed by the same `id`.
     ShowSelectList,
     /// v0.4.6+ (CC-1) — Renderer → host: outcome of a `ShowSelectList`.
@@ -137,6 +137,12 @@ pub enum EventType {
     /// `/clear` in host CLIs). Auto-follow resumes at the bottom; status
     /// bar and registered slash-commands persist. No payload.
     TranscriptCleared,
+    /// v0.4.9+ — Host → renderer: pin a multi-line ANSI splash above the
+    /// transcript (e.g. the host's CLI logo + version line). Renderer
+    /// keeps it visible until the user submits their first prompt, then
+    /// drops it so it doesn't eat transcript real-estate forever.
+    /// Payload: `{ "text": "...multi-line ANSI string..." }`.
+    Splash,
 }
 
 impl EventType {
@@ -181,7 +187,58 @@ impl EventType {
             EventType::ModeChangeRequested => "ModeChangeRequested",
             EventType::CancelRequested => "CancelRequested",
             EventType::TranscriptCleared => "TranscriptCleared",
+            EventType::Splash => "Splash",
         }
+    }
+
+    /// Inverse of `as_str`. Returns `None` for variants this binary
+    /// doesn't know about — callers (e.g. the NDJSON decoder) use this
+    /// to skip forward-shipped events instead of failing the whole
+    /// stream.
+    pub fn from_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "SessionStarted" => Self::SessionStarted,
+            "SessionEnded" => Self::SessionEnded,
+            "UserMessageCreated" => Self::UserMessageCreated,
+            "AssistantStreamStarted" => Self::AssistantStreamStarted,
+            "AssistantTokenDelta" => Self::AssistantTokenDelta,
+            "AssistantMessageCompleted" => Self::AssistantMessageCompleted,
+            "ToolExecutionStarted" => Self::ToolExecutionStarted,
+            "ToolExecutionStdout" => Self::ToolExecutionStdout,
+            "ToolExecutionStderr" => Self::ToolExecutionStderr,
+            "ToolExecutionFinished" => Self::ToolExecutionFinished,
+            "PatchProposed" => Self::PatchProposed,
+            "PatchApplied" => Self::PatchApplied,
+            "PermissionRequested" => Self::PermissionRequested,
+            "PermissionGranted" => Self::PermissionGranted,
+            "PermissionDenied" => Self::PermissionDenied,
+            "RuntimeError" => Self::RuntimeError,
+            "SessionCompacted" => Self::SessionCompacted,
+            "ViewportMarker" => Self::ViewportMarker,
+            "StatusUpdate" => Self::StatusUpdate,
+            "BackgroundTaskUpdate" => Self::BackgroundTaskUpdate,
+            "UserInputSubmitted" => Self::UserInputSubmitted,
+            "PermissionResponse" => Self::PermissionResponse,
+            "SlashCommandsRegistered" => Self::SlashCommandsRegistered,
+            "MentionCandidatesRegistered" => Self::MentionCandidatesRegistered,
+            "ShowSelectList" => Self::ShowSelectList,
+            "SelectListResponse" => Self::SelectListResponse,
+            "ShowConfirm" => Self::ShowConfirm,
+            "ConfirmResponse" => Self::ConfirmResponse,
+            "ShowToast" => Self::ShowToast,
+            "ShowTable" => Self::ShowTable,
+            "ShowKeyValueView" => Self::ShowKeyValueView,
+            "ShowForm" => Self::ShowForm,
+            "FormResponse" => Self::FormResponse,
+            "ShowWizard" => Self::ShowWizard,
+            "WizardCompleted" => Self::WizardCompleted,
+            "WizardCancelled" => Self::WizardCancelled,
+            "ModeChangeRequested" => Self::ModeChangeRequested,
+            "CancelRequested" => Self::CancelRequested,
+            "TranscriptCleared" => Self::TranscriptCleared,
+            "Splash" => Self::Splash,
+            _ => return None,
+        })
     }
 
     /// Direction this event flows on the wire.
@@ -407,7 +464,7 @@ pub mod payloads {
     }
 
     /// v0.4.6+ (CC-1) — host asks the renderer to show a modal select list.
-    /// See `docs/specs/components-catalog.md` for the full design.
+    /// See `docs/historical/components-catalog.md` for the full design.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub struct ShowSelectList {
         /// Host-chosen unique id. Reported back in `SelectListResponse` so
@@ -758,6 +815,31 @@ mod tests {
         assert_eq!(EventType::StatusUpdate.direction(), Direction::Inbound);
         assert_eq!(EventType::UserInputSubmitted.direction(), Direction::Outbound);
         assert_eq!(EventType::PermissionResponse.direction(), Direction::Outbound);
+    }
+
+    #[test]
+    fn permission_response_choice_wire_format() {
+        // Host-side parsers key off these exact strings. Pin them down so a
+        // rename in PermissionChoice can't silently break "allow for the
+        // turn" / "allow for the session" semantics across the boundary.
+        for (choice, expected) in [
+            (payloads::PermissionChoice::AllowOnce, "allow_once"),
+            (payloads::PermissionChoice::AllowSession, "allow_session"),
+            (payloads::PermissionChoice::Deny, "deny"),
+        ] {
+            let p = payloads::PermissionResponse {
+                request_id: "req-1".into(),
+                choice,
+                feedback: None,
+            };
+            let s = serde_json::to_string(&p).unwrap();
+            assert!(
+                s.contains(&format!("\"choice\":\"{}\"", expected)),
+                "expected choice={} in {}", expected, s
+            );
+            let back: payloads::PermissionResponse = serde_json::from_str(&s).unwrap();
+            assert_eq!(p, back);
+        }
     }
 
     #[test]

@@ -21,6 +21,11 @@ pub struct Config {
     pub store: SqliteStore,
     pub stdin_events: bool,
     pub replay: Option<Uuid>,
+    /// Play back a shareable .camo file (NDJSON, optionally prefixed with
+    /// a `{"camo_version":...}` header line). Mutually exclusive with
+    /// `stdin_events` and `replay`. Events are persisted to the store as
+    /// a fresh session so the user can re-replay or export them again.
+    pub play_file: Option<std::path::PathBuf>,
     pub fps: u32,
     pub row_cap: Option<usize>,
     pub emit_responses: bool,
@@ -161,6 +166,12 @@ pub async fn run(cfg: Config) -> Result<()> {
     let mut permission_feedback: String = String::new();
     // v0.4.5: slash-picker selection cursor (within the *filtered* list).
     let mut slash_picker_index: usize = 0;
+    // Sub-picker for slash-command discrete arguments. When Enter is
+    // pressed on a top-level command whose args_hint parses as a
+    // pipe-separated set of bare options (e.g. /mode → "edit|plan|auto"),
+    // we drop into a second-level picker for the user to choose one
+    // without typing. (parent_name, options, optional, selected_index).
+    let mut slash_sub_state: Option<(String, Vec<String>, bool, usize)> = None;
     // v0.4.5: @-mention picker selection cursor.
     let mut mention_picker_index: usize = 0;
     // v0.4.6: per-session input history. Each submitted user prompt is
@@ -168,6 +179,20 @@ pub async fn run(cfg: Config) -> Result<()> {
     // the cursor (None = "live" buffer, not browsing history).
     let mut input_history: Vec<String> = Vec::new();
     let mut input_history_index: Option<usize> = None;
+    // Timestamp of the most recent Ctrl+C. Used to implement the
+    // "press Ctrl+C twice to exit" semantics: a lone Ctrl+C emits
+    // CancelRequested (interrupt the agent) and arms this timestamp;
+    // a second Ctrl+C within CTRL_C_DOUBLE_PRESS_WINDOW disarms and
+    // shuts the app down.
+    let mut last_ctrl_c: Option<std::time::Instant> = None;
+    // Mouse-capture toggle (Shift+S). Default ON because the wheel-scroll
+    // UX is more important than text selection — but users on terminals
+    // without Option/Shift-click bypass need a way to turn it off so they
+    // can copy snippets with their mouse. Initialised to true to match
+    // setup_terminal()'s emitted sequence.
+    let mut mouse_capture_on = true;
+    const CTRL_C_DOUBLE_PRESS_WINDOW: std::time::Duration =
+        std::time::Duration::from_millis(1500);
 
     // Replay state: loaded but not played-through. We start paused at
     // position 0 so the user can scrub controls before content shows.
@@ -223,6 +248,41 @@ pub async fn run(cfg: Config) -> Result<()> {
         let reader = BufReader::new(stdin);
         let tx = ev_tx.clone();
         tokio::spawn(async move {
+            let _ = run_reader(reader, decoder, tx).await;
+        });
+    }
+    if let Some(path) = cfg.play_file.clone() {
+        // .camo container = optional header line `{"camo_version":...}`
+        // followed by NDJSON events. We detect and strip the header here,
+        // then hand the remaining stream to the same NDJSON decoder as
+        // --stdin-events so the rest of the pipeline is unchanged.
+        let decoder = NdjsonDecoder::new(session_id);
+        let tx = ev_tx.clone();
+        tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let file = match tokio::fs::File::open(&path).await {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::error!(?e, "open .camo file");
+                    return;
+                }
+            };
+            let mut reader = BufReader::new(file);
+            // Peek the first line. If it's a camo header object, skip
+            // it; otherwise feed it back into the decoder as the first
+            // event line.
+            let mut first = String::new();
+            let n = reader.read_line(&mut first).await.unwrap_or(0);
+            let header_consumed = n > 0
+                && serde_json::from_str::<serde_json::Value>(first.trim())
+                    .ok()
+                    .and_then(|v| v.get("camo_version").cloned())
+                    .is_some();
+            if !header_consumed && !first.trim().is_empty() {
+                if let Ok(ev) = decoder.parse_line(first.trim()) {
+                    let _ = tx.send(ev).await;
+                }
+            }
             let _ = run_reader(reader, decoder, tx).await;
         });
     }
@@ -372,9 +432,102 @@ pub async fn run(cfg: Config) -> Result<()> {
         let _ = persist_tx.send(ev).await;
     }
 
+    // Loud env-gated log for tracing the Esc → CancelRequested chain.
+    // Set CAMOUFLAGE_DEBUG_ESC=1 in the host env to enable; output
+    // lands on stderr which the SDK inherits in renderToTerminal=true,
+    // so messages show up in the user's terminal alongside host logs.
+    fn esc_log(s: &str) {
+        if std::env::var_os("CAMOUFLAGE_DEBUG_ESC").is_some() {
+            eprintln!("[camouflage:esc] {s}");
+        }
+    }
     loop {
         // Non-blocking poll for keys before each frame.
         while let Ok(key) = key_rx.try_recv() {
+            if matches!(key, crate::tty::Key::Esc) {
+                esc_log("key Esc received");
+            }
+            // Sub-picker short-circuit: when the user picked a top-level
+            // slash command whose args parse as a discrete option list,
+            // we display a second picker and consume Up/Down/Enter/Esc
+            // here so they can choose without typing.
+            if let Some(state) = slash_sub_state.clone() {
+                use crate::tty::Key;
+                let (parent, options, optional, idx) = state;
+                let total = options.len() + if optional { 1 } else { 0 };
+                match key {
+                    Key::Up => {
+                        let new = if idx == 0 { total.saturating_sub(1) } else { idx - 1 };
+                        slash_sub_state = Some((parent, options, optional, new));
+                        model.mark_dirty();
+                        continue;
+                    }
+                    Key::Down => {
+                        let new = if total == 0 { 0 } else { (idx + 1) % total };
+                        slash_sub_state = Some((parent, options, optional, new));
+                        model.mark_dirty();
+                        continue;
+                    }
+                    Key::Esc | Key::Backspace | Key::Left => {
+                        // Back to the top-level picker. input_buf still
+                        // holds "/parent" so the parent picker filters
+                        // sensibly when the overlay re-renders. Left is
+                        // included so the user's natural "go back" key on
+                        // a nested list maps to the obvious thing.
+                        slash_sub_state = None;
+                        model.mark_dirty();
+                        continue;
+                    }
+                    Key::Enter => {
+                        let text = if optional && idx == options.len() {
+                            format!("/{}", parent)
+                        } else {
+                            format!("/{} {}", parent, options[idx])
+                        };
+                        slash_sub_state = None;
+                        input_buf.clear();
+                        input_cursor = 0;
+                        if input_history.last().map(|s| s.as_str()) != Some(text.as_str()) {
+                            input_history.push(text.clone());
+                            if input_history.len() > 200 {
+                                input_history.remove(0);
+                            }
+                        }
+                        input_history_index = None;
+                        if let Some(tx) = outbound_tx.as_ref() {
+                            let ev = Event {
+                                id: Uuid::new_v4(),
+                                session_id,
+                                seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                                timestamp_ms: now_ms(),
+                                schema_version: SCHEMA_VERSION,
+                                event_type: EventType::UserInputSubmitted,
+                                payload: serde_json::json!({"text": text}),
+                            };
+                            let _ = tx.send(OutgoingEvent(ev)).await;
+                        } else {
+                            let ev = Event {
+                                id: Uuid::new_v4(),
+                                session_id,
+                                seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                                timestamp_ms: now_ms(),
+                                schema_version: SCHEMA_VERSION,
+                                event_type: EventType::UserMessageCreated,
+                                payload: serde_json::json!({"text": text}),
+                            };
+                            let _ = persist_tx.send(ev).await;
+                        }
+                        model.mark_dirty();
+                        continue;
+                    }
+                    _ => {
+                        // Any other keypress: drop sub-picker and let the
+                        // normal handler take over (so manual typing of an
+                        // argument still works as an escape hatch).
+                        slash_sub_state = None;
+                    }
+                }
+            }
             // Slash-picker short-circuit: when the input starts with `/` and
             // the host has registered slash commands, ↑/↓/Enter drive the
             // picker instead of falling through to the normal handler.
@@ -409,9 +562,70 @@ pub async fn run(cfg: Config) -> Result<()> {
                         }
                         crate::tty::Key::Enter => {
                             let idx = slash_picker_index.min(matches.len() - 1);
-                            input_buf = format!("/{} ", matches[idx].name);
-                            input_cursor = input_buf.chars().count();
+                            let chosen = matches[idx];
+                            let name = chosen.name.clone();
                             slash_picker_index = 0;
+                            // Decide what to do based on the args_hint:
+                            //  - no hint           → submit "/name" directly.
+                            //  - discrete options  → drop into the sub-picker.
+                            //  - free-text args    → fall back to inserting
+                            //    "/name " into the buffer so the user can
+                            //    type the argument (preserves the manual
+                            //    escape hatch the user explicitly asked for).
+                            let parsed = chosen
+                                .args_hint
+                                .as_deref()
+                                .and_then(parse_discrete_args);
+                            match (chosen.args_hint.as_deref(), parsed) {
+                                (None, _) => {
+                                    let text = format!("/{}", name);
+                                    input_buf.clear();
+                                    input_cursor = 0;
+                                    if input_history.last().map(|s| s.as_str())
+                                        != Some(text.as_str())
+                                    {
+                                        input_history.push(text.clone());
+                                        if input_history.len() > 200 {
+                                            input_history.remove(0);
+                                        }
+                                    }
+                                    input_history_index = None;
+                                    if let Some(tx) = outbound_tx.as_ref() {
+                                        let ev = Event {
+                                            id: Uuid::new_v4(),
+                                            session_id,
+                                            seq: seq_counter
+                                                .fetch_add(1, Ordering::Relaxed),
+                                            timestamp_ms: now_ms(),
+                                            schema_version: SCHEMA_VERSION,
+                                            event_type: EventType::UserInputSubmitted,
+                                            payload: serde_json::json!({"text": text}),
+                                        };
+                                        let _ = tx.send(OutgoingEvent(ev)).await;
+                                    } else {
+                                        let ev = Event {
+                                            id: Uuid::new_v4(),
+                                            session_id,
+                                            seq: seq_counter
+                                                .fetch_add(1, Ordering::Relaxed),
+                                            timestamp_ms: now_ms(),
+                                            schema_version: SCHEMA_VERSION,
+                                            event_type: EventType::UserMessageCreated,
+                                            payload: serde_json::json!({"text": text}),
+                                        };
+                                        let _ = persist_tx.send(ev).await;
+                                    }
+                                }
+                                (Some(_), Some((options, optional))) => {
+                                    input_buf = format!("/{}", name);
+                                    input_cursor = input_buf.chars().count();
+                                    slash_sub_state = Some((name, options, optional, 0));
+                                }
+                                (Some(_), None) => {
+                                    input_buf = format!("/{} ", name);
+                                    input_cursor = input_buf.chars().count();
+                                }
+                            }
                             model.mark_dirty();
                             continue;
                         }
@@ -429,9 +643,10 @@ pub async fn run(cfg: Config) -> Result<()> {
             // Input-history walk: Up/Down when the input prompt has focus,
             // no overlays/pickers are open, no permission is pending, no
             // search is active, no replay scrubber is taking the key.
-            // Doesn't interfere with the existing "scroll transcript" use
-            // of Up/Down because that's bound when input_buf is empty —
-            // but if there's history, history takes priority.
+            // Only walks history when the input buffer is empty OR the
+            // user is already in the middle of a history walk — otherwise
+            // Up/Down with typed text would silently clobber the user's
+            // unsubmitted input. Matches Ink's readline-style convention.
             // Compute mention_active locally so input_focused can include
             // it (the main mention_active computation runs below for its
             // own ↑/↓ short-circuit; cheap to evaluate twice).
@@ -490,7 +705,10 @@ pub async fn run(cfg: Config) -> Result<()> {
                     _ => {}
                 }
             }
-            if input_focused && !input_history.is_empty() {
+            if input_focused
+                && !input_history.is_empty()
+                && (input_buf.is_empty() || input_history_index.is_some())
+            {
                 match key {
                     crate::tty::Key::Up => {
                         let next = match input_history_index {
@@ -894,7 +1112,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                     _ => input::Action::None,
                 }
             } else if let (Some(_), Some(act)) =
-                (replay_state.as_ref(), input::handle_key_replay(key, &input_buf))
+                (replay_state.as_ref(), input::handle_key_replay(key.clone(), &input_buf))
             {
                 act
             } else {
@@ -909,12 +1127,27 @@ pub async fn run(cfg: Config) -> Result<()> {
             }
             match action {
                 input::Action::Quit => {
-                    // Ctrl+C is now "interrupt the agent" instead of
-                    // "quit the app". If a turn is running, the host
-                    // catches CancelRequested and aborts; otherwise the
-                    // host typically does nothing. Quitting moves to
-                    // /quit slash command or explicit Ctrl+C twice (next
-                    // commit can add the double-press semantics).
+                    // Ctrl+C is "interrupt the agent" on first press and
+                    // "quit the app" on a second press within
+                    // CTRL_C_DOUBLE_PRESS_WINDOW. Mirrors Ink / readline:
+                    // users expect Ctrl+C to abort the running operation
+                    // first and only exit when they really mean it. The
+                    // timestamp expires naturally after the window, so
+                    // pressing Ctrl+C once and then continuing to work is
+                    // not a latent exit hazard.
+                    let now = std::time::Instant::now();
+                    let is_second_press = last_ctrl_c
+                        .map(|t| now.duration_since(t) <= CTRL_C_DOUBLE_PRESS_WINDOW)
+                        .unwrap_or(false);
+                    if is_second_press {
+                        return shutdown(&mut terminal, Ok(()));
+                    }
+                    last_ctrl_c = Some(now);
+                    // Visible feedback: without this, a first Ctrl+C while
+                    // idle looks like a no-op and the user assumes the TUI
+                    // is broken.
+                    status = "press Ctrl+C again to quit".into();
+                    model.mark_dirty();
                     if let Some(tx) = outbound_tx.as_ref() {
                         let ev = Event {
                             id: Uuid::new_v4(),
@@ -926,12 +1159,15 @@ pub async fn run(cfg: Config) -> Result<()> {
                             payload: serde_json::json!({}),
                         };
                         let _ = tx.send(OutgoingEvent(ev)).await;
-                    } else {
-                        // Standalone mode (no host): preserve the legacy
-                        // "Ctrl+C quits" behaviour so the binary remains
-                        // usable without an adapter.
-                        return shutdown(&mut terminal, Ok(()));
                     }
+                    // Optimistic local cancel — mirrors what Esc does.
+                    model.local_cancel_all(now_ms());
+                    // Standalone mode (no host): the first press is now a
+                    // no-op apart from arming the double-press window. The
+                    // second press lands above. This is a small UX shift
+                    // from "Ctrl+C quits instantly" but matches the hosted
+                    // semantics and prevents accidental loss of unsubmitted
+                    // input.
                 }
                 input::Action::SubmitInput(text) => {
                     // Push into input history (de-duped: skip if same as most recent).
@@ -956,6 +1192,15 @@ pub async fn run(cfg: Config) -> Result<()> {
                             event_type: EventType::UserInputSubmitted,
                             payload: serde_json::json!({"text": text}),
                         };
+                        if crate::scrolllog::event_enabled() {
+                            crate::scrolllog::log_event(serde_json::json!({
+                                "dir": "out",
+                                "event_type": "UserInputSubmitted",
+                                "seq": ev.seq,
+                                "text_len": text.len(),
+                                "text_preview": text.chars().take(80).collect::<String>(),
+                            }));
+                        }
                         let _ = tx.send(OutgoingEvent(ev)).await;
                     } else {
                         // Standalone mode: synthesise a local UserMessageCreated
@@ -973,24 +1218,105 @@ pub async fn run(cfg: Config) -> Result<()> {
                     }
                 }
                 input::Action::ScrollUp(n) => {
-                    viewport.scroll_up(n as i64, model.combined_len() as i64);
+                    let before = viewport.scroll_offset;
+                    let before_frozen = viewport.frozen_visual_bottom;
+                    viewport.scroll_up(n as i64);
+                    crate::scrolllog::log_json(serde_json::json!({
+                        "ev": "scroll_up",
+                        "n": n,
+                        "last_total_visual": viewport.last_total_visual,
+                        "viewport_h": viewport.viewport_height,
+                        "offset_before": before,
+                        "offset_after": viewport.scroll_offset,
+                        "frozen_before": before_frozen,
+                        "frozen_after": viewport.frozen_visual_bottom,
+                        "auto_follow": viewport.auto_follow,
+                    }));
                     model.mark_dirty();
                 }
                 input::Action::ScrollDown(n) => {
+                    let before = viewport.scroll_offset;
                     viewport.scroll_down(n as i64);
+                    crate::scrolllog::log_json(serde_json::json!({
+                        "ev": "scroll_down",
+                        "n": n,
+                        "viewport_h": viewport.viewport_height,
+                        "offset_before": before,
+                        "offset_after": viewport.scroll_offset,
+                        "frozen_after": viewport.frozen_visual_bottom,
+                        "auto_follow": viewport.auto_follow,
+                    }));
                     model.mark_dirty();
                 }
                 input::Action::JumpToLatest => {
+                    crate::scrolllog::log_json(serde_json::json!({
+                        "ev": "jump_to_latest",
+                        "offset_before": viewport.scroll_offset,
+                    }));
                     viewport.jump_to_latest();
                     model.clear_history();
                     model.mark_dirty();
                 }
                 input::Action::CancelStream => {
+                    esc_log("Action::CancelStream → emitting CancelRequested");
+                    // First: give the user a visible local dismiss for
+                    // persistent UI clutter — toasts and the pinned
+                    // splash. Without this, Esc at idle (no in-flight
+                    // turn) looks like a no-op and the user thinks Esc
+                    // is broken. We do this BEFORE the host emit so the
+                    // dismiss is instant even if the pipe is slow.
+                    let cleared_toasts = model.clear_toasts();
+                    let cleared_splash = model.clear_splash();
+                    if cleared_toasts || cleared_splash {
+                        esc_log(&format!(
+                            "local dismiss: toasts={} splash={}",
+                            cleared_toasts, cleared_splash
+                        ));
+                    } else if !model.has_active_stream()
+                        && !model.tools().values().any(|s| !s.finished)
+                    {
+                        // Idle: no in-flight work and no UI clutter to
+                        // dismiss. Flash a local toast so the user has
+                        // visible confirmation that Esc was received,
+                        // instead of thinking the key is broken.
+                        model.push_local_toast(
+                            "nothing to cancel",
+                            camouflage_renderer::model::ToastKind::Info,
+                            1200,
+                            now_ms(),
+                        );
+                    }
                     // Esc → interrupt. Same semantics as Ctrl+C now;
                     // emit CancelRequested so the host (e.g. KimiFlare's
                     // ui-mode) calls controller.abort() on the in-flight
                     // agent turn.
+                    if outbound_tx.is_none() {
+                        esc_log("WARN outbound_tx is None — no host pipe wired up");
+                    }
                     if let Some(tx) = outbound_tx.as_ref() {
+                        // If a permission modal is currently open, deny
+                        // it before aborting so the tool gets a clean
+                        // "rejected" response and the modal closes — the
+                        // user reads Esc as "back out of everything",
+                        // and we shouldn't leave the modal stranded.
+                        if let Some(pp) = model.pending_permission() {
+                            let resp = Event {
+                                id: Uuid::new_v4(),
+                                session_id,
+                                seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                                timestamp_ms: now_ms(),
+                                schema_version: SCHEMA_VERSION,
+                                event_type: EventType::PermissionResponse,
+                                payload: serde_json::json!({
+                                    "request_id": pp.request_id,
+                                    "choice": "deny",
+                                    "feedback": permission_feedback,
+                                }),
+                            };
+                            let _ = tx.send(OutgoingEvent(resp)).await;
+                            model.clear_pending_permission();
+                            permission_feedback.clear();
+                        }
                         let ev = Event {
                             id: Uuid::new_v4(),
                             session_id,
@@ -1000,8 +1326,18 @@ pub async fn run(cfg: Config) -> Result<()> {
                             event_type: EventType::CancelRequested,
                             payload: serde_json::json!({}),
                         };
-                        let _ = tx.send(OutgoingEvent(ev)).await;
+                        let send_res = tx.send(OutgoingEvent(ev)).await;
+                        esc_log(&format!(
+                            "CancelRequested send → {}",
+                            if send_res.is_ok() { "ok" } else { "ERR (receiver dropped)" }
+                        ));
                     }
+                    // Optimistic local cancel so the user gets immediate
+                    // visual feedback: stop background-task spinners and
+                    // flip the status phase out of "thinking". The host's
+                    // later events (BackgroundTaskUpdate / StatusUpdate)
+                    // can still overwrite either of these.
+                    model.local_cancel_all(now_ms());
                     status = "canceled".into();
                     model.mark_dirty();
                 }
@@ -1191,6 +1527,31 @@ pub async fn run(cfg: Config) -> Result<()> {
                         model.mark_dirty();
                     }
                 }
+                input::Action::ReplayJumpPct(pct) => {
+                    if let Some(rs) = replay_state.as_mut() {
+                        let total = rs.events.len();
+                        let target = (total as u64 * pct as u64 / 100) as usize;
+                        if target >= rs.position {
+                            let n = target - rs.position;
+                            rs.step_forward(n, &mut model);
+                        } else {
+                            let n = rs.position - target;
+                            rs.step_backward(n, &mut model);
+                        }
+                        rs.playing = false;
+                        status = replay_status(rs);
+                        model.mark_dirty();
+                    }
+                }
+                input::Action::ReplayJumpEnd => {
+                    if let Some(rs) = replay_state.as_mut() {
+                        let remaining = rs.events.len().saturating_sub(rs.position);
+                        rs.step_forward(remaining, &mut model);
+                        rs.playing = false;
+                        status = replay_status(rs);
+                        model.mark_dirty();
+                    }
+                }
                 input::Action::ToggleInspector => {
                     inspector_open = !inspector_open;
                     if inspector_open {
@@ -1214,6 +1575,27 @@ pub async fn run(cfg: Config) -> Result<()> {
                 }
                 input::Action::ToggleToolOutput => {
                     tool_output_open = !tool_output_open;
+                    model.mark_dirty();
+                }
+                input::Action::ToggleMouseCapture => {
+                    // Write the SGR mouse enable/disable sequences directly
+                    // to stdout so the terminal flips reporting on next
+                    // poll. We keep bracketed paste alone (handled
+                    // separately at setup/teardown).
+                    use std::io::Write;
+                    mouse_capture_on = !mouse_capture_on;
+                    let seq: &[u8] = if mouse_capture_on {
+                        b"\x1b[?1000h\x1b[?1006h"
+                    } else {
+                        b"\x1b[?1006l\x1b[?1000l"
+                    };
+                    let _ = terminal.backend_mut().write_all(seq);
+                    let _ = terminal.backend_mut().flush();
+                    status = if mouse_capture_on {
+                        "mouse capture ON (wheel scrolls)".into()
+                    } else {
+                        "mouse capture OFF (drag to select; press Shift+S to re-enable)".into()
+                    };
                     model.mark_dirty();
                 }
                 input::Action::InspectorCursorUp => {
@@ -1373,11 +1755,21 @@ pub async fn run(cfg: Config) -> Result<()> {
         if !history_inflight {
             if let Some(earliest_visible) = model.earliest_visible_seq() {
                 if earliest_visible > 0 {
-                    let near_top = (viewport.scroll_offset + viewport.viewport_height as i64)
-                        >= model.combined_len() as i64 - 8;
+                    // "Near the top" in the visual-line scroll model: the
+                    // user has scrolled most of the way up the frozen
+                    // window (within viewport_h of the top).
+                    let near_top = viewport.frozen_visual_bottom.is_some()
+                        && (viewport.scroll_offset
+                            >= viewport.last_total_visual
+                                - viewport.viewport_height as i64
+                                - 8);
                     if near_top {
+                        // Cap the lower bound at the post-/clear floor so we
+                        // don't fetch (and the model wouldn't accept) events
+                        // older than the most recent TranscriptCleared.
+                        let floor = model.history_floor_seq();
                         let to = earliest_visible;
-                        let from = (to - HISTORY_CHUNK).max(0);
+                        let from = (to - HISTORY_CHUNK).max(floor);
                         if from < to {
                             tracing::info!(from, to, "history fetch requested");
                             let _ = history_req_tx
@@ -1403,6 +1795,14 @@ pub async fn run(cfg: Config) -> Result<()> {
             }
             Some(ev) = rendered_rx.recv() => {
                 crash_ring_push(&ev);
+                if crate::scrolllog::event_enabled() {
+                    crate::scrolllog::log_event(serde_json::json!({
+                        "dir": "in",
+                        "event_type": format!("{:?}", ev.event_type),
+                        "seq": ev.seq,
+                        "payload_preview": ev.payload.to_string().chars().take(160).collect::<String>(),
+                    }));
+                }
                 model.apply(&ev);
                 total_events += 1;
                 events_since_window += 1;
@@ -1419,6 +1819,14 @@ pub async fn run(cfg: Config) -> Result<()> {
                     match rendered_rx.try_recv() {
                         Ok(ev2) => {
                             crash_ring_push(&ev2);
+                            if crate::scrolllog::event_enabled() {
+                                crate::scrolllog::log_event(serde_json::json!({
+                                    "dir": "in",
+                                    "event_type": format!("{:?}", ev2.event_type),
+                                    "seq": ev2.seq,
+                                    "payload_preview": ev2.payload.to_string().chars().take(160).collect::<String>(),
+                                }));
+                            }
                             model.apply(&ev2);
                             total_events += 1;
                             events_since_window += 1;
@@ -1519,10 +1927,16 @@ pub async fn run(cfg: Config) -> Result<()> {
                         .unwrap_or_else(|| {
                             camouflage_renderer::theme::Theme::builtin("default-dark").unwrap()
                         });
+                    let replay_view = replay_state.as_ref().map(|rs| draw::ReplayView {
+                        position: rs.position,
+                        total: rs.events.len(),
+                        playing: rs.playing,
+                        speed_mult: rs.speed_mult,
+                    });
                     draw::render(
                         &mut terminal,
                         &model,
-                        &viewport,
+                        &mut viewport,
                         &input_buf,
                         input_cursor,
                         &status,
@@ -1532,11 +1946,13 @@ pub async fn run(cfg: Config) -> Result<()> {
                         search_view,
                         help_open,
                         metrics,
+                        replay_view,
                         theme,
                         tool_output_open,
                         &permission_feedback,
                         slash_picker_index,
                         mention_picker_index,
+                        slash_sub_state.as_ref(),
                     )?;
                     last_frame_time_us = draw_start.elapsed().as_micros();
                     model.mark_clean();
@@ -1613,6 +2029,10 @@ fn run_search(model: &RenderModel, query: &str) -> Vec<i64> {
 }
 
 /// Adjust the viewport scroll so the row matching `seq` is visible.
+/// scroll_offset is in visual lines now, but we don't have width info
+/// here — so we approximate row-offset-from-bottom as a visual-line
+/// offset (each row contributes >= 1 line). Close enough to put the
+/// target row inside the viewport for search-jump.
 fn scroll_to_seq(viewport: &mut ViewportState, model: &RenderModel, seq: i64) {
     let mut idx_from_bottom: Option<i64> = None;
     let mut cnt: i64 = 0;
@@ -1624,10 +2044,13 @@ fn scroll_to_seq(viewport: &mut ViewportState, model: &RenderModel, seq: i64) {
         cnt += 1;
     }
     if let Some(offset) = idx_from_bottom {
-        let total = model.combined_len() as i64;
-        let target_scroll = offset.saturating_sub(viewport.viewport_height as i64 / 2);
-        viewport.scroll_offset = target_scroll.clamp(0, (total - 1).max(0));
-        viewport.auto_follow = viewport.scroll_offset == 0;
+        if offset == 0 {
+            viewport.jump_to_latest();
+        } else {
+            viewport.frozen_visual_bottom = Some(viewport.last_total_visual);
+            viewport.scroll_offset = (offset - viewport.viewport_height as i64 / 2).max(0);
+            viewport.auto_follow = false;
+        }
     }
 }
 
@@ -1683,8 +2106,14 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     // (including wheel as buttons 64/65) instead of translating the
     // scroll wheel into Up/Down arrow keys — which was polluting the
     // input-history navigation. Wired into the /dev/tty reader's parser.
+    //
+    // Also enable bracketed-paste mode (?2004): the terminal wraps any
+    // pasted text in ESC [200~ … ESC [201~, which the parser turns into
+    // a single Key::Paste event. Without this, pasting a block that
+    // contains a newline would submit the partial input the moment the
+    // newline arrived (since 0x0a is Enter in raw mode).
     use std::io::Write;
-    let _ = stdout.write_all(b"\x1b[?1000h\x1b[?1006h");
+    let _ = stdout.write_all(b"\x1b[?1000h\x1b[?1006h\x1b[?2004h");
     let _ = stdout.flush();
     let backend = CrosstermBackend::new(stdout);
     let mut term = Terminal::new(backend)?;
@@ -1694,10 +2123,11 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
 
 fn teardown_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     let _ = disable_raw_mode();
-    // Disable mouse capture (must come before LeaveAlternateScreen so the
-    // sequence isn't lost when we drop the alt screen).
+    // Disable mouse capture and bracketed paste (must come before
+    // LeaveAlternateScreen so the sequence isn't lost when we drop the
+    // alt screen).
     use std::io::Write;
-    let _ = terminal.backend_mut().write_all(b"\x1b[?1006l\x1b[?1000l");
+    let _ = terminal.backend_mut().write_all(b"\x1b[?2004l\x1b[?1006l\x1b[?1000l");
     terminal.backend_mut().execute(LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     Ok(())
@@ -1846,4 +2276,72 @@ fn last_mention_partial(buf: &str) -> Option<String> {
         return None;
     }
     Some(tail.to_string())
+}
+
+/// Parse a slash command's `args_hint` into a set of discrete options
+/// for the sub-picker. Returns `Some((options, optional))` only when
+/// the hint is a pipe-separated list of bare words — e.g. `edit|plan|auto`
+/// or `[on|off]`. Hints containing `<placeholder>` (free text required)
+/// or nested brackets are rejected — they need real typing, not a list.
+/// A trailing `...` marker (e.g. `[on|off|search ...]`) is stripped so
+/// the leading discrete tokens still drive a picker.
+pub(crate) fn parse_discrete_args(hint: &str) -> Option<(Vec<String>, bool)> {
+    let trimmed = hint.trim();
+    let (inner, optional) = if let Some(stripped) = trimmed
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+    {
+        (stripped, true)
+    } else {
+        (trimmed, false)
+    };
+    if inner.is_empty() {
+        return None;
+    }
+    // Free-text placeholders and nested optional groups can't be picked.
+    if inner.contains('<') || inner.contains('[') {
+        return None;
+    }
+    let inner = inner.trim_end_matches("...").trim();
+    let opts: Vec<String> = inner
+        .split('|')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if opts.is_empty() {
+        return None;
+    }
+    Some((opts, optional))
+}
+
+#[cfg(test)]
+mod arg_parser_tests {
+    use super::parse_discrete_args;
+    #[test]
+    fn bare_pipes() {
+        assert_eq!(
+            parse_discrete_args("edit|plan|auto"),
+            Some((vec!["edit".into(), "plan".into(), "auto".into()], false))
+        );
+    }
+    #[test]
+    fn optional_bracketed() {
+        assert_eq!(
+            parse_discrete_args("[on|off]"),
+            Some((vec!["on".into(), "off".into()], true))
+        );
+    }
+    #[test]
+    fn trailing_dots() {
+        assert_eq!(
+            parse_discrete_args("[on|off|clear|search ...]"),
+            Some((vec!["on".into(), "off".into(), "clear".into(), "search".into()], true))
+        );
+    }
+    #[test]
+    fn rejects_placeholders() {
+        assert!(parse_discrete_args("<prompt>").is_none());
+        assert!(parse_discrete_args("[<name>]").is_none());
+        assert!(parse_discrete_args("[send] [note]").is_none());
+    }
 }

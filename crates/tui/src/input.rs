@@ -26,6 +26,10 @@ pub enum Action {
     ReplayFaster,
     ReplaySlower,
     ReplayRestart,
+    /// Jump to N% of the way through replay. Value is 0..=100.
+    ReplayJumpPct(u8),
+    /// Jump to the end of replay (last event applied).
+    ReplayJumpEnd,
     /// v0.2+: toggle the event inspector side panel.
     ToggleInspector,
     /// v0.2+: move inspector cursor within the visible rows.
@@ -55,6 +59,12 @@ pub enum Action {
     /// v0.4.5+: toggle the tool-output overlay (shows most-recent tool's
     /// captured stdout/stderr).
     ToggleToolOutput,
+    /// v0.4.9+: toggle terminal mouse capture. While ON the wheel scrolls
+    /// the transcript (default). While OFF the user can drag-select text
+    /// with the cursor — at the cost of losing wheel scroll until they
+    /// turn it back on. Workaround for terminals where Option/Shift-click
+    /// doesn't bypass mouse reporting.
+    ToggleMouseCapture,
 }
 
 /// Variant of `handle_key` used while a PermissionRequested is pending.
@@ -80,13 +90,24 @@ pub fn handle_key_permission(k: Key, feedback: &mut String) -> Action {
         // ? overlays a help panel. Any subsequent key dismisses (handled
         // in app.rs by clearing help_open on the next iteration).
         Key::Char('?') => Action::PermissionToggleHelp,
-        Key::Esc => Action::PermissionDeny,
+        // Esc here used to *only* deny the current permission, which
+        // made it feel like Esc "did nothing" when the user actually
+        // wanted to abort the whole running turn. Map it to the same
+        // path as Ctrl+C's single press: the CancelStream handler in
+        // app.rs denies the pending permission AND emits CancelRequested.
+        Key::Esc => Action::CancelStream,
         Key::Backspace => {
             feedback.pop();
             Action::None
         }
         Key::Char(c) => {
             feedback.push(c);
+            Action::None
+        }
+        Key::Paste(text) => {
+            // Same rationale as handle_key: a paste into the permission
+            // feedback box should land as a single block of literal text.
+            feedback.push_str(&text);
             Action::None
         }
         _ => Action::None,
@@ -122,6 +143,7 @@ pub fn handle_key(k: Key, buf: &mut String, cursor: &mut usize) -> Action {
         Key::Char('M') if buf.is_empty() => Action::ToggleMetrics,
         Key::Char('T') if buf.is_empty() => Action::CycleTheme,
         Key::Char('X') if buf.is_empty() => Action::ToggleToolOutput,
+        Key::Char('S') if buf.is_empty() => Action::ToggleMouseCapture,
         // Readline-style deletions:
         //   Ctrl+W (0x17) → delete word before cursor
         //   Ctrl+U (0x15) → delete to start of line
@@ -141,8 +163,37 @@ pub fn handle_key(k: Key, buf: &mut String, cursor: &mut usize) -> Action {
             *cursor = 0;
             Action::None
         }
+        Key::CtrlK => {
+            // Readline "kill to end of line": drop everything from the
+            // cursor to the end of the buffer. Cursor stays put — it's
+            // now at the (new) end of the line.
+            let from = byte_index_of_char(buf, *cursor);
+            buf.truncate(from);
+            Action::None
+        }
+        Key::MetaD => {
+            // Readline "kill word forward": drop from cursor up to (but
+            // not including) the start of the next word. Mirror of
+            // Ctrl+W. Cursor stays put.
+            let new_end = word_boundary_right(buf, *cursor);
+            let from = byte_index_of_char(buf, *cursor);
+            let to = byte_index_of_char(buf, new_end);
+            buf.replace_range(from..to, "");
+            Action::None
+        }
         Key::Char(c) => {
             insert_at_cursor(buf, cursor, c);
+            Action::None
+        }
+        Key::Paste(text) => {
+            // Bracketed paste payload — insert atomically at the cursor.
+            // Newlines / control chars are preserved as literal characters
+            // (the parser already filtered out the wrapping ESC sequences),
+            // so a multi-line paste stays multi-line and never accidentally
+            // submits the input mid-stream.
+            for c in text.chars() {
+                insert_at_cursor(buf, cursor, c);
+            }
             Action::None
         }
         Key::Enter => {
@@ -193,6 +244,10 @@ pub fn handle_key(k: Key, buf: &mut String, cursor: &mut usize) -> Action {
             delete_before_cursor(buf, cursor);
             Action::None
         }
+        Key::Delete => {
+            delete_after_cursor(buf, cursor);
+            Action::None
+        }
         _ => Action::None,
     }
 }
@@ -212,6 +267,16 @@ pub fn delete_before_cursor(buf: &mut String, cursor: &mut usize) {
     let old_byte_idx = byte_index_of_char(buf, *cursor);
     buf.replace_range(new_byte_idx..old_byte_idx, "");
     *cursor -= 1;
+}
+
+/// Delete the character at the cursor (forward-delete / Delete key). The
+/// cursor stays in place — the next character slides left to fill the gap.
+pub fn delete_after_cursor(buf: &mut String, cursor: &mut usize) {
+    let total = buf.chars().count();
+    if *cursor >= total { return; }
+    let from = byte_index_of_char(buf, *cursor);
+    let to = byte_index_of_char(buf, *cursor + 1);
+    buf.replace_range(from..to, "");
 }
 
 /// Byte offset of the `n`-th character (or buf.len() if n is at/past end).
@@ -272,6 +337,58 @@ pub fn handle_key_replay(k: Key, buf: &str) -> Option<Action> {
         Key::Char('+') | Key::Char('=') => Action::ReplayFaster,
         Key::Char('-') | Key::Char('_') => Action::ReplaySlower,
         Key::Char('0') => Action::ReplayRestart,
+        // 1..=9 jump to 10%..90% of the timeline. Cheap muscle memory:
+        // tap "5" and you're halfway through the session.
+        Key::Char(c @ '1'..='9') => {
+            let pct = (c as u8 - b'0') * 10;
+            Action::ReplayJumpPct(pct)
+        }
+        // Shift+G / "G" jumps to the very end (matches vim).
+        Key::Char('G') => Action::ReplayJumpEnd,
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn is_allow_once(a: &Action) -> bool { matches!(a, Action::PermissionAllowOnce) }
+    fn is_allow_session(a: &Action) -> bool { matches!(a, Action::PermissionAllowSession) }
+    fn is_deny(a: &Action) -> bool { matches!(a, Action::PermissionDeny) }
+    fn is_prev(a: &Action) -> bool { matches!(a, Action::PermissionSelectPrev) }
+    fn is_next(a: &Action) -> bool { matches!(a, Action::PermissionSelectNext) }
+    fn is_confirm(a: &Action) -> bool { matches!(a, Action::PermissionConfirmSelected) }
+
+    #[test]
+    fn permission_digit_shortcuts_map_to_choices() {
+        let mut fb = String::new();
+        assert!(is_allow_once(&handle_key_permission(Key::Char('1'), &mut fb)));
+        assert!(is_allow_session(&handle_key_permission(Key::Char('2'), &mut fb)));
+        assert!(is_deny(&handle_key_permission(Key::Char('3'), &mut fb)));
+        // Digits MUST NOT also leak into the feedback buffer.
+        assert!(fb.is_empty());
+    }
+
+    #[test]
+    fn permission_arrow_keys_navigate_and_enter_confirms() {
+        let mut fb = String::new();
+        assert!(is_next(&handle_key_permission(Key::Down, &mut fb)));
+        assert!(is_prev(&handle_key_permission(Key::Up, &mut fb)));
+        assert!(is_next(&handle_key_permission(Key::Char('j'), &mut fb)));
+        assert!(is_prev(&handle_key_permission(Key::Char('k'), &mut fb)));
+        assert!(is_confirm(&handle_key_permission(Key::Enter, &mut fb)));
+    }
+
+    #[test]
+    fn permission_non_digit_chars_go_into_feedback() {
+        let mut fb = String::new();
+        for c in "deny because path is unsafe".chars() {
+            let _ = handle_key_permission(Key::Char(c), &mut fb);
+        }
+        assert_eq!(fb, "deny because path is unsafe");
+        // Backspace removes the last char.
+        let _ = handle_key_permission(Key::Backspace, &mut fb);
+        assert_eq!(fb, "deny because path is unsaf");
+    }
 }

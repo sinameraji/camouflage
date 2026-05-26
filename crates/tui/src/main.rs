@@ -1,6 +1,8 @@
 mod app;
 mod draw;
 mod input;
+pub(crate) mod scrolllog;
+pub(crate) mod settings;
 mod tty;
 
 use anyhow::{Context, Result};
@@ -18,6 +20,11 @@ struct Args {
     /// Replay an existing session from the SQLite store.
     #[arg(long, value_name = "SESSION_ID")]
     replay: Option<Uuid>,
+
+    /// Play back a shareable .camo file (header line + NDJSON events).
+    /// The file may also be plain NDJSON without a header.
+    #[arg(long, value_name = "FILE")]
+    play: Option<PathBuf>,
 
     /// Path to SQLite database. Defaults to $HOME/.camouflage/sessions.db.
     #[arg(long)]
@@ -88,13 +95,21 @@ fn main() -> Result<()> {
         anyhow::bail!("--responses-fd and --emit-responses=true are mutually exclusive");
     }
 
-    rt.block_on(app::run(app::Config {
+    let result = rt.block_on(app::run(app::Config {
         store,
         stdin_events: args.stdin_events,
         replay: args.replay,
+        play_file: args.play,
         fps: args.fps.max(1).min(120),
         row_cap: args.row_cap,
         emit_responses,
         responses_fd: args.responses_fd,
-    }))
+    }));
+    // Don't let `rt`'s Drop block on the spawn_blocking thread that owns
+    // `tokio::io::stdin()`. That read() is uninterruptible from userspace,
+    // so a clean teardown would otherwise hang until the host closes the
+    // pipe — which manifests as the user having to press Ctrl+C a third
+    // time (now SIGINT, since raw mode is already off) to actually exit.
+    rt.shutdown_background();
+    result
 }

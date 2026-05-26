@@ -16,7 +16,7 @@ use std::io;
 use std::os::fd::RawFd;
 use std::sync::mpsc;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Key {
     Char(char),
     Enter,
@@ -32,15 +32,22 @@ pub enum Key {
     WordLeft,
     /// Option+Right / Alt+Right — "jump word right".
     WordRight,
+    /// Option+D / Alt+D — readline "kill word forward" (delete from
+    /// cursor to next word boundary).
+    MetaD,
     PageUp,
     PageDown,
     Home,
     End,
+    /// Forward-delete (fn+Backspace on macOS, Del key elsewhere — CSI 3 ~).
+    Delete,
     CtrlC,
     CtrlE,
     CtrlF,
     /// Cursor to start of line (readline convention).
     CtrlA,
+    /// Delete to end of line (readline convention).
+    CtrlK,
     /// Delete word before cursor (readline convention).
     CtrlW,
     /// Delete to start of line (readline convention).
@@ -49,6 +56,11 @@ pub enum Key {
     ScrollUp,
     /// Mouse wheel down (when SGR mouse capture is enabled).
     ScrollDown,
+    /// Bracketed-paste payload — the literal text the user pasted,
+    /// delivered as a single key so the input layer can insert it
+    /// atomically (and embedded newlines / control chars don't trigger
+    /// Enter / Ctrl+C mid-paste).
+    Paste(String),
 }
 
 /// Open /dev/tty for reading and return its raw fd.
@@ -71,6 +83,32 @@ pub fn spawn_key_reader(tty_fd: RawFd) -> mpsc::Receiver<Key> {
         let mut parser = EscParser::new();
         let mut buf = [0u8; 64];
         loop {
+            // poll() with a short timeout lets us flush a lone ESC that
+            // would otherwise sit in State::Esc waiting for a follow-up
+            // byte (without this, pressing Escape alone has no visible
+            // effect until the next key is pressed). 50 ms is well over
+            // any real terminal sequence's inter-byte gap.
+            let mut pfd = libc::pollfd {
+                fd: tty_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let pr = unsafe { libc::poll(&mut pfd, 1, 50) };
+            if pr < 0 {
+                let err = io::Error::last_os_error();
+                if err.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                break;
+            }
+            if pr == 0 {
+                if let Some(k) = parser.flush_idle() {
+                    if tx.send(k).is_err() {
+                        return;
+                    }
+                }
+                continue;
+            }
             let n = unsafe { libc::read(tty_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
             if n <= 0 {
                 break;
@@ -93,15 +131,29 @@ pub fn spawn_key_reader(tty_fd: RawFd) -> mpsc::Receiver<Key> {
 /// - Ground: each byte either a printable, control, or `ESC` starting a sequence
 /// - Esc: after seeing `0x1b`
 /// - Csi: after seeing `ESC [`
+/// - InPaste: inside a bracketed-paste run (ESC [200~ … ESC [201~) — all
+///   bytes are collected literally until the terminator is recognised.
+/// - PasteEsc / PasteCsi: transient states used to detect the ESC [201~
+///   paste terminator without leaking partial-match bytes into the paste
+///   buffer.
 struct EscParser {
     state: State,
     csi_buf: Vec<u8>,
+    paste_buf: String,
+    /// Parameter bytes accumulated while we're trying to recognise the
+    /// paste terminator. If recognition fails, these get flushed back
+    /// into the paste buffer along with the literal ESC [ that started
+    /// the detection attempt.
+    paste_csi_buf: Vec<u8>,
 }
 
 enum State {
     Ground,
     Esc,
     Csi,
+    InPaste,
+    PasteEsc,
+    PasteCsi,
 }
 
 impl EscParser {
@@ -109,6 +161,21 @@ impl EscParser {
         Self {
             state: State::Ground,
             csi_buf: Vec::with_capacity(8),
+            paste_buf: String::new(),
+            paste_csi_buf: Vec::with_capacity(4),
+        }
+    }
+
+    /// Called when the reader has been idle for long enough that any
+    /// pending escape sequence would already have arrived. Flushes a
+    /// lone ESC sitting in State::Esc as Key::Esc so that pressing
+    /// Escape alone takes effect without waiting for the next keypress.
+    fn flush_idle(&mut self) -> Option<Key> {
+        if matches!(self.state, State::Esc) {
+            self.state = State::Ground;
+            Some(Key::Esc)
+        } else {
+            None
         }
     }
 
@@ -120,6 +187,7 @@ impl EscParser {
                 0x05 => Some(Key::CtrlE),
                 0x06 => Some(Key::CtrlF),
                 0x09 => Some(Key::Tab),
+                0x0b => Some(Key::CtrlK),
                 0x15 => Some(Key::CtrlU),
                 0x17 => Some(Key::CtrlW),
                 0x0d | 0x0a => Some(Key::Enter),
@@ -141,6 +209,14 @@ impl EscParser {
                 // bindings: ESC b (word backward) and ESC f (word forward).
                 b'b' => { self.state = State::Ground; Some(Key::WordLeft) }
                 b'f' => { self.state = State::Ground; Some(Key::WordRight) }
+                // ESC d — Option+D / Alt+D, "kill word forward". Mirror of
+                // Ctrl+W (which kills the word backward).
+                b'd' => { self.state = State::Ground; Some(Key::MetaD) }
+                // ESC DEL / ESC BS — Option+Backspace on macOS (Ghostty,
+                // iTerm, Terminal.app all encode it this way). Map to the
+                // same action as Ctrl+W so users get "delete word back"
+                // without having to remap the terminal.
+                0x7f | 0x08 => { self.state = State::Ground; Some(Key::CtrlW) }
                 0x1b => None,
                 _ => {
                     // Lone ESC (or Alt-X we don't handle); treat as Esc.
@@ -152,6 +228,15 @@ impl EscParser {
                 // CSI ends on a byte in 0x40..=0x7e
                 if (0x40..=0x7e).contains(&b) {
                     let s = std::str::from_utf8(&self.csi_buf).unwrap_or("");
+                    // Bracketed-paste start (ESC [ 200 ~). Switch to InPaste
+                    // before the normal state-reset runs, so the trailing
+                    // assignment below doesn't undo us.
+                    if b == b'~' && s == "200" {
+                        self.csi_buf.clear();
+                        self.paste_buf.clear();
+                        self.state = State::InPaste;
+                        return None;
+                    }
                     let k = match b {
                         b'A' => Some(Key::Up),
                         b'B' => Some(Key::Down),
@@ -171,9 +256,20 @@ impl EscParser {
                             if let Some(rest) = s.strip_prefix('<') {
                                 let parts: Vec<&str> = rest.split(';').collect();
                                 if let Some(btn) = parts.first().and_then(|b| b.parse::<u32>().ok()) {
-                                    match btn {
-                                        64 => Some(Key::ScrollUp),
-                                        65 => Some(Key::ScrollDown),
+                                    // Ghostty/iTerm/Terminal.app forward
+                                    // the raw wheel direction in SGR mouse
+                                    // mode — they do NOT apply macOS's
+                                    // "Natural" scrolling inversion that
+                                    // GUI apps get for free. If the user
+                                    // expects natural scrolling we flip
+                                    // the mapping so two-fingers-down on
+                                    // the trackpad reveals older content
+                                    // (which is what the OS preference
+                                    // means). See settings::natural_scroll.
+                                    let natural = crate::settings::natural_scroll();
+                                    match (btn, natural) {
+                                        (64, false) | (65, true) => Some(Key::ScrollUp),
+                                        (65, false) | (64, true) => Some(Key::ScrollDown),
                                         _ => None,
                                     }
                                 } else {
@@ -190,6 +286,7 @@ impl EscParser {
                             let base = s.split(';').next().unwrap_or("");
                             match base {
                                 "1" | "7" => Some(Key::Home),
+                                "3" => Some(Key::Delete),
                                 "4" | "8" => Some(Key::End),
                                 "5" => Some(Key::PageUp),
                                 "6" => Some(Key::PageDown),
@@ -203,6 +300,60 @@ impl EscParser {
                     k
                 } else {
                     self.csi_buf.push(b);
+                    None
+                }
+            }
+            State::InPaste => {
+                // Collect bytes literally. ESC starts a terminator-detection
+                // attempt; if it doesn't match, the bytes get flushed back.
+                if b == 0x1b {
+                    self.state = State::PasteEsc;
+                    None
+                } else {
+                    self.paste_buf.push(b as char);
+                    None
+                }
+            }
+            State::PasteEsc => {
+                if b == b'[' {
+                    self.paste_csi_buf.clear();
+                    self.state = State::PasteCsi;
+                    None
+                } else {
+                    // False alarm — flush the ESC + this byte back into
+                    // the paste buffer and resume collecting.
+                    self.paste_buf.push(0x1b as char);
+                    self.paste_buf.push(b as char);
+                    self.state = State::InPaste;
+                    None
+                }
+            }
+            State::PasteCsi => {
+                if (0x40..=0x7e).contains(&b) {
+                    let s = std::str::from_utf8(&self.paste_csi_buf).unwrap_or("");
+                    if b == b'~' && s == "201" {
+                        // Real terminator — emit the paste payload.
+                        self.paste_csi_buf.clear();
+                        self.state = State::Ground;
+                        let payload = std::mem::take(&mut self.paste_buf);
+                        Some(Key::Paste(payload))
+                    } else {
+                        // Some other CSI sequence appeared inside the
+                        // paste — push the literal bytes back and resume
+                        // collecting. (Rare in real pastes but possible if
+                        // the user pastes ANSI-escaped text.)
+                        self.paste_buf.push(0x1b as char);
+                        self.paste_buf.push('[');
+                        for &pb in &self.paste_csi_buf {
+                            self.paste_buf.push(pb as char);
+                        }
+                        self.paste_buf.push(b as char);
+                        self.paste_csi_buf.clear();
+                        self.state = State::InPaste;
+                        None
+                    }
+                } else {
+                    self.paste_csi_buf.push(b);
                     None
                 }
             }
@@ -236,6 +387,43 @@ mod tests {
         let mut p = EscParser::new();
         let keys = feed_all(&mut p, b"\x1b[5~\x1b[6~\x1b[F");
         assert!(matches!(keys.as_slice(), [Key::PageUp, Key::PageDown, Key::End]));
+    }
+
+    #[test]
+    fn parse_forward_delete() {
+        let mut p = EscParser::new();
+        // CSI 3 ~ — the Delete key (fn+Backspace on macOS).
+        let keys = feed_all(&mut p, b"\x1b[3~");
+        assert!(matches!(keys.as_slice(), [Key::Delete]));
+    }
+
+    #[test]
+    fn parse_ctrl_k() {
+        let mut p = EscParser::new();
+        // 0x0b (VT) is Ctrl+K — readline "kill to end of line".
+        let keys = feed_all(&mut p, &[0x0b]);
+        assert!(matches!(keys.as_slice(), [Key::CtrlK]));
+    }
+
+    #[test]
+    fn parse_meta_d() {
+        let mut p = EscParser::new();
+        // ESC d — Option+D on macOS, "kill word forward".
+        let keys = feed_all(&mut p, b"\x1bd");
+        assert!(matches!(keys.as_slice(), [Key::MetaD]));
+    }
+
+    #[test]
+    fn parse_option_backspace_emits_ctrl_w() {
+        // Option+Backspace on Ghostty / iTerm / Terminal.app sends ESC 0x7f
+        // (and some terminals send ESC 0x08). Both should map to Ctrl+W so
+        // the input layer's existing word-back-delete handler fires.
+        let mut p = EscParser::new();
+        let keys = feed_all(&mut p, b"\x1b\x7f");
+        assert!(matches!(keys.as_slice(), [Key::CtrlW]), "got {:?}", keys);
+        let mut p = EscParser::new();
+        let keys = feed_all(&mut p, b"\x1b\x08");
+        assert!(matches!(keys.as_slice(), [Key::CtrlW]), "got {:?}", keys);
     }
 
     #[test]
@@ -288,9 +476,49 @@ mod tests {
 
     #[test]
     fn parse_sgr_mouse_scroll() {
+        // Force the non-natural mapping so the test is independent of
+        // host OS preferences. (Tests share the OnceLock-backed flag, so
+        // we set the env var before its first read on this thread.)
+        // SAFETY: set_var is unsafe in Rust 2024+; this is a single-threaded
+        // test, no other code is reading env vars concurrently.
+        unsafe { std::env::set_var("CAMOUFLAGE_NATURAL_SCROLL", "0"); }
         let mut p = EscParser::new();
         // SGR mouse: ESC [ < 64 ; 10 ; 5 M = wheel up at (10,5).
         let keys = feed_all(&mut p, b"\x1b[<64;10;5M\x1b[<65;10;5M");
         assert!(matches!(keys.as_slice(), [Key::ScrollUp, Key::ScrollDown]));
+    }
+
+    #[test]
+    fn parse_bracketed_paste_basic() {
+        let mut p = EscParser::new();
+        // ESC[200~hello world\nfoo ESC[201~ — pastes a multi-line block.
+        let keys = feed_all(&mut p, b"\x1b[200~hello world\nfoo\x1b[201~");
+        match keys.as_slice() {
+            [Key::Paste(s)] => assert_eq!(s, "hello world\nfoo"),
+            other => panic!("expected single Paste, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_bracketed_paste_does_not_emit_enter_or_ctrl_c() {
+        // The whole point: \r and \x03 inside a paste must not become
+        // Key::Enter or Key::CtrlC — they ride along as part of the
+        // payload so the host doesn't submit or quit mid-paste.
+        let mut p = EscParser::new();
+        let keys = feed_all(&mut p, b"\x1b[200~a\rb\x03c\x1b[201~");
+        match keys.as_slice() {
+            [Key::Paste(s)] => assert_eq!(s, "a\rb\x03c"),
+            other => panic!("expected single Paste, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_bracketed_paste_then_normal_key() {
+        let mut p = EscParser::new();
+        let keys = feed_all(&mut p, b"\x1b[200~x\x1b[201~\r");
+        match keys.as_slice() {
+            [Key::Paste(s), Key::Enter] => assert_eq!(s, "x"),
+            other => panic!("expected [Paste, Enter], got {:?}", other),
+        }
     }
 }

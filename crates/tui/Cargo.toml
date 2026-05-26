@@ -8,6 +8,10 @@ license.workspace = true
 name = "camouflage-tui"
 path = "src/main.rs"
 
+[[bin]]
+name = "camouflage-diff"
+path = "src/bin/camouflage_diff.rs"
+
 [dependencies]
 camouflage-protocol = { workspace = true }
 camouflage-store = { workspace = true }

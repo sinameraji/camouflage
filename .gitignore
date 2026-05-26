@@ -4,3 +4,4 @@ Cargo.lock
 *.db-wal
 *.db-shm
 .DS_Store
+tests/visual/out/

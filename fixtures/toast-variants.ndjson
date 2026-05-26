@@ -1,0 +1,6 @@
+{"event_type":"SessionStarted","payload":{}}
+{"event_type":"StatusUpdate","payload":{"segments":{"mode":"edit","phase":"idle"}}}
+{"event_type":"ShowToast","payload":{"text":"Short info","kind":"info","ttl_ms":8000}}
+{"event_type":"ShowToast","payload":{"text":"Saved successfully","kind":"success","ttl_ms":8000}}
+{"event_type":"ShowToast","payload":{"text":"Heads up: this is a longer warning message that should wrap across multiple lines so we can verify the toast sizes itself to the wrapped text","kind":"warn","ttl_ms":8000}}
+{"event_type":"ShowToast","payload":{"text":"Network error — retrying in 5s","kind":"error","ttl_ms":1500}}

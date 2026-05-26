@@ -1,6 +1,13 @@
 # Camouflage UI Components Catalog
 
-**Status:** draft (2026-05-17). The reasoning for this catalog is in [`PROGRESS.md`](../../PROGRESS.md#components-catalog-the-missing-ui-primitives-layer). This document is the authoritative spec; PROGRESS.md tracks per-component implementation status.
+> 📜 **HISTORICAL — original component-catalog spec from 2026-05-17.**
+> All seven components (CC-1 through CC-7: `SelectList`, `Confirm`,
+> `Toast`, `Wizard`, `Form`, `Table`, `KeyValueView`) have shipped.
+> Canonical reference for their on-the-wire shape is now
+> [`docs/protocol.md`](../protocol.md) (see `Show*` event entries) and
+> [`crates/protocol/src/lib.rs`](../../crates/protocol/src/lib.rs).
+> This file is kept for the original design reasoning, which still
+> reads useful as a "why we built it this way" record.
 
 ## Why this exists
 
