@@ -24,6 +24,19 @@ Items below are **not yet done**. Pick the highest-priority one (top of each sec
 
 Status legend: ⬜ TODO · ⏳ IN PROGRESS · ✅ DONE (kept in place for archeology) · ⏸ DEFERRED (intentionally on hold, reason given)
 
+### Transcript polish & visual harness (2026-05-24 → 2026-05-26)
+
+Surfaced while dogfooding `--ui camouflage` against Kimiflare and looking at real screenshots through the new vhs harness.
+
+| ID | Status | Item | Reasoning / details | Where |
+|----|--------|-----|---------------------|-------|
+| TP-1 | ✅ DONE — `c0d529a` | vhs-based visual test harness for the TUI | Closes the rendering-loop blind spot: code-review-only feedback couldn't catch splash SGR breakage, toast sizing, or Esc dismissal because they're all visual. `tests/visual/run.sh <scenario>` builds and runs a tape; outputs PNG frames + GIF for the Read tool to ingest. First run downloads a headless Chromium (~3 min, cached after). | `tests/visual/`, `fixtures/{splash-sgr,toast-variants}.ndjson` |
+| TP-2 | ✅ DONE — `1782753` | Splash height cap was 12 rows; clipped Kimiflare's 26-row pixel-art logo | Raised cap to `min(area.height/2, 30)`. Splash auto-dismisses on first user submit, so generosity is cheap. Later widened further in TP-4. | `crates/tui/src/draw.rs` |
+| TP-3 | ✅ DONE — `da80961` | Per-turn labels + separator rules in the transcript | Configurable `user_label` / `assistant_label` on `SessionStarted` payload (defaults `You` / `Assistant`). Each user/assistant row is followed by pad / dim horizontal rule / pad so successive speakers are visually anchored. `visual_count` updated to match so scroll math stays aligned. | `crates/renderer/src/model.rs`, `crates/tui/src/draw.rs` |
+| TP-4 | ✅ DONE — `da80961` | Splash responsive on small terminals | ANSI-aware `trim_empty_splash_lines` strips visually-empty leading/trailing rows from host-supplied splash (Kimiflare's logo had 5+6 wasted blank rows). Height cap widened from `area.height/2` to `area.height - 6`. Verified visually at 900×520. | `crates/tui/src/draw.rs` |
+| TP-5 | ⬜ TODO | vhs Enter keystroke may not auto-dismiss splash | While running `kimiflare-splash.tape`, after `Type "hello" / Enter` the splash stayed pinned and `hello` stayed in the input box. Could be (a) vhs Enter not reaching the TUI through the pipeline, or (b) auto-dismiss-on-first-submit not firing under `--stdin-events`. Repro: `tests/visual/run.sh splash` — frame `03-after-submit.png`. | `crates/renderer/src/model.rs` auto-dismiss path, or vhs/PTY |
+| TP-6 | ⬜ TODO | Optional: golden-image diff gating in CI | Once tapes stabilise, add ImageMagick `compare` to flag unintended visual regressions on every push. | `tests/visual/`, CI config |
+
 ### TUI bugs surfaced by real `--ui camouflage` testing (2026-05-17)
 
 These came out of running `kimiflare --ui camouflage --dangerously-allow-all -p "..."` end-to-end against a real Cloudflare turn. They're real, reproducible, and block daily use.
@@ -63,6 +76,8 @@ Each component ships as a self-contained slice (one commit series): protocol eve
 | ID | Status | Item | Reasoning |
 |----|--------|------|-----------|
 | ADP-1 | ⬜ TODO | Emit `SlashCommandsRegistered` listing KimiFlare's 28 slash commands | Unblocks TBR-5. Source list in `~/kimi-code-clone-3/src/commands/builtins.ts`. |
+| ADP-6 | ⬜ TODO | Set `user_label` / `assistant_label` on `SessionStarted` (e.g. `"kimiflare"`) | Unblocks the TP-3 branding for the real adapter. One-line change in `src/ui-mode.ts` where the first `cam.send("SessionStarted", …)` happens, plus `npm run build`. |
+| ADP-7 | ⬜ TODO | Stale-dist guardrail — KimiFlare's `dist/index.js` shipped without the Splash-send code for an unknown period | Discovered 2026-05-24: the splash code lived in `src/` but the bundled `dist/` was older, so the logo never reached the renderer in practice. Either add a `prepack`/`prepublish` hook that fails when dist is older than src, or move to `tsx`/just-in-time so dist drift can't happen. |
 | ADP-2 | ⬜ TODO | Wire `--ui camouflage` to use a SelectList for the resume picker (first CC-1 driver) | After CC-1 ships, replace KimiFlare's `src/ui/resume-picker.tsx` with a `ShowSelectList` emit + `SelectListResponse` handler. Validates the catalog design. |
 | ADP-3 | ⬜ TODO | KimiFlare → npm-published `camouflage` package | Currently uses `file:../camouflage/sdk/node` for local development. Switch to a real npm version once we publish. |
 | ADP-4 | ⏸ DEFERRED | Cost segment in `StatusUpdate` (mode/phase/elapsed/tokens/cost/branch) | Requires KimiFlare's cost-attribution machinery (complex; lives in `src/cost-attribution/`). Land after CC-1 → CC-3 demonstrate the catalog works. |
