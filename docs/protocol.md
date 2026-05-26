@@ -37,14 +37,22 @@ omitted. Full form (what `camouflage-record` persists and
 
 ## Direction
 
-Most events flow **host → renderer** (inbound). Two are **renderer → host**
-(outbound), emitted on stdout by `camouflage-tui --stdin-events
---emit-responses`:
+Most events flow **host → renderer** (inbound). A handful are **renderer
+→ host** (outbound), emitted on stdout by `camouflage-tui
+--stdin-events --emit-responses` (or fd 3 with `--responses-fd 3` when
+stdout is reserved for rendering):
 
 | Event | Direction |
 |---|---|
 | `UserInputSubmitted` | Outbound |
 | `PermissionResponse` | Outbound |
+| `SelectListResponse` | Outbound (CC-1) |
+| `ConfirmResponse` | Outbound (CC-2) |
+| `FormResponse` | Outbound (CC-5) |
+| `WizardCompleted` | Outbound (CC-4) |
+| `WizardCancelled` | Outbound (CC-4) |
+| `ModeChangeRequested` | Outbound |
+| `CancelRequested` | Outbound |
 | *(everything else)* | Inbound |
 
 ---
@@ -55,11 +63,45 @@ Most events flow **host → renderer** (inbound). Two are **renderer → host**
 
 #### `SessionStarted`
 ```json
-{ "event_type": "SessionStarted", "payload": {} }
+{
+  "event_type": "SessionStarted",
+  "payload": {
+    "user_label": "You",
+    "assistant_label": "kimiflare"
+  }
+}
 ```
 Marks the beginning of a logical session. Renderer resets phase + clears
-ephemeral state. Payload is currently empty; future additions will be
-additive.
+ephemeral state.
+
+Optional payload fields (v0.5+):
+- `user_label` (string) — label rendered before each user turn in the
+  transcript. Defaults to `"You"`. Trimmed; empty strings are ignored.
+- `assistant_label` (string) — label rendered before each assistant
+  turn (e.g. `"kimiflare"`, `"Claude"`). Defaults to `"Assistant"`.
+
+Both labels can be re-set on any subsequent `SessionStarted` so an
+adapter can update branding mid-session without restarting the TUI.
+
+#### `Splash` (v0.4.9+)
+```json
+{ "event_type": "Splash", "payload": { "text": "ANSI logo text…" } }
+```
+Host-supplied splash banner pinned above the transcript until the user
+submits their first prompt. `text` may contain ANSI SGR escapes (24-bit
+RGB fg/bg, default-bg reset). Visually-empty leading/trailing rows are
+stripped by the renderer; the remaining height is capped at
+`min(area.height - 6, 30)` rows to leave room for the transcript.
+Subsequent `Splash` events replace the pinned content (the host owns
+its lifecycle).
+
+#### `TranscriptCleared`
+```json
+{ "event_type": "TranscriptCleared", "payload": {} }
+```
+The host wiped the message history (e.g. `/clear`). Renderer drops all
+ring-buffer rows and pins a "history floor" so scrolling up won't refetch
+the wiped rows from the persisted store.
 
 #### `SessionEnded`
 ```json
@@ -272,6 +314,200 @@ call-to-action beneath the error row.
 
 ---
 
+### Pickers & registries (v0.4.6+)
+
+#### `SlashCommandsRegistered`
+```json
+{
+  "event_type": "SlashCommandsRegistered",
+  "payload": {
+    "commands": [
+      { "name": "compact", "description": "compact the session" },
+      { "name": "clear", "description": "clear the transcript" }
+    ]
+  }
+}
+```
+Host registers the slash-command list used by the renderer's `/` picker
+overlay. Re-registering replaces the list. Each entry may carry an
+optional `source` badge (e.g. `"project"`, `"global"`) shown in the
+picker so users can distinguish overrides.
+
+#### `MentionCandidatesRegistered`
+```json
+{
+  "event_type": "MentionCandidatesRegistered",
+  "payload": {
+    "candidates": [
+      { "token": "src/auth/login.ts", "kind": "file" },
+      { "token": "AuthGuard", "kind": "symbol" }
+    ]
+  }
+}
+```
+Host registers candidates for the `@`-mention picker. Re-registering
+replaces the list.
+
+---
+
+### Components catalog (v0.4.6+, see [`docs/historical/components-catalog.md`](historical/components-catalog.md) for design)
+
+Each component is a single inbound `Show<Component>` event carrying a
+unique `id`, optionally paired with an outbound `<Component>Response`
+event keyed by the same `id`. Renderer owns layout/theme; host owns the
+data and the eventual handling of the response.
+
+#### `ShowSelectList` (CC-1) + `SelectListResponse` (outbound)
+```json
+{
+  "event_type": "ShowSelectList",
+  "payload": {
+    "id": "resume-1",
+    "prompt": "Resume which session?",
+    "options": [
+      { "value": "sess-abc", "label": "fix auth" },
+      { "value": "sess-def", "label": "refactor router" }
+    ],
+    "default": "sess-abc",
+    "allow_filter": true,
+    "allow_cancel": true
+  }
+}
+```
+```json
+{
+  "event_type": "SelectListResponse",
+  "payload": { "id": "resume-1", "value": "sess-abc" }
+}
+```
+Renderer pops a modal SelectList overlay. User's pick (or cancel) comes
+back keyed by `id`. Used by KimiFlare's resume picker, session picker,
+theme picker, model picker.
+
+#### `ShowConfirm` (CC-2) + `ConfirmResponse` (outbound)
+```json
+{
+  "event_type": "ShowConfirm",
+  "payload": {
+    "id": "quit-1",
+    "prompt": "Save before quitting?",
+    "yes_label": "Save",
+    "no_label": "Discard",
+    "default": "yes"
+  }
+}
+```
+```json
+{ "event_type": "ConfirmResponse", "payload": { "id": "quit-1", "value": true } }
+```
+Two-button yes/no modal. `PermissionRequested` is structurally a
+specialised `ShowConfirm`; both ship as their own events because
+permissions have additional UX (free-text feedback, multi-action).
+
+#### `ShowToast` (CC-3)
+```json
+{
+  "event_type": "ShowToast",
+  "payload": { "text": "Saved", "kind": "success", "ttl_ms": 1500 }
+}
+```
+Brief non-modal notification. `kind` is one of `info` / `success` /
+`warn` / `error`. `ttl_ms` defaults to 3000. Toast auto-dismisses on TTL
+expiry; no response event.
+
+#### `ShowTable` (CC-6)
+```json
+{
+  "event_type": "ShowTable",
+  "payload": {
+    "id": "usage-1",
+    "title": "Cost — last 7 days",
+    "columns": [
+      { "name": "day", "label": "Day" },
+      { "name": "cost", "label": "Cost ($)", "align": "right" }
+    ],
+    "rows": [
+      { "day": "Mon", "cost": "0.04" },
+      { "day": "Tue", "cost": "0.07" }
+    ]
+  }
+}
+```
+Display-only tabular data in a modal. `align` is one of `left` /
+`right` / `center`. Selectable rows + inline mode are deferred follow-ups.
+
+#### `ShowKeyValueView` (CC-7)
+```json
+{
+  "event_type": "ShowKeyValueView",
+  "payload": {
+    "id": "session-1",
+    "title": "Session details",
+    "items": [
+      { "label": "Started", "value": "2h ago" },
+      { "label": "Model", "value": "kimi-k2.6" }
+    ]
+  }
+}
+```
+Display-only label/value inspector pane.
+
+#### `ShowForm` (CC-5) + `FormResponse` (outbound)
+```json
+{
+  "event_type": "ShowForm",
+  "payload": {
+    "id": "settings",
+    "title": "Settings",
+    "fields": [
+      { "name": "endpoint", "label": "API endpoint", "default": "https://api.example.com" },
+      { "name": "token", "label": "API token", "kind": "password", "required": true }
+    ]
+  }
+}
+```
+```json
+{
+  "event_type": "FormResponse",
+  "payload": {
+    "id": "settings",
+    "values": { "endpoint": "https://api.example.com", "token": "hidden" }
+  }
+}
+```
+Multi-field form. Up/Down or Tab navigates fields. `kind` may be
+`text` / `password` (boolean / select are deferred follow-ups).
+
+#### `ShowWizard` (CC-4) + `WizardCompleted` / `WizardCancelled` (outbound)
+```json
+{
+  "event_type": "ShowWizard",
+  "payload": {
+    "id": "onboard",
+    "title": "Onboarding",
+    "steps": [
+      { "kind": "confirm", "id": "agree", "prompt": "Accept terms?" },
+      { "kind": "form", "id": "creds", "fields": [ { "name": "email", "label": "Email" } ] }
+    ]
+  }
+}
+```
+```json
+{
+  "event_type": "WizardCompleted",
+  "payload": {
+    "id": "onboard",
+    "results": { "agree": true, "creds": { "email": "x@y.z" } }
+  }
+}
+{ "event_type": "WizardCancelled", "payload": { "id": "onboard-2", "at_step": 1 } }
+```
+Multi-step flow composing Select / Confirm / Form steps. The renderer
+intercepts the sub-modal responses and threads them into `results`
+keyed by each step's `id`.
+
+---
+
 ### Renderer → host (outbound)
 
 #### `UserInputSubmitted`
@@ -281,6 +517,23 @@ call-to-action beneath the error row.
 Emitted on stdout when the user hits Enter in the input box. Hosts
 should accept this on stdin (or fd 3 with `--responses-fd`) and route
 it into their agent's input pipeline.
+
+#### `ModeChangeRequested`
+```json
+{ "event_type": "ModeChangeRequested", "payload": { "direction": "next" } }
+```
+User hit Shift+Tab to cycle modes. `direction` is `next` or `prev`.
+The host owns the mode list (e.g. `edit` / `plan` / `auto`) and is
+expected to acknowledge by emitting an updated `StatusUpdate` whose
+`segments.mode` reflects the new value.
+
+#### `CancelRequested`
+```json
+{ "event_type": "CancelRequested", "payload": {} }
+```
+User hit Esc during an active stream / tool. Host should abort the
+in-flight operation. The renderer also closes any open overlay locally
+on Esc; this event fires only when nothing local was cancellable.
 
 ---
 

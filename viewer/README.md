@@ -37,8 +37,8 @@ Mirrors the TUI at the level a debugger needs:
 - **Task ribbon** above the transcript: live `BackgroundTaskUpdate`
   entries; `done` tasks fade after 1.5s.
 - **Permission box**: highlighted callout when a `PermissionRequested`
-  is unfulfilled (read-only in v0.3 — responding will land when the
-  KimiFlare adapter exposes bidirectional permissions over the wire).
+  is unfulfilled. The viewer accepts a response (allow / deny / cancel)
+  and emits a `PermissionResponse` back over the same WebSocket frame.
 
 ## Wire protocol
 

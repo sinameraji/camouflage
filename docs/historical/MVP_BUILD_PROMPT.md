@@ -1,6 +1,11 @@
 # Camouflage MVP — Event-Native Rendering Runtime for AI Agents
 
-> **Status as of 2026-05-16:** v0.1 MVP implemented in this repo. See `PROGRESS.md` at repo root for the live milestone tracker. Inline `[DONE]` / `[TODO]` markers in this document show per-section status.
+> 📜 **HISTORICAL — original build prompt from 2026-05-16.**
+> Kept for archeology. Camouflage shipped through v0.6 and beyond since
+> this was written; the live state of the project is in
+> [`PROGRESS.md`](../../PROGRESS.md) and [`ARCHITECTURE.md`](../../ARCHITECTURE.md).
+> Inline `[DONE]` / `[TODO]` / `[NEEDS MANUAL VERIFY]` markers in this
+> file are stale and not maintained — do not trust them.
 
 ## Objective
 

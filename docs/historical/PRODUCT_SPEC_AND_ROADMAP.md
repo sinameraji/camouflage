@@ -1,6 +1,13 @@
 # Camouflage — Product Specification & Long-Term Roadmap
 
-> **Status as of 2026-05-16:** v0.1 implemented (with caveats); v0.2–v0.7 not started. Live milestone tracker lives at `/PROGRESS.md` at repo root. Roadmap markers below show per-version state.
+> 📜 **HISTORICAL — original roadmap from 2026-05-16.**
+> Kept for archeology. **v0.2 through v0.6 have all shipped and are
+> tagged on GitHub**, despite the inline `[NOT STARTED]` markers below.
+> The live state of the project is in
+> [`PROGRESS.md`](../../PROGRESS.md) (work tracker) and
+> [`ARCHITECTURE.md`](../../ARCHITECTURE.md) (current design).
+> Per-version `[NOT STARTED]` / `[PARTIAL]` markers in this file are
+> stale and not maintained — do not trust them.
 
 ## Product Definition
 

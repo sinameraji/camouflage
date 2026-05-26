@@ -17,8 +17,9 @@ checkout of the main repo:
 cargo install --path crates/tui
 ```
 
-(We'll ship prebuilt binaries via `postinstall` once the package has real
-users — see [issue X] for the plan.)
+(Prebuilt binaries via `postinstall` are deferred until we have a real
+distribution story — tracked as **ECO-6** in
+[`PROGRESS.md`](../../PROGRESS.md).)
 
 ## Quick start
 

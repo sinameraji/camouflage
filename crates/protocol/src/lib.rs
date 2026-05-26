@@ -83,7 +83,7 @@ pub enum EventType {
     MentionCandidatesRegistered,
     /// v0.4.6+ (CC-1) — Host → renderer: render a modal SelectList. The
     /// first of the "components catalog" primitives (see
-    /// `docs/specs/components-catalog.md`). User's pick is reported back
+    /// `docs/historical/components-catalog.md`). User's pick is reported back
     /// via `SelectListResponse` keyed by the same `id`.
     ShowSelectList,
     /// v0.4.6+ (CC-1) — Renderer → host: outcome of a `ShowSelectList`.
@@ -464,7 +464,7 @@ pub mod payloads {
     }
 
     /// v0.4.6+ (CC-1) — host asks the renderer to show a modal select list.
-    /// See `docs/specs/components-catalog.md` for the full design.
+    /// See `docs/historical/components-catalog.md` for the full design.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub struct ShowSelectList {
         /// Host-chosen unique id. Reported back in `SelectListResponse` so

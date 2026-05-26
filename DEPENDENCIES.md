@@ -27,7 +27,7 @@ Direct dependencies, with rationale. Budget: ≤15 for v0.1.
 2. Prefer `bundled` features that eliminate system requirements.
 3. No embedded JS runtime.
 4. No hidden network calls.
-5. `cargo audit` in CI (future).
+5. `cargo audit` in CI — not yet wired (tracked as **CI-1** in [`PROGRESS.md`](PROGRESS.md); no `.github/workflows/` exists today).
 
 ## Transitive surface
 

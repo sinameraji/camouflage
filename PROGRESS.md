@@ -2,7 +2,7 @@
 
 **Single source of truth for "where are we."** Read this first when resuming work, especially after a conversation compaction.
 
-Specs: [`docs/specs/MVP_BUILD_PROMPT.md`](docs/specs/MVP_BUILD_PROMPT.md), [`docs/specs/PRODUCT_SPEC_AND_ROADMAP.md`](docs/specs/PRODUCT_SPEC_AND_ROADMAP.md).
+Specs: [`docs/historical/MVP_BUILD_PROMPT.md`](docs/historical/MVP_BUILD_PROMPT.md), [`docs/historical/PRODUCT_SPEC_AND_ROADMAP.md`](docs/historical/PRODUCT_SPEC_AND_ROADMAP.md).
 
 ## File layout (read in this order)
 
@@ -57,7 +57,7 @@ Recognized 2026-05-17. Today Camouflage exposes a fixed set of widgets (StatusBa
 
 Design: each component is one inbound event (`Show<Component>`) carrying a unique `id`, plus an optional outbound response event (`<Component>Response`) keyed by the same id. Renderer owns layout/theme; host owns the data and the eventual handling of the response.
 
-The full catalog conversation from 2026-05-17 lives in [`docs/specs/components-catalog.md`](docs/specs/components-catalog.md) (to be created in the next slice). Quick reference of components in priority order:
+The full catalog conversation from 2026-05-17 lives in [`docs/historical/components-catalog.md`](docs/historical/components-catalog.md) (to be created in the next slice). Quick reference of components in priority order:
 
 | ID | Component | Status | KimiFlare consumers it unblocks | Reasoning |
 |----|-----------|--------|----------------------------------|-----------|
@@ -134,12 +134,12 @@ Audit found multiple docs that drifted away from the code as the project shipped
 
 | ID | Status | Item | Reasoning / details | Where |
 |----|--------|------|---------------------|-------|
-| DOC-1 | ⬜ TODO | `docs/protocol.md` lists ~20 event types; code has 43. Missing from docs: `SlashCommandsRegistered`, `MentionCandidatesRegistered`, `ShowSelectList`/`SelectListResponse`, `ShowConfirm`/`ConfirmResponse`, `ShowToast`, `ShowTable`, `ShowKeyValueView`, `ShowForm`/`FormResponse`, `ShowWizard`/`WizardCompleted`/`WizardCancelled`, `ModeChangeRequested`, `CancelRequested`, `TranscriptCleared`, `Splash` (17 events from v0.4.5+ undocumented). | These are all shipped in `crates/protocol/src/lib.rs` — protocol.md just needs the section entries. | `docs/protocol.md` vs `crates/protocol/src/lib.rs` |
-| DOC-2 | ⬜ TODO | `docs/specs/PRODUCT_SPEC_AND_ROADMAP.md` marks v0.2 through v0.6 as `[NOT STARTED]` even though all six are tagged + shipped. | One-shot status sweep — replace `[NOT STARTED]` with `[DONE — tagged vX.Y.Z]` and link the milestone commits already captured in PROGRESS.md. | `docs/specs/PRODUCT_SPEC_AND_ROADMAP.md` |
-| DOC-3 | ⬜ TODO | `ARCHITECTURE.md` describes Ctrl+F search and lazy-paging-on-scroll as `(future)` / `(v0.2)`. Both have shipped (search in v0.2 Slice D, lazy paging in v0.1 #17). | Same one-shot wording cleanup. | `ARCHITECTURE.md` |
-| DOC-4 | ⬜ TODO | `viewer/README.md:40-41` claims the permission box is read-only "in v0.3 until KimiFlare adapter exposes bidirectional permissions" — but `viewer/index.html:213` already handles `PermissionResponse`. | Doc lag, feature already shipped. | `viewer/README.md` |
-| DOC-5 | ⬜ TODO | `sdk/node/README.md:20-21` has a placeholder link `[issue X]` that was never replaced with a real GitHub issue URL. | Either resolve the issue + link it, or remove the line. | `sdk/node/README.md` |
-| DOC-6 | ⬜ TODO | `docs/specs/MVP_BUILD_PROMPT.md` acceptance test for "Terminal/Scrolling" is marked `[NEEDS MANUAL VERIFY]` with the note "no pty harness yet" — `scripts/bench_input_latency.py` and the v0.1 #19 PTY harness landed and measured p95 = 23.99 ms under flood. | Status flip on existing checklist item. | `docs/specs/MVP_BUILD_PROMPT.md` |
+| DOC-1 | ✅ DONE | `docs/protocol.md` lists ~20 event types; code has 43. Missing from docs: 17 events from v0.4.5+ (pickers, components catalog, Splash, TranscriptCleared, ModeChangeRequested, CancelRequested). | Added Pickers & registries section, Components catalog section, Splash + TranscriptCleared entries, ModeChangeRequested + CancelRequested entries; Direction table updated. | `docs/protocol.md` |
+| DOC-2 | ✅ DONE | `PRODUCT_SPEC_AND_ROADMAP.md` marked v0.2–v0.6 as `[NOT STARTED]` even though all six are tagged + shipped. | Resolved by moving `docs/specs/` to `docs/historical/` and banner-marking each file as HISTORICAL. Stale per-version markers are no longer authoritative; live state is here in PROGRESS.md. | `docs/historical/PRODUCT_SPEC_AND_ROADMAP.md` |
+| DOC-3 | ✅ DONE | `ARCHITECTURE.md` described Ctrl+F search and lazy-paging-on-scroll as `(future)` / `(v0.2)`. | Updated both lines to reference the shipped slices (v0.2 Slice D for search, v0.1 #17 for lazy paging). | `ARCHITECTURE.md` |
+| DOC-4 | ✅ DONE | `viewer/README.md` claimed the permission box was read-only; `viewer/index.html:213` already handles `PermissionResponse`. | Updated to describe the actual bidirectional behaviour. | `viewer/README.md` |
+| DOC-5 | ✅ DONE | `sdk/node/README.md` had a placeholder `[issue X]` link. | Replaced with explicit reference to ECO-6 in PROGRESS.md. | `sdk/node/README.md` |
+| DOC-6 | ✅ DONE | `MVP_BUILD_PROMPT.md` acceptance test "Terminal/Scrolling" marked `[NEEDS MANUAL VERIFY]` — PTY harness shipped in v0.1 #19. | Resolved by historical-banner on the spec file: inline markers are no longer authoritative. | `docs/historical/MVP_BUILD_PROMPT.md` |
 | CI-1 | ⬜ TODO | No `.github/workflows/` at all in the repo. `DEPENDENCIES.md:30` notes "cargo audit in CI (future)"; nothing is gated automatically. Builds, formatting, security audit, golden-image diffs (TP-6), and the soak run (MN-1) all currently rely on the human. | First slice: `cargo build`, `cargo fmt --check`, `cargo audit` on push. Later slices fold in TP-6 visual diffs + a scheduled MN-1 soak. | `.github/workflows/*` (new), `DEPENDENCIES.md` |
 | TEST-1 | ⬜ TODO | "Renderer never loads the full transcript" and "only renders the visible viewport" are listed in `MVP_BUILD_PROMPT.md` as acceptance tests but are enforced only by data-structure choice (bounded `VecDeque`) — no formal property test asserts them. Cheap to add and prevents future regressions if someone reintroduces an unbounded vector. | `crates/renderer/src/model.rs` test module; property test using `proptest` or hand-written stress test injecting 100k rows. |
 
@@ -338,7 +338,7 @@ v0.3 added `tokio-tungstenite` + `futures-util` for the WebSocket transport. The
 ## How to use this file
 
 - **At the start of any work session**, open this file first. The "Current stage" line is the elevator pitch.
-- **When a milestone changes state**, edit its row here AND the inline `[STATUS]` marker in the relevant spec under `docs/specs/`.
+- **When a milestone changes state**, edit its row here. (The original specs under `docs/historical/` are no longer maintained; they're kept for archeology only.)
 - **When a new milestone surfaces**, append it to the appropriate version's checklist with status `NOT DONE`.
 - **Commit this file** alongside the code changes that move it forward — git history then explains "how" while this file explains "what's left."
 
@@ -378,7 +378,7 @@ Brief one-liners per session. Keep this short — git log has the detail.
 | Date       | Summary                                                                                  |
 |------------|------------------------------------------------------------------------------------------|
 | 2026-05-15 | Scaffolded workspace; v0.1 code-complete; all unit tests pass; bench hits 4/4 targets.   |
-| 2026-05-16 | Initialized git, imported specs into `docs/specs/`, added PROGRESS.md tracker.           |
+| 2026-05-16 | Initialized git, imported specs into `docs/specs/` (later moved to `docs/historical/`), added PROGRESS.md tracker.           |
 | 2026-05-16 | Created public GitHub repo, pushed. Fixed pipe-stdin raw-mode bug (open /dev/tty directly).|
 | 2026-05-16 | Fixed deeper pipe-stdin bug: crossterm's mio-based event poll fails (EINVAL on macOS kqueue+/dev/tty). Replaced with custom blocking /dev/tty reader + ANSI parser. Verified via pty harness: 290 events round-tripped, full UI rendered. |
 | 2026-05-16 | Fixed status-line layout bug (Borders::TOP consumed the only available line). Status now renders as `idle [follow] rows=N total=M` between transcript and input. |
