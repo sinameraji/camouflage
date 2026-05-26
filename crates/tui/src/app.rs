@@ -21,6 +21,11 @@ pub struct Config {
     pub store: SqliteStore,
     pub stdin_events: bool,
     pub replay: Option<Uuid>,
+    /// Play back a shareable .camo file (NDJSON, optionally prefixed with
+    /// a `{"camo_version":...}` header line). Mutually exclusive with
+    /// `stdin_events` and `replay`. Events are persisted to the store as
+    /// a fresh session so the user can re-replay or export them again.
+    pub play_file: Option<std::path::PathBuf>,
     pub fps: u32,
     pub row_cap: Option<usize>,
     pub emit_responses: bool,
@@ -243,6 +248,41 @@ pub async fn run(cfg: Config) -> Result<()> {
         let reader = BufReader::new(stdin);
         let tx = ev_tx.clone();
         tokio::spawn(async move {
+            let _ = run_reader(reader, decoder, tx).await;
+        });
+    }
+    if let Some(path) = cfg.play_file.clone() {
+        // .camo container = optional header line `{"camo_version":...}`
+        // followed by NDJSON events. We detect and strip the header here,
+        // then hand the remaining stream to the same NDJSON decoder as
+        // --stdin-events so the rest of the pipeline is unchanged.
+        let decoder = NdjsonDecoder::new(session_id);
+        let tx = ev_tx.clone();
+        tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let file = match tokio::fs::File::open(&path).await {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::error!(?e, "open .camo file");
+                    return;
+                }
+            };
+            let mut reader = BufReader::new(file);
+            // Peek the first line. If it's a camo header object, skip
+            // it; otherwise feed it back into the decoder as the first
+            // event line.
+            let mut first = String::new();
+            let n = reader.read_line(&mut first).await.unwrap_or(0);
+            let header_consumed = n > 0
+                && serde_json::from_str::<serde_json::Value>(first.trim())
+                    .ok()
+                    .and_then(|v| v.get("camo_version").cloned())
+                    .is_some();
+            if !header_consumed && !first.trim().is_empty() {
+                if let Ok(ev) = decoder.parse_line(first.trim()) {
+                    let _ = tx.send(ev).await;
+                }
+            }
             let _ = run_reader(reader, decoder, tx).await;
         });
     }

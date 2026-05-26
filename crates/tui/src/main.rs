@@ -21,6 +21,11 @@ struct Args {
     #[arg(long, value_name = "SESSION_ID")]
     replay: Option<Uuid>,
 
+    /// Play back a shareable .camo file (header line + NDJSON events).
+    /// The file may also be plain NDJSON without a header.
+    #[arg(long, value_name = "FILE")]
+    play: Option<PathBuf>,
+
     /// Path to SQLite database. Defaults to $HOME/.camouflage/sessions.db.
     #[arg(long)]
     db: Option<PathBuf>,
@@ -94,6 +99,7 @@ fn main() -> Result<()> {
         store,
         stdin_events: args.stdin_events,
         replay: args.replay,
+        play_file: args.play,
         fps: args.fps.max(1).min(120),
         row_cap: args.row_cap,
         emit_responses,

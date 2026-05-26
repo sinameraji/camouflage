@@ -41,6 +41,11 @@ struct Args {
     /// Default is full Event records so the export is self-describing.
     #[arg(long)]
     shorthand: bool,
+    /// Emit a shareable .camo container: a JSON header line
+    /// `{"camo_version":1, ...}` followed by full Event records.
+    /// `camouflage-tui --play <file>` strips the header automatically.
+    #[arg(long)]
+    camo: bool,
 }
 
 fn main() -> Result<()> {
@@ -59,6 +64,19 @@ fn main() -> Result<()> {
     let events = store.load_session(session).context("loading session")?;
     let stdout = std::io::stdout();
     let mut w = BufWriter::new(stdout.lock());
+    if args.camo {
+        let first_ts = events.first().map(|e| e.timestamp_ms).unwrap_or(0);
+        let last_ts = events.last().map(|e| e.timestamp_ms).unwrap_or(0);
+        let header = serde_json::json!({
+            "camo_version": 1,
+            "session_id": session.to_string(),
+            "event_count": events.len(),
+            "first_ts_ms": first_ts,
+            "last_ts_ms": last_ts,
+            "tool": "camouflage-export",
+        });
+        writeln!(w, "{}", serde_json::to_string(&header)?)?;
+    }
     for ev in &events {
         let line = if args.shorthand {
             serde_json::to_string(&serde_json::json!({
