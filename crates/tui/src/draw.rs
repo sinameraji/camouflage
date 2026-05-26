@@ -86,6 +86,18 @@ fn spinner_frame_now() -> u64 {
     ms / 80
 }
 
+/// Wall-clock-driven on/off for the streaming caret. ~1Hz blink (500ms
+/// each phase) is the macOS / VS Code default — calm enough to read
+/// over, alive enough to signal "still streaming."
+fn caret_visible_now() -> bool {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    (ms / 500) % 2 == 0
+}
+
 /// View-time projection of the event inspector. None = panel closed.
 pub struct InspectorView<'a> {
     /// Rows-from-newest of the focused row (0 = bottom).
@@ -407,15 +419,21 @@ pub fn render<B: Backend>(
         let active_tools = model.tools();
         let user_label = model.user_label();
         let assistant_label = model.assistant_label();
+        let active_stream_seq: Option<i64> = model
+            .active_stream_row()
+            .and_then(|i| model.rows().get(i))
+            .map(|r| r.seq);
         let lines: Vec<Line> = rows_taken
             .iter()
             .flat_map(|r| {
+                let is_active = active_stream_seq.map_or(false, |s| s == r.seq);
                 row_to_lines(
                     r,
                     frame,
                     active_tools,
                     theme,
                     model.has_active_stream(),
+                    is_active,
                     user_label,
                     assistant_label,
                     transcript_width,
@@ -1834,6 +1852,7 @@ fn row_to_line<'a>(
     active_tools: &std::collections::HashMap<String, camouflage_renderer::ToolState>,
     theme: &camouflage_renderer::theme::Theme,
     has_active_stream: bool,
+    is_active_stream_row: bool,
     user_label: &str,
     assistant_label: &str,
 ) -> Line<'a> {
@@ -1939,6 +1958,16 @@ fn row_to_line<'a>(
     } else {
         spans.push(Span::raw(r.text.as_str()));
     }
+    // Streaming caret: blink a half-block at the end of the active
+    // assistant stream row so tokens look like they're being typed in
+    // real time rather than just appearing on a wall.
+    if r.kind == RowKind::Assistant && is_active_stream_row && !r.text.is_empty() {
+        let glyph = if caret_visible_now() { "▌" } else { " " };
+        spans.push(Span::styled(
+            glyph.to_string(),
+            Style::default().fg(assistant_color).add_modifier(Modifier::BOLD),
+        ));
+    }
     if r.kind == RowKind::Tool {
         if let Some(state) = r.tool_id.as_ref().and_then(|tid| active_tools.get(tid)) {
             if state.repeated {
@@ -1978,6 +2007,7 @@ fn row_to_lines<'a>(
     active_tools: &std::collections::HashMap<String, camouflage_renderer::ToolState>,
     theme: &camouflage_renderer::theme::Theme,
     has_active_stream: bool,
+    is_active_stream_row: bool,
     user_label: &str,
     assistant_label: &str,
     transcript_width: usize,
@@ -2003,6 +2033,7 @@ fn row_to_lines<'a>(
             active_tools,
             theme,
             has_active_stream,
+            is_active_stream_row,
             user_label,
             assistant_label,
         )];
@@ -2086,6 +2117,18 @@ fn row_to_lines<'a>(
             spans.push(Span::styled(sp.text, style));
         }
         out.push(Line::from(spans));
+    }
+    // Append the streaming caret to the very last line of an active
+    // assistant stream so the cursor sits where the next token will
+    // appear, not at the end of the first line.
+    if is_active_stream_row {
+        if let Some(last) = out.last_mut() {
+            let glyph = if caret_visible_now() { "▌" } else { " " };
+            last.spans.push(Span::styled(
+                glyph.to_string(),
+                Style::default().fg(assistant_color).add_modifier(Modifier::BOLD),
+            ));
+        }
     }
     append_turn_separator(&mut out, r.kind.clone());
     out
