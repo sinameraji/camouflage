@@ -26,6 +26,10 @@ pub enum Action {
     ReplayFaster,
     ReplaySlower,
     ReplayRestart,
+    /// Jump to N% of the way through replay. Value is 0..=100.
+    ReplayJumpPct(u8),
+    /// Jump to the end of replay (last event applied).
+    ReplayJumpEnd,
     /// v0.2+: toggle the event inspector side panel.
     ToggleInspector,
     /// v0.2+: move inspector cursor within the visible rows.
@@ -333,6 +337,14 @@ pub fn handle_key_replay(k: Key, buf: &str) -> Option<Action> {
         Key::Char('+') | Key::Char('=') => Action::ReplayFaster,
         Key::Char('-') | Key::Char('_') => Action::ReplaySlower,
         Key::Char('0') => Action::ReplayRestart,
+        // 1..=9 jump to 10%..90% of the timeline. Cheap muscle memory:
+        // tap "5" and you're halfway through the session.
+        Key::Char(c @ '1'..='9') => {
+            let pct = (c as u8 - b'0') * 10;
+            Action::ReplayJumpPct(pct)
+        }
+        // Shift+G / "G" jumps to the very end (matches vim).
+        Key::Char('G') => Action::ReplayJumpEnd,
         _ => return None,
     })
 }

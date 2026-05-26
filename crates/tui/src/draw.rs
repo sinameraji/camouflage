@@ -113,6 +113,14 @@ pub struct SearchView<'a> {
     pub query: &'a str,
 }
 
+/// Replay-mode scrubber state. None = not in replay mode (don't draw the bar).
+pub struct ReplayView {
+    pub position: usize,
+    pub total: usize,
+    pub playing: bool,
+    pub speed_mult: f32,
+}
+
 /// v0.4: live runtime metrics shown in the toggleable overlay.
 pub struct MetricsView {
     pub total_events: u64,
@@ -163,6 +171,7 @@ pub fn render<B: Backend>(
     search: Option<SearchView<'_>>,
     help_open: bool,
     metrics: Option<MetricsView>,
+    replay: Option<ReplayView>,
     theme: &camouflage_renderer::theme::Theme,
     tool_output_open: bool,
     permission_feedback: &str,
@@ -199,6 +208,7 @@ pub fn render<B: Backend>(
         // protect the transcript from being squeezed on tiny terminals.
         let has_tasks = !model.background_tasks().is_empty();
         let task_line: u16 = if has_tasks { 1 } else { 0 };
+        let replay_line: u16 = if replay.is_some() { 1 } else { 0 };
         let status_text_width = status_total_width(model, viewport, status);
         let inner_w = area.width.saturating_sub(2).max(1) as usize; // box content width (subtract borders)
         let status_height: u16 = {
@@ -269,6 +279,7 @@ pub fn render<B: Backend>(
                 Constraint::Min(1),
                 Constraint::Length(1), // bottom spacer
                 Constraint::Length(task_line),
+                Constraint::Length(replay_line),
                 Constraint::Length(status_height),
                 Constraint::Length(bottom_height),
             ])
@@ -657,11 +668,46 @@ pub fn render<B: Backend>(
             f.render_widget(ribbon, chunks[4]);
         }
 
+        // Replay timeline scrubber. Drawn just above the status line so
+        // the user always sees their position in the session at a glance.
+        // Half-block fill (▌) gives 2x effective resolution on the bar.
+        if let Some(rv) = &replay {
+            let bar_w = chunks[5].width.max(8) as usize;
+            let suffix = format!(
+                " {:>3}%  {}/{}  {:.2}×  {}",
+                if rv.total == 0 { 0 } else { (rv.position * 100 / rv.total).min(100) },
+                rv.position,
+                rv.total,
+                rv.speed_mult,
+                if rv.position >= rv.total { "■" } else if rv.playing { "▶" } else { "‖" },
+            );
+            let suffix_w = UnicodeWidthStr::width(suffix.as_str());
+            let track_w = bar_w.saturating_sub(suffix_w).max(4);
+            // Compute filled cells at half-block resolution.
+            let halves = if rv.total == 0 {
+                0
+            } else {
+                ((rv.position as u64 * (track_w as u64) * 2) / rv.total as u64) as usize
+            };
+            let full = halves / 2;
+            let half = halves % 2;
+            let mut track = String::with_capacity(track_w * 3);
+            for _ in 0..full { track.push('█'); }
+            if half == 1 { track.push('▌'); }
+            for _ in 0..(track_w.saturating_sub(full + half)) { track.push('·'); }
+            let accent = rgb_to_color(theme.accent);
+            let dim = Style::default().fg(Color::DarkGray);
+            let bar = Paragraph::new(Line::from(vec![
+                Span::styled(track, Style::default().fg(accent)),
+                Span::styled(suffix, dim),
+            ]));
+            f.render_widget(bar, chunks[5]);
+        }
         let status_line = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: false });
-        f.render_widget(status_line, chunks[5]);
+        f.render_widget(status_line, chunks[6]);
 
         // Bottom box: search prompt > permission widget > input prompt.
-        let input_chunk = chunks[6];
+        let input_chunk = chunks[7];
         if let Some(sv) = search.as_ref() {
             let widget = Paragraph::new(Line::from(vec![
                 Span::styled("/", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
@@ -918,6 +964,8 @@ fn draw_help_overlay(f: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
         kv("→ / ←", "step forward / backward 1 event", key, dim),
         kv("+ / -", "adjust replay speed (0.25× – 64×)", key, dim),
         kv("0", "restart replay", key, dim),
+        kv("1 – 9", "jump to 10% – 90% of timeline", key, dim),
+        kv("G", "jump to end of replay", key, dim),
         Line::from(""),
         Line::from(vec![Span::styled("Other", head)]),
         kv("Enter", "submit input", key, dim),

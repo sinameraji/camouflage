@@ -1487,6 +1487,31 @@ pub async fn run(cfg: Config) -> Result<()> {
                         model.mark_dirty();
                     }
                 }
+                input::Action::ReplayJumpPct(pct) => {
+                    if let Some(rs) = replay_state.as_mut() {
+                        let total = rs.events.len();
+                        let target = (total as u64 * pct as u64 / 100) as usize;
+                        if target >= rs.position {
+                            let n = target - rs.position;
+                            rs.step_forward(n, &mut model);
+                        } else {
+                            let n = rs.position - target;
+                            rs.step_backward(n, &mut model);
+                        }
+                        rs.playing = false;
+                        status = replay_status(rs);
+                        model.mark_dirty();
+                    }
+                }
+                input::Action::ReplayJumpEnd => {
+                    if let Some(rs) = replay_state.as_mut() {
+                        let remaining = rs.events.len().saturating_sub(rs.position);
+                        rs.step_forward(remaining, &mut model);
+                        rs.playing = false;
+                        status = replay_status(rs);
+                        model.mark_dirty();
+                    }
+                }
                 input::Action::ToggleInspector => {
                     inspector_open = !inspector_open;
                     if inspector_open {
@@ -1862,6 +1887,12 @@ pub async fn run(cfg: Config) -> Result<()> {
                         .unwrap_or_else(|| {
                             camouflage_renderer::theme::Theme::builtin("default-dark").unwrap()
                         });
+                    let replay_view = replay_state.as_ref().map(|rs| draw::ReplayView {
+                        position: rs.position,
+                        total: rs.events.len(),
+                        playing: rs.playing,
+                        speed_mult: rs.speed_mult,
+                    });
                     draw::render(
                         &mut terminal,
                         &model,
@@ -1875,6 +1906,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                         search_view,
                         help_open,
                         metrics,
+                        replay_view,
                         theme,
                         tool_output_open,
                         &permission_feedback,
