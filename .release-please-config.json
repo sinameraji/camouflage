@@ -1,0 +1,8 @@
+{
+  "packages": {
+    "sdk/node": {
+      "release-type": "node",
+      "package-name": "camouflage-tui"
+    }
+  }
+}

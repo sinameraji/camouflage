@@ -662,7 +662,10 @@ pub async fn run(cfg: Config) -> Result<()> {
                 && !mention_active_for_focus
                 && !help_open
                 && !metrics_open
-                && !tool_output_open;
+                && !tool_output_open
+                && model.active_select_list().is_none()
+                && model.active_confirm().is_none()
+                && model.active_form().is_none();
             // Shift+Tab fires the mode-cycle regardless of input contents —
             // it's not a typing key and the user expects it to work mid-
             // typing. Tab when input is empty also fires mode-cycle; Tab
