@@ -30,8 +30,16 @@ jobs:
           registry-url: "https://registry.npmjs.org"
         if: ${{ steps.release.outputs.releases_created }}
 
-      - run: npm publish --provenance --access public
+      # Pre-releases (e.g. 1.0.1-beta.1) publish under the "beta" tag;
+      # stable releases publish under "latest".
+      - run: |
+          if [[ "$VERSION" == *-* ]]; then
+            npm publish --provenance --access public --tag beta
+          else
+            npm publish --provenance --access public
+          fi
         working-directory: sdk/node
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.release.outputs.version }}
         if: ${{ steps.release.outputs.releases_created }}
