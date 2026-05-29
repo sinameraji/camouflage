@@ -125,8 +125,8 @@ pub enum EventType {
     /// v0.4.6+ (CC-4) — Renderer → host: user cancelled mid-wizard.
     WizardCancelled,
     /// v0.4.7+ — Renderer → host: user pressed Tab/Shift+Tab on an empty
-    /// input. Hosts that want mode cycling (e.g. KimiFlare's
-    /// edit/plan/auto) handle this and emit a StatusUpdate to reflect
+    /// input. Hosts that want mode cycling (e.g. an
+    /// edit/plan/auto toggle) handle this and emit a StatusUpdate to reflect
     /// the new mode. Payload: { direction: "next" | "prev" }.
     ModeChangeRequested,
     /// v0.4.7+ — Renderer → host: user wants the current operation

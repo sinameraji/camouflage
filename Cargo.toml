@@ -9,7 +9,7 @@ members = [
     "crates/bench",
     "crates/sdk",
     "examples/fake-agent",
-    "examples/kimiflare-mock",
+    "examples/host-mock",
 ]
 
 [workspace.package]

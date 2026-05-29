@@ -1,4 +1,4 @@
-{"event_type":"SessionStarted","payload":{"user_label":"You","assistant_label":"kimiflare"}}
+{"event_type":"SessionStarted","payload":{"user_label":"You","assistant_label":"your-agent"}}
 {"event_type":"StatusUpdate","payload":{"segments":{"mode":"edit","phase":"idle"}}}
 {"event_type":"UserMessageCreated","payload":{"text":"can you summarize the file src/auth/login.ts?"}}
 {"event_type":"AssistantStreamStarted","payload":{"stream_id":"s1"}}

@@ -66,7 +66,7 @@ fn status_total_width(
     w
 }
 
-/// Braille-dots spinner frames. Borrowed from KimiFlare's `dots` style.
+/// Braille-dots spinner frames, a common `dots` style.
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 fn spinner_glyph(frame: u64) -> char {
@@ -243,8 +243,8 @@ pub fn render<B: Backend>(
         // can't swallow the transcript on a small terminal.
         // v0.5+: trim purely-empty leading/trailing rows from the
         // host-supplied splash. Hosts that build pixel-art splashes
-        // (e.g. Kimiflare) tend to pad their logo with several blank
-        // rows for alignment in the original Ink layout — those rows
+        // tend to pad their logo with several blank
+        // rows for alignment in the original layout — those rows
         // are pure waste in the TUI, and on a 20-row terminal they
         // push the actual content off-screen.
         let splash_raw = model.splash();
@@ -285,20 +285,25 @@ pub fn render<B: Backend>(
             ])
             .split(area);
 
-        // Header. Accent-colored "Camouflage" title + dim session id so
-        // the brand has visual weight without dominating the transcript.
+        // Header. Accent-colored host brand + dim session id. The brand is
+        // host-supplied (binary's --app-title / cwd, or SessionStarted
+        // .app_title); the renderer never brands itself, so when no title is
+        // set we draw the session id alone.
         let accent = rgb_to_color(theme.accent);
         let dim_sys = rgb_to_color(theme.system);
-        let header = Paragraph::new(Line::from(vec![
-            Span::styled(
-                "Camouflage ",
+        let mut header_spans = Vec::new();
+        let app_title = model.app_title();
+        if !app_title.is_empty() {
+            header_spans.push(Span::styled(
+                format!("{} ", app_title),
                 Style::default().fg(accent).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!("session={}", short_uuid(&viewport.session_id.to_string())),
-                Style::default().fg(dim_sys),
-            ),
-        ]));
+            ));
+        }
+        header_spans.push(Span::styled(
+            format!("session={}", short_uuid(&viewport.session_id.to_string())),
+            Style::default().fg(dim_sys),
+        ));
+        let header = Paragraph::new(Line::from(header_spans));
         f.render_widget(header, chunks[0]);
 
         // Render the splash (if any) into chunks[1]. The text typically

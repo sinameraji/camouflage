@@ -8,9 +8,9 @@
 //!    current protocol. If you change a payload struct in a non-additive way,
 //!    a fixture will fail to validate and you'll know immediately.
 //! 2. Cross-crate reuse — any test (store, renderer, tui) can call
-//!    `load_fixture("kimiflare-mock")` to get a deterministic event stream
+//!    `load_fixture("host-mock")` to get a deterministic event stream
 //!    instead of hand-rolling NDJSON inside the test source.
-//! 3. Adapter contract — when a host adapter (e.g. KimiFlare) outputs a known
+//! 3. Adapter contract — when a host adapter outputs a known
 //!    fixture for a known input, drift in its output is caught by a simple
 //!    diff against the checked-in fixture.
 //!
@@ -28,7 +28,7 @@ pub fn fixtures_dir() -> PathBuf {
         .join("fixtures")
 }
 
-/// Read a fixture by stem (e.g. `"kimiflare-mock"` → `fixtures/kimiflare-mock.ndjson`).
+/// Read a fixture by stem (e.g. `"host-mock"` → `fixtures/host-mock.ndjson`).
 pub fn load_fixture(name: &str) -> std::io::Result<String> {
     let path = fixtures_dir().join(format!("{name}.ndjson"));
     std::fs::read_to_string(path)
@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn load_fixture_by_name() {
-        let body = load_fixture("kimiflare-mock").expect("fixture exists");
+        let body = load_fixture("host-mock").expect("fixture exists");
         assert!(body.contains("\"event_type\""), "fixture looks empty");
     }
 

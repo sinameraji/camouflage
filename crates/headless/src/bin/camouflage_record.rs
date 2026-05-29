@@ -10,7 +10,7 @@
 //! - feeding multiple downstream consumers off one SQLite file
 //!
 //! Pipeline:
-//!     kimiflare --emit-events -p "..." | camouflage-record --store run.db
+//!     your-agent --emit-events -p "..." | camouflage-record --store run.db
 //!
 //! Per the architecture invariant "persist before render/broadcast", this is
 //! the persistence half of the pipeline with the render half removed.

@@ -7,7 +7,7 @@ append-only event log is the canonical source of truth, and every other
 component — persistence, renderer, replay viewer — is a subscriber.
 
 ```
-Host agent (KimiFlare, custom, etc.)
+Host agent (any coding-agent host, custom, etc.)
         │   emits NDJSON
         ▼
    headless decoder
@@ -71,9 +71,9 @@ Ink renders a retained tree of React components into a virtual terminal, diffing
 
 Camouflage inverts the relationship: the event log is canonical and the renderer is a thin, bounded subscriber. There is no virtual DOM; ratatui's diff is line-oriented and only redraws changed regions.
 
-## Integrating with KimiFlare
+## Integrating with a host application
 
-KimiFlare keeps its agent runtime, prompts, tools, and orchestration. It only needs to:
+A host keeps its agent runtime, prompts, tools, and orchestration. It only needs to:
 
 1. Add a `--emit-events` mode that writes NDJSON to stdout instead of rendering with Ink.
 2. Pipe into `camouflage-tui --stdin-events`.

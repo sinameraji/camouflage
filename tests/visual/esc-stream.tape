@@ -11,7 +11,7 @@ Set TypingSpeed 30ms
 
 Hide
 Env FEED_DELAY_MS 150
-Type '"$FEED_SH" "$FIXTURES_DIR/kimiflare-mock.ndjson" 30 | "$CAMOUFLAGE_BIN" --stdin-events --responses-fd 3 --fps 30 3>/dev/null'
+Type '"$FEED_SH" "$FIXTURES_DIR/host-mock.ndjson" 30 | "$CAMOUFLAGE_BIN" --stdin-events --responses-fd 3 --fps 30 3>/dev/null'
 Enter
 Show
 

@@ -4,8 +4,8 @@
 > The vhs-based harness at [`tests/visual/`](../tests/visual/) drives the
 > TUI through a real PTY and emits PNG frames at named checkpoints —
 > see `splash.tape`, `toasts.tape`, `esc-idle.tape`, `esc-stream.tape`,
-> `turn-separators.tape`, `kimiflare-splash.tape`,
-> `kimiflare-splash-small.tape`, `kimiflare-flow.tape`. Run a scenario
+> `turn-separators.tape`, `host-splash.tape`,
+> `host-splash-small.tape`, `host-flow.tape`. Run a scenario
 > via `tests/visual/run.sh <name>`. The scenarios below still serve as
 > the "ground-truth" interactive checklist (resize, terminal-emulator
 > quirks, exit-cleanup), but anything purely visual is faster to verify

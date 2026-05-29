@@ -7,7 +7,7 @@ WebSocket and renders the live event stream.
 
 ```bash
 # Terminal 1: pump events to the broadcast server
-cargo run --release -p kimiflare-mock | \
+cargo run --release -p host-mock | \
   cargo run --release -p camouflage-headless --bin camouflage-broadcast -- --port 8080
 
 # Terminal 2: serve the viewer (any static server works)

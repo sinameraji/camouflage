@@ -11,14 +11,49 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
-import { existsSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join, dirname, basename, parse as parsePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { encode, validate } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const LOCAL_BIN = join(__dirname, "..", "bin", "camouflage-tui");
 const DEFAULT_BIN = existsSync(LOCAL_BIN) ? LOCAL_BIN : "camouflage-tui";
+
+/**
+ * Best-effort detection of the host application's name, used as the header
+ * brand so the renderer shows the *client's* identity — never "Camouflage".
+ *
+ * Walks up from the host's entry script (process.argv[1]) to the nearest
+ * package.json and returns its `name`. Falls back to that package's folder
+ * name, then to the current working directory's folder name. Returns null
+ * if nothing can be determined (the renderer then shows the session id
+ * alone). Hosts can always override via `mount({ appTitle })`.
+ *
+ * @returns {string|null}
+ */
+function detectAppTitle() {
+  const entry = process.argv[1];
+  let dir = entry ? dirname(entry) : process.cwd();
+  const { root } = parsePath(dir);
+  while (true) {
+    const pkgPath = join(dir, "package.json");
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+        if (pkg && typeof pkg.name === "string" && pkg.name.trim()) {
+          return pkg.name.trim();
+        }
+      } catch {
+        // unreadable/invalid package.json — keep walking up
+      }
+      return basename(dir) || null;
+    }
+    if (dir === root) break;
+    dir = dirname(dir);
+  }
+  return basename(process.cwd()) || null;
+}
 
 class CamouflageHandle extends EventEmitter {
   constructor(child, stdin) {
@@ -152,6 +187,11 @@ function waitForExit(child, softTimeoutMs) {
  * @param {object} [opts]
  * @param {string} [opts.bin]      Executable name or path. Defaults to
  *                                 "camouflage-tui" (PATH lookup).
+ * @param {string} [opts.appTitle] Brand shown in the renderer header. When
+ *                                 omitted, auto-detected from the host's
+ *                                 package.json `name` (falling back to the
+ *                                 folder name). The renderer never brands
+ *                                 itself as "Camouflage".
  * @param {string[]} [opts.args]   Extra args to pass to the renderer.
  *                                 The binding always appends `--stdin-events
  *                                 --emit-responses` so outbound events flow
@@ -194,7 +234,18 @@ export async function mount(opts = {}) {
     defaultArgs = ["--stdin-events", "--emit-responses"];
     stdio = ["pipe", "pipe", stderrMode];
   }
-  const args = [...defaultArgs, ...(opts.args || [])];
+  // Brand the header with the host app's name (explicit > auto-detected).
+  // Skipped when the caller manages args themselves (skipDefaultArgs) or
+  // already passes --app-title in opts.args.
+  const userArgs = opts.args || [];
+  const titleArgs = [];
+  if (!opts.skipDefaultArgs && !userArgs.includes("--app-title")) {
+    const title = opts.appTitle != null ? String(opts.appTitle).trim() : detectAppTitle();
+    if (title) {
+      titleArgs.push("--app-title", title);
+    }
+  }
+  const args = [...defaultArgs, ...titleArgs, ...userArgs];
 
   const child = spawn(bin, args, {
     stdio,

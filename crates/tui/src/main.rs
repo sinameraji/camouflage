@@ -41,7 +41,7 @@ struct Args {
 
     /// Emit outbound NDJSON events (UserInputSubmitted, PermissionResponse)
     /// to stdout. Required by hosts that consume user actions back from the
-    /// renderer (e.g. KimiFlare-style adapters). Defaults to true when
+    /// renderer (host-style adapters). Defaults to true when
     /// --stdin-events is set, false otherwise. Mutually exclusive with
     /// --responses-fd.
     #[arg(long)]
@@ -55,6 +55,29 @@ struct Args {
     /// --emit-responses=true.
     #[arg(long, value_name = "FD")]
     responses_fd: Option<i32>,
+
+    /// Brand shown in the header. Hosts that embed the renderer should pass
+    /// their own app name here (the Node SDK does this automatically). When
+    /// omitted, falls back to the working-directory folder name. The
+    /// renderer never brands itself as "Camouflage".
+    #[arg(long, value_name = "NAME")]
+    app_title: Option<String>,
+}
+
+/// Resolve the header brand: explicit `--app-title`, else the basename of
+/// the current working directory. Empty string if neither is available
+/// (the header then shows the session id alone).
+fn resolve_app_title(flag: Option<String>) -> String {
+    if let Some(t) = flag {
+        let t = t.trim();
+        if !t.is_empty() {
+            return t.to_string();
+        }
+    }
+    std::env::current_dir()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_default()
 }
 
 fn default_db_path() -> PathBuf {
@@ -104,6 +127,7 @@ fn main() -> Result<()> {
         row_cap: args.row_cap,
         emit_responses,
         responses_fd: args.responses_fd,
+        app_title: resolve_app_title(args.app_title),
     }));
     // Don't let `rt`'s Drop block on the spawn_blocking thread that owns
     // `tokio::io::stdin()`. That read() is uninterruptible from userspace,

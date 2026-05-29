@@ -165,7 +165,6 @@ This boundary is strategic.
 
 Camouflage should be usable by:
 
-- KimiFlare
 - Claude Code-like products
 - OpenCode-like products
 - Goose-like products
@@ -194,7 +193,7 @@ Agent application
 Example:
 
 ```bash
-kimiflare --emit-events | camouflage-tui --stdin-events
+your-agent --emit-events | camouflage-tui --stdin-events
 ```
 
 Companies should not need to:
@@ -261,7 +260,7 @@ p95 render frame:
 
 ### Definition of Success
 
-KimiFlare can emit events into Camouflage and the resulting UI is materially smoother and more stable than the existing Ink UI.
+A host application can emit events into Camouflage and the resulting UI is materially smoother and more stable than the existing Ink UI.
 
 ---
 
@@ -609,7 +608,6 @@ Camouflage does not compete with:
 - Cursor
 - OpenAI
 - LangChain
-- KimiFlare
 - coding agents themselves
 
 Camouflage competes with:

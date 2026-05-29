@@ -34,6 +34,10 @@ pub struct Config {
     /// e.g. `child_process.spawn(cmd, { stdio: [...,"pipe"] })` and points
     /// the renderer at the resulting fd number.
     pub responses_fd: Option<i32>,
+    /// Header brand resolved by the binary (host name / cwd folder). Seeds
+    /// the model's initial title before the first frame; empty means the
+    /// header shows the session id alone.
+    pub app_title: String,
 }
 
 struct HistoryReq {
@@ -87,7 +91,12 @@ impl ReplayState {
     /// position - n. O(N) — fine for debug/inspect use.
     fn step_backward(&mut self, n: usize, model: &mut RenderModel) {
         let target = self.position.saturating_sub(n);
+        // Preserve the resolved header brand across the rebuild — it's seeded
+        // from the binary (--app-title / cwd), not necessarily re-derivable
+        // from the replayed events alone.
+        let title = model.app_title().to_string();
         *model = RenderModel::new();
+        model.set_app_title(&title);
         for ev in &self.events[..target] {
             model.apply(ev);
         }
@@ -117,6 +126,7 @@ pub async fn run(cfg: Config) -> Result<()> {
         Some(c) => RenderModel::with_cap(c),
         None => RenderModel::new(),
     };
+    model.set_app_title(&cfg.app_title);
     // v0.2 inspector state. When open, a side panel shows the raw JSON of
     // the event under the inspector cursor. We look up the event from the
     // store by seq on demand and cache the pretty-printed JSON. Cursor
@@ -1290,8 +1300,8 @@ pub async fn run(cfg: Config) -> Result<()> {
                         );
                     }
                     // Esc → interrupt. Same semantics as Ctrl+C now;
-                    // emit CancelRequested so the host (e.g. KimiFlare's
-                    // ui-mode) calls controller.abort() on the in-flight
+                    // emit CancelRequested so the host
+                    // calls controller.abort() on the in-flight
                     // agent turn.
                     if outbound_tx.is_none() {
                         esc_log("WARN outbound_tx is None — no host pipe wired up");

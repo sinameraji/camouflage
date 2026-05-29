@@ -75,18 +75,18 @@ Camouflage only renders, persists, replays, and inspects what the host applicati
 
 # Primary Integration Target
 
-The first integration target is **KimiFlare**, the existing coding agent/harness currently using React Ink.
+The first integration target is **an example coding-agent host**, an existing coding agent/harness currently using React Ink.
 
 The target integration path is:
 
 ```txt
-KimiFlare agent runtime
+host agent runtime
 → emits structured NDJSON events
 → Camouflage persists and renders those events
 → user interacts through Camouflage TUI
 ```
 
-This MVP must make it possible to test whether Camouflage is materially better than the current Ink UI without rewriting KimiFlare’s agent logic.
+This MVP must make it possible to test whether Camouflage is materially better than the current Ink UI without rewriting the host’s agent logic.
 
 ---
 
@@ -96,7 +96,7 @@ This MVP must make it possible to test whether Camouflage is materially better t
 
 MVP succeeds only if:
 
-1. KimiFlare can emit NDJSON events into Camouflage.
+1. A host application can emit NDJSON events into Camouflage.
 2. Long sessions remain smooth.
 3. Memory remains bounded.
 4. Replay works.
@@ -612,7 +612,7 @@ This mode should:
 - persist events
 - render events in real time
 
-This is the primary integration mechanism for KimiFlare MVP testing.
+This is the primary integration mechanism for host MVP testing.
 
 ## Example Input
 
@@ -800,7 +800,7 @@ Implement or manually document tests for:
 Camouflage must support this architecture:
 
 ```txt
-KimiFlare
+host application
 → emits NDJSON events
 → Camouflage renders them
 ```
@@ -815,12 +815,12 @@ without requiring:
 
 Only rendering/runtime integration.
 
-## KimiFlare Required Integration Mode
+## Host Required Integration Mode
 
-KimiFlare should eventually support:
+A host should eventually support:
 
 ```bash
-kimiflare --emit-events
+your-agent --emit-events
 ```
 
 which emits NDJSON events instead of directly rendering with Ink.
@@ -828,7 +828,7 @@ which emits NDJSON events instead of directly rendering with Ink.
 Camouflage should support:
 
 ```bash
-kimiflare --emit-events | camouflage-tui --stdin-events
+your-agent --emit-events | camouflage-tui --stdin-events
 ```
 
 This is the first real-world proof point.
@@ -867,7 +867,7 @@ This is the first real-world proof point.
 - how auto-follow works
 - how terminal ownership works
 - how this differs from React Ink
-- how to integrate with KimiFlare
+- how to integrate with a host application
 
 ## BENCHMARKS Must Include
 
