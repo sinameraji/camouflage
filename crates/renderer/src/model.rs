@@ -842,6 +842,21 @@ impl RenderModel {
         self.active_stream_row
     }
 
+    /// Whether there is any in-flight agent work that an Esc / Ctrl+C
+    /// "abort" would cancel: a live assistant stream, a running tool, or a
+    /// running background task. The TUI uses this to decide whether Esc
+    /// should abort the turn (parity with Ctrl+C) from *any* context —
+    /// including while an overlay or modal is open — rather than being
+    /// swallowed by a popup-dismiss handler.
+    pub fn has_inflight_work(&self) -> bool {
+        self.has_active_stream()
+            || self.tools.values().any(|s| !s.finished)
+            || self
+                .background_tasks
+                .iter()
+                .any(|t| matches!(t.state, BackgroundTaskState::Running))
+    }
+
     pub fn background_tasks(&self) -> &[BackgroundTask] {
         &self.background_tasks
     }

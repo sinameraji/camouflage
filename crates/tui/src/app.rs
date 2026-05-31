@@ -442,20 +442,36 @@ pub async fn run(cfg: Config) -> Result<()> {
         let _ = persist_tx.send(ev).await;
     }
 
-    // Loud env-gated log for tracing the Esc → CancelRequested chain.
-    // Set CAMOUFLAGE_DEBUG_ESC=1 in the host env to enable; output
-    // lands on stderr which the SDK inherits in renderToTerminal=true,
-    // so messages show up in the user's terminal alongside host logs.
-    fn esc_log(s: &str) {
-        if std::env::var_os("CAMOUFLAGE_DEBUG_ESC").is_some() {
-            eprintln!("[camouflage:esc] {s}");
-        }
-    }
     loop {
         // Non-blocking poll for keys before each frame.
         while let Ok(key) = key_rx.try_recv() {
             if matches!(key, crate::tty::Key::Esc) {
                 esc_log("key Esc received");
+            }
+            // Esc parity with Ctrl+C: when there's a live turn in flight,
+            // Esc must abort it from ANY context. Ctrl+C reaches its abort
+            // (Action::Quit) from everywhere because nothing below
+            // short-circuits it; Esc, by contrast, gets swallowed by the
+            // overlay-dismiss / component-modal / inspector handlers that
+            // follow (they consume Esc to close a popup or cancel a modal
+            // and `continue` before it ever reaches the CancelStream abort
+            // path). That made Esc feel like it "doesn't abort" while
+            // Ctrl+C does. We only pre-empt when there is actually
+            // something to abort, so an Esc meant to dismiss a popup or
+            // cancel a modal at idle still does exactly that.
+            if matches!(key, crate::tty::Key::Esc) && model.has_inflight_work() {
+                esc_log("Esc with in-flight work → abort (pre-empting overlay/modal handlers)");
+                emit_cancel_requested(
+                    &outbound_tx,
+                    &mut model,
+                    session_id,
+                    &seq_counter,
+                    &mut permission_feedback,
+                )
+                .await;
+                status = "canceled".into();
+                model.mark_dirty();
+                continue;
             }
             // Sub-picker short-circuit: when the user picked a top-level
             // slash command whose args parse as a discrete option list,
@@ -1161,20 +1177,17 @@ pub async fn run(cfg: Config) -> Result<()> {
                     // is broken.
                     status = "press Ctrl+C again to quit".into();
                     model.mark_dirty();
-                    if let Some(tx) = outbound_tx.as_ref() {
-                        let ev = Event {
-                            id: Uuid::new_v4(),
-                            session_id,
-                            seq: seq_counter.fetch_add(1, Ordering::Relaxed),
-                            timestamp_ms: now_ms(),
-                            schema_version: SCHEMA_VERSION,
-                            event_type: EventType::CancelRequested,
-                            payload: serde_json::json!({}),
-                        };
-                        let _ = tx.send(OutgoingEvent(ev)).await;
-                    }
-                    // Optimistic local cancel — mirrors what Esc does.
-                    model.local_cancel_all(now_ms());
+                    // First press interrupts the running turn — same abort
+                    // path as Esc (deny open permission modal + emit
+                    // CancelRequested + optimistic local cancel).
+                    emit_cancel_requested(
+                        &outbound_tx,
+                        &mut model,
+                        session_id,
+                        &seq_counter,
+                        &mut permission_feedback,
+                    )
+                    .await;
                     // Standalone mode (no host): the first press is now a
                     // no-op apart from arming the double-press window. The
                     // second press lands above. This is a small UX shift
@@ -1299,58 +1312,20 @@ pub async fn run(cfg: Config) -> Result<()> {
                             now_ms(),
                         );
                     }
-                    // Esc → interrupt. Same semantics as Ctrl+C now;
-                    // emit CancelRequested so the host
-                    // calls controller.abort() on the in-flight
-                    // agent turn.
-                    if outbound_tx.is_none() {
-                        esc_log("WARN outbound_tx is None — no host pipe wired up");
-                    }
-                    if let Some(tx) = outbound_tx.as_ref() {
-                        // If a permission modal is currently open, deny
-                        // it before aborting so the tool gets a clean
-                        // "rejected" response and the modal closes — the
-                        // user reads Esc as "back out of everything",
-                        // and we shouldn't leave the modal stranded.
-                        if let Some(pp) = model.pending_permission() {
-                            let resp = Event {
-                                id: Uuid::new_v4(),
-                                session_id,
-                                seq: seq_counter.fetch_add(1, Ordering::Relaxed),
-                                timestamp_ms: now_ms(),
-                                schema_version: SCHEMA_VERSION,
-                                event_type: EventType::PermissionResponse,
-                                payload: serde_json::json!({
-                                    "request_id": pp.request_id,
-                                    "choice": "deny",
-                                    "feedback": permission_feedback,
-                                }),
-                            };
-                            let _ = tx.send(OutgoingEvent(resp)).await;
-                            model.clear_pending_permission();
-                            permission_feedback.clear();
-                        }
-                        let ev = Event {
-                            id: Uuid::new_v4(),
-                            session_id,
-                            seq: seq_counter.fetch_add(1, Ordering::Relaxed),
-                            timestamp_ms: now_ms(),
-                            schema_version: SCHEMA_VERSION,
-                            event_type: EventType::CancelRequested,
-                            payload: serde_json::json!({}),
-                        };
-                        let send_res = tx.send(OutgoingEvent(ev)).await;
-                        esc_log(&format!(
-                            "CancelRequested send → {}",
-                            if send_res.is_ok() { "ok" } else { "ERR (receiver dropped)" }
-                        ));
-                    }
-                    // Optimistic local cancel so the user gets immediate
-                    // visual feedback: stop background-task spinners and
-                    // flip the status phase out of "thinking". The host's
-                    // later events (BackgroundTaskUpdate / StatusUpdate)
-                    // can still overwrite either of these.
-                    model.local_cancel_all(now_ms());
+                    // Esc → interrupt. Same semantics as Ctrl+C: deny any
+                    // open permission modal and emit CancelRequested so the
+                    // host calls controller.abort() on the in-flight agent
+                    // turn, then apply an optimistic local cancel. Shared
+                    // with the top-of-loop in-flight pre-empt and Ctrl+C via
+                    // `emit_cancel_requested`.
+                    emit_cancel_requested(
+                        &outbound_tx,
+                        &mut model,
+                        session_id,
+                        &seq_counter,
+                        &mut permission_feedback,
+                    )
+                    .await;
                     status = "canceled".into();
                     model.mark_dirty();
                 }
@@ -2247,6 +2222,70 @@ async fn advance_wizard_after(
         }
     }
     model.mark_dirty();
+}
+
+/// Loud env-gated log for tracing the Esc → CancelRequested chain. Set
+/// CAMOUFLAGE_DEBUG_ESC=1 in the host env to enable; output lands on
+/// stderr which the SDK inherits in renderToTerminal=true, so messages
+/// show up in the user's terminal alongside host logs.
+fn esc_log(s: &str) {
+    if std::env::var_os("CAMOUFLAGE_DEBUG_ESC").is_some() {
+        eprintln!("[camouflage:esc] {s}");
+    }
+}
+
+/// Abort the running agent turn — the shared body behind both Esc and
+/// Ctrl+C. If a permission modal is open, deny it first so the tool gets a
+/// clean "rejected" response and the modal closes, then emit
+/// `CancelRequested` so the host calls `controller.abort()` on the
+/// in-flight turn. Finally apply an optimistic local cancel so the user
+/// gets immediate visual feedback (spinners stop, status leaves
+/// "thinking") even before the host echoes back terminal events.
+async fn emit_cancel_requested(
+    outbound_tx: &Option<mpsc::Sender<OutgoingEvent>>,
+    model: &mut RenderModel,
+    session_id: Uuid,
+    seq_counter: &Arc<AtomicI64>,
+    permission_feedback: &mut String,
+) {
+    if outbound_tx.is_none() {
+        esc_log("WARN outbound_tx is None — no host pipe wired up");
+    }
+    if let Some(tx) = outbound_tx.as_ref() {
+        if let Some(pp) = model.pending_permission() {
+            let resp = Event {
+                id: Uuid::new_v4(),
+                session_id,
+                seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+                timestamp_ms: now_ms(),
+                schema_version: SCHEMA_VERSION,
+                event_type: EventType::PermissionResponse,
+                payload: serde_json::json!({
+                    "request_id": pp.request_id,
+                    "choice": "deny",
+                    "feedback": permission_feedback,
+                }),
+            };
+            let _ = tx.send(OutgoingEvent(resp)).await;
+            model.clear_pending_permission();
+            permission_feedback.clear();
+        }
+        let ev = Event {
+            id: Uuid::new_v4(),
+            session_id,
+            seq: seq_counter.fetch_add(1, Ordering::Relaxed),
+            timestamp_ms: now_ms(),
+            schema_version: SCHEMA_VERSION,
+            event_type: EventType::CancelRequested,
+            payload: serde_json::json!({}),
+        };
+        let send_res = tx.send(OutgoingEvent(ev)).await;
+        esc_log(&format!(
+            "CancelRequested send → {}",
+            if send_res.is_ok() { "ok" } else { "ERR (receiver dropped)" }
+        ));
+    }
+    model.local_cancel_all(now_ms());
 }
 
 /// CC-4 — user cancelled a wizard step. Emit WizardCancelled with the
