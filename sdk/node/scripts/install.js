@@ -43,30 +43,40 @@ async function main() {
   // Read version from package.json
   const { default: pkg } = await import("../package.json", { with: { type: "json" } });
   const version = pkg.version;
-  const tag = `v${version}`;
   const archive = `camouflage-tui-${target}.tar.gz`;
-  const url = `https://github.com/${REPO}/releases/download/${tag}/${archive}`;
+  // release-please tags this package's releases with the component prefix
+  // (camouflage-tui-v<version>). Older releases used a bare v<version> tag.
+  // Try the prefixed tag first, then fall back to the legacy one so both
+  // old and new published versions resolve to a real release asset.
+  const tags = [`camouflage-tui-v${version}`, `v${version}`];
 
   mkdirSync(BIN_DIR, { recursive: true });
 
   const tmpPath = `${BIN_PATH}.tmp`;
 
-  try {
-    process.stdout.write(`camouflage-tui: downloading ${target} binary...\n`);
-    await download(url, tmpPath);
+  let lastErr;
+  for (const tag of tags) {
+    const url = `https://github.com/${REPO}/releases/download/${tag}/${archive}`;
+    try {
+      process.stdout.write(`camouflage-tui: downloading ${target} binary (${tag})...\n`);
+      await download(url, tmpPath);
 
-    // Extract the binary from the tarball
-    execSync(`tar xzf "${tmpPath}" -C "${BIN_DIR}"`, { stdio: "pipe" });
-    unlinkSync(tmpPath);
+      // Extract the binary from the tarball
+      execSync(`tar xzf "${tmpPath}" -C "${BIN_DIR}"`, { stdio: "pipe" });
+      unlinkSync(tmpPath);
 
-    chmodSync(BIN_PATH, 0o755);
-    process.stdout.write(`camouflage-tui: installed to ${BIN_PATH}\n`);
-  } catch (err) {
-    // Clean up partial downloads
-    try { unlinkSync(tmpPath); } catch {}
-    try { unlinkSync(BIN_PATH); } catch {}
-    warn(`Download failed: ${err.message}`);
+      chmodSync(BIN_PATH, 0o755);
+      process.stdout.write(`camouflage-tui: installed to ${BIN_PATH}\n`);
+      return;
+    } catch (err) {
+      // Clean up partial downloads and try the next candidate tag.
+      lastErr = err;
+      try { unlinkSync(tmpPath); } catch {}
+      try { unlinkSync(BIN_PATH); } catch {}
+    }
   }
+
+  warn(`Download failed: ${lastErr ? lastErr.message : "unknown error"}`);
 }
 
 function download(url, dest, redirects = 0) {

@@ -3,6 +3,10 @@ name: Release
 on:
   push:
     tags:
+      # release-please tags this package's releases with the component
+      # prefix (e.g. camouflage-tui-v1.1.0-beta.1). The legacy bare `v*`
+      # tag is kept so older-style/manual tags still build binaries.
+      - "camouflage-tui-v*"
       - "v*"
 
 permissions:
