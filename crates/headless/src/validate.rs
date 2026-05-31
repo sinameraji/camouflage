@@ -98,6 +98,9 @@ fn validate_payload(event_type: EventType, payload: serde_json::Value) -> Result
         BackgroundTaskUpdate => {
             serde_json::from_value::<payloads::BackgroundTaskUpdate>(payload)?;
         }
+        TodoListUpdate => {
+            serde_json::from_value::<payloads::TodoListUpdate>(payload)?;
+        }
         UserInputSubmitted => {
             serde_json::from_value::<payloads::UserInputSubmitted>(payload)?;
         }

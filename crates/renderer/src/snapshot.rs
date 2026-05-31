@@ -53,6 +53,22 @@ pub struct SnapshotTask {
     pub progress: Option<f32>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SnapshotTodoStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
+/// One item in the agent's todo/plan checklist (see `TodoListUpdate`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotTodo {
+    pub id: String,
+    pub title: String,
+    pub status: SnapshotTodoStatus,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SnapshotPermission {
     pub request_id: String,
@@ -191,6 +207,9 @@ pub struct Snapshot {
     /// Status-bar segments in their preferred draw order.
     pub status: BTreeMap<String, String>,
     pub tasks: Vec<SnapshotTask>,
+    /// The agent's todo/plan checklist. Empty when none is active.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub todos: Vec<SnapshotTodo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_permission: Option<SnapshotPermission>,
     /// CC-1 — present when a SelectList modal is currently active.

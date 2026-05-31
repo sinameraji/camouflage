@@ -132,6 +132,10 @@ pub struct RenderModel {
     /// v0.1.5+ — active background tasks shown in the ribbon above the
     /// status line. Insertion order preserved for stable display.
     background_tasks: Vec<BackgroundTask>,
+    /// v0.5+ — the agent's todo/plan checklist, rendered as a vertical list
+    /// above the status line. Last-write-wins: a `TodoListUpdate` replaces
+    /// the whole list, an empty list clears it.
+    todos: Vec<TodoItem>,
     /// v0.4.5+ — slash-commands the host advertises. The TUI shows a
     /// picker when the input buffer starts with `/`. Last-write-wins.
     slash_commands: Vec<SlashCmdEntry>,
@@ -451,6 +455,35 @@ impl BackgroundTaskState {
     }
 }
 
+/// One item in the agent's todo/plan checklist, populated by
+/// `TodoListUpdate` events. Unlike `BackgroundTask` (an async-job ribbon),
+/// this is a stable plan the user works through; it's rendered as a vertical
+/// checklist and persists until the host sends a new list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoItem {
+    pub id: String,
+    pub title: String,
+    pub status: TodoStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TodoStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
+impl TodoStatus {
+    fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "pending" => Some(Self::Pending),
+            "in_progress" => Some(Self::InProgress),
+            "completed" => Some(Self::Completed),
+            _ => None,
+        }
+    }
+}
+
 impl RenderModel {
     pub fn new() -> Self {
         Self::with_cap(DEFAULT_ROW_CAP)
@@ -473,6 +506,7 @@ impl RenderModel {
             status_segments: BTreeMap::new(),
             pending_permission: None,
             background_tasks: Vec::new(),
+            todos: Vec::new(),
             slash_commands: Vec::new(),
             mention_candidates: Vec::new(),
             session_started_seen: false,
@@ -810,6 +844,12 @@ impl RenderModel {
 
     pub fn background_tasks(&self) -> &[BackgroundTask] {
         &self.background_tasks
+    }
+
+    /// The agent's current todo/plan checklist. Empty when the host hasn't
+    /// sent a `TodoListUpdate` or sent an empty one.
+    pub fn todos(&self) -> &[TodoItem] {
+        &self.todos
     }
     /// Drop tasks that finished more than `TASK_CELEBRATION_MS` before
     /// `now_ms`. Cheap O(n); called once per render tick.
@@ -1480,6 +1520,30 @@ impl RenderModel {
                 }
                 self.dirty = true;
             }
+            EventType::TodoListUpdate => {
+                // Full-list replace (last-write-wins). An empty/missing
+                // `todos` clears the panel.
+                self.todos.clear();
+                if let Some(arr) = ev.payload.get("todos").and_then(|v| v.as_array()) {
+                    for v in arr {
+                        let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("");
+                        if title.is_empty() {
+                            continue;
+                        }
+                        let status = v
+                            .get("status")
+                            .and_then(|x| x.as_str())
+                            .and_then(TodoStatus::from_str)
+                            .unwrap_or(TodoStatus::Pending);
+                        self.todos.push(TodoItem {
+                            id: v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                            title: title.to_string(),
+                            status,
+                        });
+                    }
+                }
+                self.dirty = true;
+            }
             EventType::SlashCommandsRegistered => {
                 self.slash_commands.clear();
                 if let Some(arr) = ev.payload.get("commands").and_then(|v| v.as_array()) {
@@ -2114,6 +2178,40 @@ mod tests {
             event_type: et,
             payload,
         }
+    }
+
+    #[test]
+    fn todo_list_update_replaces_and_clears() {
+        let mut m = RenderModel::new();
+        assert!(m.todos().is_empty());
+        m.apply(&ev(
+            0,
+            EventType::TodoListUpdate,
+            json!({"todos":[
+                {"id":"1","title":"Find the test","status":"completed"},
+                {"id":"2","title":"Repro the error","status":"in_progress"},
+                {"id":"3","title":"Patch and re-run","status":"pending"}
+            ]}),
+        ));
+        let todos = m.todos();
+        assert_eq!(todos.len(), 3);
+        assert_eq!(todos[0].status, TodoStatus::Completed);
+        assert_eq!(todos[1].status, TodoStatus::InProgress);
+        assert_eq!(todos[2].title, "Patch and re-run");
+        // Unknown status falls back to Pending; empty titles are skipped.
+        m.apply(&ev(
+            1,
+            EventType::TodoListUpdate,
+            json!({"todos":[
+                {"id":"1","title":"Only item","status":"weird"},
+                {"id":"2","title":"","status":"pending"}
+            ]}),
+        ));
+        assert_eq!(m.todos().len(), 1);
+        assert_eq!(m.todos()[0].status, TodoStatus::Pending);
+        // A full update with an empty list clears the panel.
+        m.apply(&ev(2, EventType::TodoListUpdate, json!({"todos":[]})));
+        assert!(m.todos().is_empty());
     }
 
     #[test]

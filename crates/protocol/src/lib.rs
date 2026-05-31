@@ -66,6 +66,12 @@ pub enum EventType {
     /// v0.1.5+ — Host → renderer: background task lifecycle (skills index,
     /// memory load, etc.) shown in the task ribbon above the status line.
     BackgroundTaskUpdate,
+    /// v0.5+ — Host → renderer: the agent's todo/plan checklist. Carries the
+    /// FULL list every time (last-write-wins, no per-item deltas) — an empty
+    /// list clears it. Rendered as a vertical checklist (☐ pending / ◐ in
+    /// progress / ☑ completed), distinct from the `BackgroundTaskUpdate` job
+    /// ribbon.
+    TodoListUpdate,
     /// v0.1.5+ — Renderer → host: user submitted input from the input box.
     UserInputSubmitted,
     /// v0.1.5+ — Renderer → host: user's response to a PermissionRequested.
@@ -168,6 +174,7 @@ impl EventType {
             EventType::ViewportMarker => "ViewportMarker",
             EventType::StatusUpdate => "StatusUpdate",
             EventType::BackgroundTaskUpdate => "BackgroundTaskUpdate",
+            EventType::TodoListUpdate => "TodoListUpdate",
             EventType::UserInputSubmitted => "UserInputSubmitted",
             EventType::PermissionResponse => "PermissionResponse",
             EventType::SlashCommandsRegistered => "SlashCommandsRegistered",
@@ -217,6 +224,7 @@ impl EventType {
             "ViewportMarker" => Self::ViewportMarker,
             "StatusUpdate" => Self::StatusUpdate,
             "BackgroundTaskUpdate" => Self::BackgroundTaskUpdate,
+            "TodoListUpdate" => Self::TodoListUpdate,
             "UserInputSubmitted" => Self::UserInputSubmitted,
             "PermissionResponse" => Self::PermissionResponse,
             "SlashCommandsRegistered" => Self::SlashCommandsRegistered,
@@ -388,6 +396,29 @@ pub mod payloads {
         /// 0.0..=1.0 if known, else None.
         #[serde(default)]
         pub progress: Option<f32>,
+    }
+
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "snake_case")]
+    pub enum TodoStatus {
+        Pending,
+        InProgress,
+        Completed,
+    }
+
+    /// One item in a `TodoListUpdate`.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct TodoItem {
+        pub id: String,
+        pub title: String,
+        pub status: TodoStatus,
+    }
+
+    /// v0.5+ — the agent's todo/plan checklist. The host sends the FULL list
+    /// on every update (last-write-wins); an empty `todos` clears the panel.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct TodoListUpdate {
+        pub todos: Vec<TodoItem>,
     }
 
     /// v0.1.5+ — renderer → host: user submitted text from the input box.
@@ -781,6 +812,7 @@ mod tests {
             EventType::ViewportMarker,
             EventType::StatusUpdate,
             EventType::BackgroundTaskUpdate,
+            EventType::TodoListUpdate,
             EventType::UserInputSubmitted,
             EventType::PermissionResponse,
             EventType::SlashCommandsRegistered,
@@ -800,7 +832,7 @@ mod tests {
             EventType::ModeChangeRequested,
             EventType::CancelRequested,
         ];
-        assert_eq!(types.len(), 38);
+        assert_eq!(types.len(), 39);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();

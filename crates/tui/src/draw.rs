@@ -208,6 +208,14 @@ pub fn render<B: Backend>(
         // protect the transcript from being squeezed on tiny terminals.
         let has_tasks = !model.background_tasks().is_empty();
         let task_line: u16 = if has_tasks { 1 } else { 0 };
+        // Agent todo/plan checklist, pinned above the task ribbon. One row
+        // per item, capped so a long plan can't swallow the transcript:
+        // at most a third of the screen, hard-capped at 8 rows. The cap is
+        // only consulted when there's at least one todo.
+        let todo_count = model.todos().len();
+        let todo_cap = ((area.height / 3) as usize).clamp(1, 8);
+        let todo_visible = todo_count.min(todo_cap);
+        let todo_line: u16 = todo_visible as u16;
         let replay_line: u16 = if replay.is_some() { 1 } else { 0 };
         let status_text_width = status_total_width(model, viewport, status);
         let inner_w = area.width.saturating_sub(2).max(1) as usize; // box content width (subtract borders)
@@ -265,12 +273,12 @@ pub fn render<B: Backend>(
                 lines.min(cap).saturating_add(1) // +1 for trailing blank line
             })
             .unwrap_or(0);
-        // Layout regions in order: header / splash (optional) /
-        // transcript / spacer / task ribbon (optional) / status / input.
-        // The 1-row spacer between the transcript and the status row
-        // gives the last line of streamed content visual breathing room
-        // from the status bar — without it, a fully-filled viewport puts
-        // text flush against the next chunk and reads as "cut off".
+        // Layout regions in order: header / splash (optional) / transcript /
+        // spacer / todos (optional) / task ribbon (optional) / replay /
+        // status / input. The 1-row spacer between the transcript and the
+        // status cluster gives the last line of streamed content visual
+        // breathing room — without it, a fully-filled viewport puts text
+        // flush against the next chunk and reads as "cut off".
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -278,6 +286,7 @@ pub fn render<B: Backend>(
                 Constraint::Length(splash_height),
                 Constraint::Min(1),
                 Constraint::Length(1), // bottom spacer
+                Constraint::Length(todo_line),
                 Constraint::Length(task_line),
                 Constraint::Length(replay_line),
                 Constraint::Length(status_height),
@@ -637,6 +646,45 @@ pub fn render<B: Backend>(
                 Style::default().fg(Color::Yellow),
             ));
         }
+        // Agent todo/plan checklist — one item per line (vertical), distinct
+        // from the horizontal background-task ribbon below it.
+        if todo_visible > 0 {
+            use camouflage_renderer::model::TodoStatus;
+            let dim = Style::default().fg(Color::DarkGray);
+            let mut todo_lines: Vec<Line> = Vec::with_capacity(todo_visible);
+            for todo in model.todos().iter().take(todo_visible) {
+                let (glyph, glyph_style, title_style) = match todo.status {
+                    TodoStatus::Completed => (
+                        "☑",
+                        Style::default().fg(rgb_to_color(theme.diff_add)),
+                        dim.add_modifier(Modifier::CROSSED_OUT),
+                    ),
+                    TodoStatus::InProgress => (
+                        "◐",
+                        Style::default().fg(rgb_to_color(theme.accent)).add_modifier(Modifier::BOLD),
+                        Style::default().fg(Color::Gray),
+                    ),
+                    TodoStatus::Pending => (
+                        "☐",
+                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(Color::Gray),
+                    ),
+                };
+                todo_lines.push(Line::from(vec![
+                    Span::styled(glyph, glyph_style),
+                    Span::raw(" "),
+                    Span::styled(todo.title.clone(), title_style),
+                ]));
+            }
+            // Surface truncation rather than silently dropping items.
+            if todo_count > todo_visible {
+                let hidden = todo_count - todo_visible;
+                if let Some(last) = todo_lines.last_mut() {
+                    *last = Line::from(Span::styled(format!("… +{} more", hidden), dim));
+                }
+            }
+            f.render_widget(Paragraph::new(todo_lines), chunks[4]);
+        }
         // Task ribbon (only if there are any active tasks).
         if has_tasks {
             use camouflage_renderer::model::BackgroundTaskState;
@@ -670,14 +718,14 @@ pub fn render<B: Backend>(
                 ribbon_spans.push(Span::styled(label, label_style));
             }
             let ribbon = Paragraph::new(Line::from(ribbon_spans));
-            f.render_widget(ribbon, chunks[4]);
+            f.render_widget(ribbon, chunks[5]);
         }
 
         // Replay timeline scrubber. Drawn just above the status line so
         // the user always sees their position in the session at a glance.
         // Half-block fill (▌) gives 2x effective resolution on the bar.
         if let Some(rv) = &replay {
-            let bar_w = chunks[5].width.max(8) as usize;
+            let bar_w = chunks[6].width.max(8) as usize;
             let suffix = format!(
                 " {:>3}%  {}/{}  {:.2}×  {}",
                 if rv.total == 0 { 0 } else { (rv.position * 100 / rv.total).min(100) },
@@ -706,13 +754,13 @@ pub fn render<B: Backend>(
                 Span::styled(track, Style::default().fg(accent)),
                 Span::styled(suffix, dim),
             ]));
-            f.render_widget(bar, chunks[5]);
+            f.render_widget(bar, chunks[6]);
         }
         let status_line = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: false });
-        f.render_widget(status_line, chunks[6]);
+        f.render_widget(status_line, chunks[7]);
 
         // Bottom box: search prompt > permission widget > input prompt.
-        let input_chunk = chunks[7];
+        let input_chunk = chunks[8];
         if let Some(sv) = search.as_ref() {
             let widget = Paragraph::new(Line::from(vec![
                 Span::styled("/", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
@@ -2398,5 +2446,85 @@ fn bright_color(c: u16) -> Color {
         0 => Color::DarkGray, 1 => Color::LightRed, 2 => Color::LightGreen, 3 => Color::LightYellow,
         4 => Color::LightBlue, 5 => Color::LightMagenta, 6 => Color::LightCyan, 7 => Color::White,
         _ => Color::Reset,
+    }
+}
+
+#[cfg(test)]
+mod render_tests {
+    use super::*;
+    use camouflage_protocol::{Event, EventType, SCHEMA_VERSION};
+    use camouflage_renderer::theme::Theme;
+    use camouflage_renderer::{RenderModel, ViewportState};
+    use ratatui::backend::TestBackend;
+    use uuid::Uuid;
+
+    fn ev(seq: i64, et: EventType, payload: serde_json::Value) -> Event {
+        Event {
+            id: Uuid::nil(),
+            session_id: Uuid::nil(),
+            seq,
+            timestamp_ms: 0,
+            schema_version: SCHEMA_VERSION,
+            event_type: et,
+            payload,
+        }
+    }
+
+    /// Read the rendered screen back as one string per row.
+    fn row_strings(buf: &ratatui::buffer::Buffer) -> Vec<String> {
+        let area = buf.area;
+        (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buf[(area.x + x, area.y + y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    fn render_to_rows(model: &RenderModel) -> Vec<String> {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut vp = ViewportState::new(Uuid::nil(), 24, 80);
+        let theme = Theme::builtin("default-dark").unwrap();
+        render(
+            &mut terminal, model, &mut vp, "", 0, "", 0, None, None, None, false, None,
+            None, &theme, false, "", 0, 0, None,
+        )
+        .unwrap();
+        row_strings(terminal.backend().buffer())
+    }
+
+    /// The todo checklist must render VERTICALLY — each item on its own row,
+    /// not joined onto a single line (the bug this feature fixes).
+    #[test]
+    fn todos_render_one_per_line() {
+        let mut m = RenderModel::new();
+        m.apply(&ev(
+            0,
+            EventType::TodoListUpdate,
+            serde_json::json!({"todos":[
+                {"id":"1","title":"ALPHA_TODO","status":"completed"},
+                {"id":"2","title":"BRAVO_TODO","status":"in_progress"},
+                {"id":"3","title":"CHARLIE_TODO","status":"pending"}
+            ]}),
+        ));
+        let rows = render_to_rows(&m);
+
+        let alpha = rows.iter().position(|r| r.contains("ALPHA_TODO"));
+        let bravo = rows.iter().position(|r| r.contains("BRAVO_TODO"));
+        let charlie = rows.iter().position(|r| r.contains("CHARLIE_TODO"));
+        assert!(alpha.is_some() && bravo.is_some() && charlie.is_some(), "all todos visible");
+        // Distinct rows (vertical), in order.
+        assert!(alpha < bravo && bravo < charlie, "todos stack vertically in order");
+        // And the in-progress glyph is present on its line.
+        assert!(rows[bravo.unwrap()].contains('◐'), "in-progress glyph rendered");
+    }
+
+    #[test]
+    fn no_todo_region_when_empty() {
+        let m = RenderModel::new();
+        let rows = render_to_rows(&m);
+        assert!(!rows.iter().any(|r| r.contains('◐') || r.contains('☑')));
     }
 }
