@@ -39,7 +39,6 @@ export type EventType =
   | "SelectListResponse"
   | "ShowConfirm"
   | "ConfirmResponse"
-  | "ShowToast"
   | "ShowTable"
   | "ShowKeyValueView"
   | "ShowForm"
@@ -174,13 +173,6 @@ export type ConfirmResponse = {
   cancelled?: boolean;
 };
 
-export type ToastKind = "info" | "success" | "warn" | "error";
-export type ShowToast = {
-  text: string;
-  kind?: ToastKind;
-  ttl_ms?: number;
-};
-
 export type TableAlign = "left" | "right" | "center";
 export type TableColumn = {
   name: string;
@@ -286,7 +278,6 @@ export type Event = EnvelopeMeta &
     | { event_type: "SelectListResponse"; payload: SelectListResponse }
     | { event_type: "ShowConfirm"; payload: ShowConfirm }
     | { event_type: "ConfirmResponse"; payload: ConfirmResponse }
-    | { event_type: "ShowToast"; payload: ShowToast }
     | { event_type: "ShowTable"; payload: ShowTable }
     | { event_type: "ShowKeyValueView"; payload: ShowKeyValueView }
     | { event_type: "ShowForm"; payload: ShowForm }

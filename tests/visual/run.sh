@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-scenario="${1:?scenario name required (e.g. splash, toasts, esc-idle)}"
+scenario="${1:?scenario name required (e.g. splash, esc-idle, host-flow)}"
 
 repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
 tape_dir="$repo_root/tests/visual"

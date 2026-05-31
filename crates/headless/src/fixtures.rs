@@ -120,7 +120,6 @@ mod tests {
             EventType::SelectListResponse,
             EventType::ShowConfirm,
             EventType::ConfirmResponse,
-            EventType::ShowToast,
             EventType::ShowTable,
             EventType::ShowKeyValueView,
             EventType::ShowForm,

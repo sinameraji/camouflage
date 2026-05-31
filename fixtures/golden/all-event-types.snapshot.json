@@ -68,7 +68,7 @@
       "text": "end of warmup"
     },
     {
-      "seq": 40,
+      "seq": 39,
       "kind": "system",
       "text": "session ended"
     }
@@ -93,13 +93,6 @@
     "selected_yes": true,
     "allow_cancel": true
   },
-  "toasts": [
-    {
-      "text": "Saved",
-      "kind": "success",
-      "expires_ms": 1779540509364
-    }
-  ],
   "table": {
     "id": "usage-1",
     "title": "Cost — last 7 days",

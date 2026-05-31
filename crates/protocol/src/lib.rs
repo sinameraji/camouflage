@@ -104,10 +104,6 @@ pub enum EventType {
     /// v0.4.6+ (CC-2) — Renderer → host: outcome of a `ShowConfirm`.
     /// Payload carries either `value: bool` or `cancelled: true`.
     ConfirmResponse,
-    /// v0.4.6+ (CC-3) — Host → renderer: show a brief inline toast.
-    /// Display-only — no outbound response. Toast auto-fades after
-    /// `ttl_ms` (defaults to 3000ms when omitted).
-    ShowToast,
     /// v0.4.6+ (CC-6) — Host → renderer: show a tabular data view as a
     /// modal. Display-only in this version; interactive row selection
     /// + inline mode are follow-ups.
@@ -183,7 +179,6 @@ impl EventType {
             EventType::SelectListResponse => "SelectListResponse",
             EventType::ShowConfirm => "ShowConfirm",
             EventType::ConfirmResponse => "ConfirmResponse",
-            EventType::ShowToast => "ShowToast",
             EventType::ShowTable => "ShowTable",
             EventType::ShowKeyValueView => "ShowKeyValueView",
             EventType::ShowForm => "ShowForm",
@@ -233,7 +228,6 @@ impl EventType {
             "SelectListResponse" => Self::SelectListResponse,
             "ShowConfirm" => Self::ShowConfirm,
             "ConfirmResponse" => Self::ConfirmResponse,
-            "ShowToast" => Self::ShowToast,
             "ShowTable" => Self::ShowTable,
             "ShowKeyValueView" => Self::ShowKeyValueView,
             "ShowForm" => Self::ShowForm,
@@ -565,30 +559,6 @@ pub mod payloads {
 
     #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
     #[serde(rename_all = "snake_case")]
-    pub enum ToastKind {
-        Info,
-        Success,
-        Warn,
-        Error,
-    }
-
-    /// v0.4.6+ (CC-3) — host asks the renderer to show a brief inline
-    /// toast. Display-only — no outbound response.
-    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-    pub struct ShowToast {
-        pub text: String,
-        /// Visual treatment. Defaults to `info`.
-        #[serde(default)]
-        pub kind: Option<ToastKind>,
-        /// How long the toast stays visible, in milliseconds. Defaults to
-        /// 3000 when omitted. Toast clears on its own after this elapses;
-        /// no further protocol traffic is needed.
-        #[serde(default)]
-        pub ttl_ms: Option<u32>,
-    }
-
-    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-    #[serde(rename_all = "snake_case")]
     pub enum TableAlign {
         Left,
         Right,
@@ -821,7 +791,6 @@ mod tests {
             EventType::SelectListResponse,
             EventType::ShowConfirm,
             EventType::ConfirmResponse,
-            EventType::ShowToast,
             EventType::ShowTable,
             EventType::ShowKeyValueView,
             EventType::ShowForm,
@@ -832,7 +801,7 @@ mod tests {
             EventType::ModeChangeRequested,
             EventType::CancelRequested,
         ];
-        assert_eq!(types.len(), 39);
+        assert_eq!(types.len(), 38);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();

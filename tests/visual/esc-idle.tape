@@ -1,6 +1,6 @@
-# Exercises Esc-at-idle: dismisses splash and toasts without spurious renders.
-# Uses the all-event-types fixture which seeds a ShowToast plus a Splash-style
-# pinned state via SessionStarted + StatusUpdate.
+# Exercises Esc-at-idle: dismisses the pinned splash without spurious renders.
+# Uses the splash-sgr fixture which seeds a Splash banner via
+# SessionStarted + Splash + StatusUpdate.
 
 Output out/esc-idle/session.gif
 Set Shell bash

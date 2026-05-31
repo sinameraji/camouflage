@@ -18,7 +18,7 @@ const KNOWN_TYPES = new Set([
   "SlashCommandsRegistered", "MentionCandidatesRegistered",
   "ShowSelectList", "SelectListResponse",
   "ShowConfirm", "ConfirmResponse",
-  "ShowToast", "ShowTable", "ShowKeyValueView",
+  "ShowTable", "ShowKeyValueView",
   "ShowForm", "FormResponse",
   "ShowWizard", "WizardCompleted", "WizardCancelled",
   "ModeChangeRequested", "CancelRequested",
