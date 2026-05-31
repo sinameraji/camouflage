@@ -125,9 +125,6 @@ fn validate_payload(event_type: EventType, payload: serde_json::Value) -> Result
         ConfirmResponse => {
             serde_json::from_value::<payloads::ConfirmResponse>(payload)?;
         }
-        ShowToast => {
-            serde_json::from_value::<payloads::ShowToast>(payload)?;
-        }
         ShowTable => {
             serde_json::from_value::<payloads::ShowTable>(payload)?;
         }

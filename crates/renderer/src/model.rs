@@ -155,10 +155,6 @@ pub struct RenderModel {
     active_select_list: Option<SelectListState>,
     /// CC-2 (v0.4.6+): currently-open Confirm modal, if any.
     active_confirm: Option<ConfirmState>,
-    /// CC-3 (v0.4.6+): live toasts. Each has a wall-clock expiration; the
-    /// renderer should call `prune_expired_toasts()` (or `active_toasts()`)
-    /// each frame to drop expired entries.
-    toasts: Vec<ToastState>,
     /// CC-6 (v0.4.6+): currently-open Table modal. Display-only — Esc
     /// dismisses, no outbound response.
     active_table: Option<TableState>,
@@ -299,22 +295,6 @@ pub struct TableState {
     /// Each row pre-stringified per column (column-major-by-row), so the
     /// TUI can render without re-parsing JSON each frame.
     pub rows: Vec<Vec<String>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToastKind {
-    Info,
-    Success,
-    Warn,
-    Error,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToastState {
-    pub text: String,
-    pub kind: ToastKind,
-    /// Milliseconds since UNIX epoch when this toast should disappear.
-    pub expires_ms: i64,
 }
 
 /// CC-2 — per-instance state for an open Confirm modal.
@@ -512,7 +492,6 @@ impl RenderModel {
             session_started_seen: false,
             active_select_list: None,
             active_confirm: None,
-            toasts: Vec::new(),
             active_table: None,
             active_kv: None,
             active_form: None,
@@ -697,31 +676,6 @@ impl RenderModel {
         }
     }
 
-    /// CC-3 — toasts currently still within their TTL. Caller should
-    /// invoke this each frame; expired entries are dropped lazily.
-    pub fn active_toasts(&mut self) -> &[ToastState] {
-        self.prune_expired_toasts();
-        &self.toasts
-    }
-
-    /// CC-3 — read-only view of toasts (no pruning). Used by `snapshot()`
-    /// which takes `&self`. Callers needing a clean list should use
-    /// `active_toasts()` (which prunes) instead.
-    pub fn peek_toasts(&self) -> &[ToastState] {
-        &self.toasts
-    }
-
-    /// Drop every live toast. Used by the Esc handler so the user has a
-    /// guaranteed way to dismiss persistent banners.
-    pub fn clear_toasts(&mut self) -> bool {
-        if self.toasts.is_empty() {
-            return false;
-        }
-        self.toasts.clear();
-        self.dirty = true;
-        true
-    }
-
     /// Drop the pinned splash banner. Used by the Esc handler so the
     /// user can hide the logo before their first submit.
     pub fn clear_splash(&mut self) -> bool {
@@ -731,19 +685,6 @@ impl RenderModel {
         self.splash = None;
         self.dirty = true;
         true
-    }
-
-    /// Push a toast locally (not in response to a ShowToast event).
-    /// Used by the renderer to acknowledge Esc when there's nothing
-    /// else to dismiss, so the keystroke has guaranteed visible
-    /// feedback even at idle.
-    pub fn push_local_toast(&mut self, text: impl Into<String>, kind: ToastKind, ttl_ms: i64, now_ms: i64) {
-        self.toasts.push(ToastState {
-            text: text.into(),
-            kind,
-            expires_ms: now_ms + ttl_ms,
-        });
-        self.dirty = true;
     }
 
     /// CC-6 — currently-open Table modal, if any.
@@ -805,17 +746,6 @@ impl RenderModel {
             // Install next step's sub-modal.
             install_wizard_step(self);
             Some(WizardAdvance::Continued)
-        }
-    }
-
-    /// Drop toasts whose `expires_ms` is in the past. Sets `dirty` if
-    /// any were removed.
-    pub fn prune_expired_toasts(&mut self) {
-        let now = current_time_ms();
-        let before = self.toasts.len();
-        self.toasts.retain(|t| t.expires_ms > now);
-        if self.toasts.len() != before {
-            self.dirty = true;
         }
     }
 
@@ -1788,37 +1718,6 @@ impl RenderModel {
                 self.active_table = Some(TableState { id, title, columns, rows });
                 self.dirty = true;
             }
-            EventType::ShowToast => {
-                let text = ev.payload.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                if text.is_empty() {
-                    return false;
-                }
-                let kind = ev
-                    .payload
-                    .get("kind")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| match s {
-                        "info" => Some(ToastKind::Info),
-                        "success" => Some(ToastKind::Success),
-                        "warn" => Some(ToastKind::Warn),
-                        "error" => Some(ToastKind::Error),
-                        _ => None,
-                    })
-                    .unwrap_or(ToastKind::Info);
-                let ttl_ms = ev
-                    .payload
-                    .get("ttl_ms")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(3000) as i64;
-                let expires_ms = current_time_ms().saturating_add(ttl_ms);
-                self.toasts.push(ToastState { text, kind, expires_ms });
-                // Cap to a sane number so a misbehaving host can't blow
-                // memory by emitting thousands of toasts.
-                if self.toasts.len() > 16 {
-                    self.toasts.remove(0);
-                }
-                self.dirty = true;
-            }
             EventType::ShowConfirm => {
                 if self.active_confirm.is_some() {
                     return false;
@@ -2066,15 +1965,6 @@ fn stringify_cell(v: Option<&serde_json::Value>) -> String {
         Some(serde_json::Value::Number(n)) => n.to_string(),
         Some(other) => other.to_string(),
     }
-}
-
-/// Wall-clock time in milliseconds since UNIX epoch. Used for toast TTLs.
-fn current_time_ms() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
 }
 
 /// Compact a tool's command-line into something safe to render on a single

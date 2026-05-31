@@ -21,7 +21,6 @@ pub use snapshot::{
     SnapshotKeyValueItem, SnapshotKeyValueView, SnapshotPermission, SnapshotRow, SnapshotRowKind,
     SnapshotSelectList, SnapshotSelectListOption, SnapshotTable, SnapshotTableAlign,
     SnapshotTableColumn, SnapshotTask, SnapshotTaskState, SnapshotTodo, SnapshotTodoStatus,
-    SnapshotToast, SnapshotToastKind,
 };
 
 use camouflage_protocol::Event;
@@ -122,25 +121,6 @@ impl SnapshotRenderer for RenderModel {
             selected_yes: c.selected_yes,
             allow_cancel: c.allow_cancel,
         });
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
-        let toasts = self
-            .peek_toasts()
-            .iter()
-            .filter(|t| t.expires_ms > now)
-            .map(|t| SnapshotToast {
-                text: t.text.clone(),
-                kind: match t.kind {
-                    model::ToastKind::Info => SnapshotToastKind::Info,
-                    model::ToastKind::Success => SnapshotToastKind::Success,
-                    model::ToastKind::Warn => SnapshotToastKind::Warn,
-                    model::ToastKind::Error => SnapshotToastKind::Error,
-                },
-                expires_ms: t.expires_ms,
-            })
-            .collect();
         let table = self.active_table().map(|t| SnapshotTable {
             id: t.id.clone(),
             title: t.title.clone(),
@@ -200,7 +180,6 @@ impl SnapshotRenderer for RenderModel {
             pending_permission,
             select_list,
             confirm,
-            toasts,
             table,
             key_value_view,
             form,
