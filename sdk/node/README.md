@@ -131,6 +131,18 @@ If you're replacing a React/Ink TUI:
 4. **Replace permission UI state** with `cam.on("permissionResponse", ...)`.
 5. **Delete `<App/>`, the Ink dependency, and any per-component layout code** — the renderer owns layout.
 
+## Native binary
+
+The terminal renderer is a pre-built Rust binary. On install, the
+`postinstall` script downloads the binary for your platform from this
+package's GitHub Release. It resolves the release tag from the package
+version, preferring the component-tagged release
+(`camouflage-tui-v<version>`, as produced by release-please) and falling
+back to the legacy `v<version>` tag, so both old and new published
+versions resolve to a real asset. If the download fails (offline,
+unsupported platform), it prints instructions to build from source — the
+package install itself never fails.
+
 ## Versioning
 
 Versions track the main Camouflage workspace. Within `SCHEMA_VERSION: 1`,
