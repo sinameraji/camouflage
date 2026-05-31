@@ -58,3 +58,42 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         if: ${{ steps.release.outputs.releases_created }}
+
+      # release-please only tracks the sdk/node package path, but the
+      # published binary is built from crates/**. A user-facing change to the
+      # Rust TUI (a `fix:`/`feat:` under crates/) therefore does NOT trigger a
+      # release on its own — and that silent skip is exactly what bit the
+      # Esc-abort fix. When no release is cut, surface any unreleased crate
+      # changes loudly so they aren't lost. Non-blocking: warning only.
+      - uses: actions/checkout@v4
+        if: ${{ !steps.release.outputs.releases_created }}
+        with:
+          fetch-depth: 0
+      - name: Warn on unreleased crate changes
+        if: ${{ !steps.release.outputs.releases_created }}
+        run: |
+          last_tag="$(git describe --tags --abbrev=0 --match 'camouflage-tui-v*' 2>/dev/null \
+            || git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+          if [ -z "$last_tag" ]; then
+            echo "No prior release tag found; nothing to compare."
+            exit 0
+          fi
+          changes="$(git log "${last_tag}..HEAD" --format='%s' -- crates \
+            | grep -E '^(feat|fix)(\(.+\))?!?:' || true)"
+          if [ -n "$changes" ]; then
+            {
+              echo "### ⚠️ Unreleased crate changes since ${last_tag}"
+              echo ""
+              echo "release-please tracks only \`sdk/node\`, so these user-facing crate"
+              echo "commits will NOT ship a new \`camouflage-tui\` binary until a release is"
+              echo "forced. Run \`scripts/trigger-binary-release.sh <next-version>\` from a"
+              echo "branch off \`main\` to cut one."
+              echo ""
+              echo '```'
+              echo "${changes}"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Unreleased user-facing crate changes since ${last_tag}. See the job summary; run scripts/trigger-binary-release.sh to publish a new binary."
+          else
+            echo "No unreleased user-facing crate changes since ${last_tag}."
+          fi
