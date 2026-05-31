@@ -5,6 +5,7 @@
 //!
 //! - StatusUpdate segments for mode / phase / elapsed / tokens / cost / branch
 //! - BackgroundTaskUpdate "skills indexing" running → done
+//! - TodoListUpdate plan checklist (pending/in_progress/completed), updated in place
 //! - AssistantStream with spinner pre-token, then streaming, then completion
 //! - ToolExecution with mid-execution stdout, then completion
 //! - PermissionRequested mid-stream (so the inline widget renders)
@@ -94,6 +95,29 @@ fn main() -> Result<()> {
     emit_or_break!(&mut w, serde_json::json!({
         "event_type":"UserMessageCreated",
         "payload":{"text":"investigate failing test in src/auth/login.ts"}
+    }));
+    thread::sleep(pause);
+
+    // 3b. Todo/plan checklist — full-list, last-write-wins. First the plan,
+    //     then the in-progress item flips to completed. Rendered as a
+    //     vertical checklist above the status line, distinct from the task
+    //     ribbon.
+    emit_or_break!(&mut w, serde_json::json!({
+        "event_type":"TodoListUpdate",
+        "payload":{"todos":[
+            {"id":"1","title":"Find the failing test","status":"completed"},
+            {"id":"2","title":"Reproduce the auth-flow error","status":"in_progress"},
+            {"id":"3","title":"Patch src/auth/login.ts and re-run","status":"pending"}
+        ]}
+    }));
+    thread::sleep(long_pause);
+    emit_or_break!(&mut w, serde_json::json!({
+        "event_type":"TodoListUpdate",
+        "payload":{"todos":[
+            {"id":"1","title":"Find the failing test","status":"completed"},
+            {"id":"2","title":"Reproduce the auth-flow error","status":"completed"},
+            {"id":"3","title":"Patch src/auth/login.ts and re-run","status":"in_progress"}
+        ]}
     }));
     thread::sleep(pause);
 

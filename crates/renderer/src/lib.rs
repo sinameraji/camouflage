@@ -13,14 +13,15 @@ pub mod theme;
 
 pub use model::{
     format_elapsed_ms, reconstruct_rows, BackgroundTask, BackgroundTaskState, PendingPermission,
-    RenderModel, Row, RowKind, ToolState,
+    RenderModel, Row, RowKind, TodoItem, TodoStatus, ToolState,
 };
 pub use viewport::ViewportState;
 pub use snapshot::{
     Snapshot, SnapshotConfirm, SnapshotForm, SnapshotFormField, SnapshotFormFieldKind,
     SnapshotKeyValueItem, SnapshotKeyValueView, SnapshotPermission, SnapshotRow, SnapshotRowKind,
     SnapshotSelectList, SnapshotSelectListOption, SnapshotTable, SnapshotTableAlign,
-    SnapshotTableColumn, SnapshotTask, SnapshotTaskState, SnapshotToast, SnapshotToastKind,
+    SnapshotTableColumn, SnapshotTask, SnapshotTaskState, SnapshotTodo, SnapshotTodoStatus,
+    SnapshotToast, SnapshotToastKind,
 };
 
 use camouflage_protocol::Event;
@@ -75,6 +76,19 @@ impl SnapshotRenderer for RenderModel {
                     BackgroundTaskState::Error => SnapshotTaskState::Error,
                 },
                 progress: t.progress,
+            })
+            .collect();
+        let todos = self
+            .todos()
+            .iter()
+            .map(|t| SnapshotTodo {
+                id: t.id.clone(),
+                title: t.title.clone(),
+                status: match t.status {
+                    TodoStatus::Pending => SnapshotTodoStatus::Pending,
+                    TodoStatus::InProgress => SnapshotTodoStatus::InProgress,
+                    TodoStatus::Completed => SnapshotTodoStatus::Completed,
+                },
             })
             .collect();
         let pending_permission = self.pending_permission().map(|p| SnapshotPermission {
@@ -182,6 +196,7 @@ impl SnapshotRenderer for RenderModel {
             rows,
             status: self.status_segments().clone(),
             tasks,
+            todos,
             pending_permission,
             select_list,
             confirm,
@@ -252,6 +267,27 @@ mod renderer_trait_tests {
         assert_eq!(snap.tasks.len(), 1);
         assert_eq!(snap.tasks[0].state, SnapshotTaskState::Running);
         assert!(snap.rows.iter().any(|r| matches!(r.kind, SnapshotRowKind::User)));
+
+        let s = serde_json::to_string(&snap).unwrap();
+        let back: Snapshot = serde_json::from_str(&s).unwrap();
+        assert_eq!(snap, back);
+    }
+
+    #[test]
+    fn snapshot_surfaces_todos() {
+        let mut m = RenderModel::new();
+        m.apply(&ev(
+            0,
+            EventType::TodoListUpdate,
+            json!({"todos":[
+                {"id":"1","title":"Find the test","status":"completed"},
+                {"id":"2","title":"Repro the error","status":"in_progress"}
+            ]}),
+        ));
+        let snap = m.snapshot();
+        assert_eq!(snap.todos.len(), 2);
+        assert_eq!(snap.todos[0].status, SnapshotTodoStatus::Completed);
+        assert_eq!(snap.todos[1].status, SnapshotTodoStatus::InProgress);
 
         let s = serde_json::to_string(&snap).unwrap();
         let back: Snapshot = serde_json::from_str(&s).unwrap();

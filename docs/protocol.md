@@ -292,6 +292,28 @@ Long-running background task lifecycle (skill indexing, memory load,
 etc.). Renderer shows active tasks in a ribbon above the status bar.
 `done` tasks fade after a short delay.
 
+#### `TodoListUpdate` (v0.5+)
+```json
+{
+  "event_type": "TodoListUpdate",
+  "payload": {
+    "todos": [
+      { "id": "1", "title": "Find the failing test",        "status": "completed" },
+      { "id": "2", "title": "Reproduce the auth-flow error", "status": "in_progress" },
+      { "id": "3", "title": "Patch and re-run",              "status": "pending" }
+    ]
+  }
+}
+```
+The agent's todo/plan checklist. The host sends the **full** list on every
+update (last-write-wins — there are no per-item deltas); an empty `todos`
+array clears the panel. `status` is one of `pending` | `in_progress` |
+`completed`. The renderer draws it as a **vertical** checklist above the
+status line (`☐` / `◐` / `☑`), distinct from the horizontal
+`BackgroundTaskUpdate` job ribbon. This is the right home for a coding
+agent's plan list — hosts should emit this rather than mapping todos onto
+`BackgroundTaskUpdate`.
+
 ---
 
 ### Errors
