@@ -19,7 +19,7 @@ tests/visual/run.sh splash
 tests/visual/run.sh toasts
 tests/visual/run.sh esc-idle
 tests/visual/run.sh esc-stream
-tests/visual/run.sh kimiflare-flow
+tests/visual/run.sh host-flow
 ```
 
 Outputs land in `tests/visual/out/<scenario>/`:
@@ -42,4 +42,4 @@ Outputs land in `tests/visual/out/<scenario>/`:
 ## Not yet
 
 - Golden-image pixel diffs in CI (add once tapes stabilize and rendering is deterministic).
-- Kimiflare-side integration scenarios (would live in the adapter repo).
+- Host-side integration scenarios (would live in the adapter repo).

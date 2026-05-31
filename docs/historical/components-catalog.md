@@ -13,7 +13,7 @@
 
 Camouflage today ships a fixed set of UI widgets (status bar, task ribbon, permission widget, overlays for help / metrics / tool-output / slash picker / mention picker). Each one is hardcoded in the renderer and driven by a specific event type.
 
-Hosts that need richer UI — KimiFlare's session picker, checkpoint browser, multi-step onboarding wizard, settings form — currently have no way to ask the renderer to show one. They have to fall back on their own UI library (React/Ink), which defeats the point of adopting Camouflage.
+Hosts that need richer UI — a host's session picker, checkpoint browser, multi-step onboarding wizard, settings form — currently have no way to ask the renderer to show one. They have to fall back on their own UI library (React/Ink), which defeats the point of adopting Camouflage.
 
 The catalog adds a layer of **declarative UI primitives**: hosts emit `Show<Component>` events with payload describing what to render and a unique `id`; the renderer paints the component using its own theme/layout; user interaction is reported back via `<Component>Response` events keyed by the same `id`.
 
@@ -26,13 +26,13 @@ This makes Camouflage a *terminal UI library* — shadcn/ui for TUIs — instead
 3. **Cross-language.** Same wire shape (NDJSON) every other Camouflage event uses. Python/Go/etc. hosts get the catalog for free.
 4. **id-keyed instances.** Every Show event carries a host-chosen `id`. Multiple components can be active simultaneously (a `Confirm` inside a `Wizard` step). Responses route back via id.
 5. **Modal by default; inline opt-in.** Most components are modal overlays that take focus. `Toast`, `Table`, `KeyValueView` can be inline; mark with `inline: true`.
-6. **Each component is one slice.** Protocol event(s) + model state + renderer overlay + Snapshot field + Node SDK types + a KimiFlare-side wiring against a real component being replaced. The KimiFlare wiring is the validation.
+6. **Each component is one slice.** Protocol event(s) + model state + renderer overlay + Snapshot field + Node SDK types + a host-side wiring against a real component being replaced. The host wiring is the validation.
 
 ## The catalog
 
 ### CC-1 — `SelectList`
 
-The highest-leverage primitive. One shape covers ~6 KimiFlare React components (session picker, checkpoint picker, theme picker, resume picker, model picker, slash picker). The existing hardcoded slash picker is structurally a SelectList — we generalize it.
+The highest-leverage primitive. One shape covers ~6 host React components (session picker, checkpoint picker, theme picker, resume picker, model picker, slash picker). The existing hardcoded slash picker is structurally a SelectList — we generalize it.
 
 **Show event:**
 
@@ -185,7 +185,7 @@ Static label/value list — "session details", welcome screen, "about" panel.
     "title": "Session sess-abc",
     "items": [
       { "label": "Started",   "value": "2 hours ago" },
-      { "label": "Model",     "value": "kimi-k2.6" },
+      { "label": "Model",     "value": "your-model-v1" },
       { "label": "Turns",     "value": "12" },
       { "label": "Tokens in", "value": "48,392" }
     ],
@@ -206,14 +206,14 @@ Display-only.
 
 ## Shipping order
 
-Each is one self-contained slice, validated against a real KimiFlare driver before the next one starts:
+Each is one self-contained slice, validated against a real host driver before the next one starts:
 
-1. **CC-1 `SelectList`** — driver: replace KimiFlare's resume picker. After this, the existing hardcoded slash-picker becomes a special case of `SelectList` and can be deprecated.
+1. **CC-1 `SelectList`** — driver: replace the host's resume picker. After this, the existing hardcoded slash-picker becomes a special case of `SelectList` and can be deprecated.
 2. **CC-2 `Confirm`** — driver: `--ui camouflage` quit confirmation.
-3. **CC-3 `Toast`** — driver: KimiFlare's "Authenticated" / "Saved" feedback.
-4. **CC-4 `Wizard`** — driver: KimiFlare onboarding flow.
-5. **CC-5 `Form`** — driver: settings form (or whatever KimiFlare needs first).
-6. **CC-6 `Table`** — driver: `kimiflare cost` weekly view.
-7. **CC-7 `KeyValueView`** — driver: KimiFlare welcome screen.
+3. **CC-3 `Toast`** — driver: the host's "Authenticated" / "Saved" feedback.
+4. **CC-4 `Wizard`** — driver: host onboarding flow.
+5. **CC-5 `Form`** — driver: settings form (or whatever the host needs first).
+6. **CC-6 `Table`** — driver: a host `cost` weekly view.
+7. **CC-7 `KeyValueView`** — driver: host welcome screen.
 
 PROGRESS.md tracks per-slice status under "Components catalog (the missing UI primitives layer)".

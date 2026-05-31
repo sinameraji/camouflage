@@ -180,10 +180,16 @@ pub struct RenderModel {
     /// passing `user_label` in the `SessionStarted` payload.
     user_label: String,
     /// v0.5+: per-turn label rendered as the prefix on assistant rows
-    /// (e.g. "kimiflare", "Claude"). Defaults to "Assistant". The host
+    /// (e.g. "your-agent", "Claude"). Defaults to "Assistant". The host
     /// may override it by passing `assistant_label` in the
     /// `SessionStarted` payload.
     assistant_label: String,
+    /// Brand shown in the header (e.g. the host app's name). Empty until a
+    /// host supplies one — the renderer never brands itself. Set via the
+    /// `--app-title` CLI flag (resolved by the binary, typically from the
+    /// host name or the working-directory folder) or overridden mid-session
+    /// by passing `app_title` in the `SessionStarted` payload.
+    app_title: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -414,7 +420,7 @@ pub struct PermissionDiff {
 }
 
 /// A row in the background task ribbon, populated by `BackgroundTaskUpdate`
-/// events. KimiFlare uses this for skill indexing, memory loading, etc.
+/// events. Hosts use this for skill indexing, memory loading, etc.
 #[derive(Debug, Clone)]
 pub struct BackgroundTask {
     pub task_id: String,
@@ -481,6 +487,7 @@ impl RenderModel {
             user_has_submitted: false,
             user_label: "You".to_string(),
             assistant_label: "Assistant".to_string(),
+            app_title: String::new(),
         }
     }
 
@@ -591,9 +598,25 @@ impl RenderModel {
 
     /// v0.5+: label printed before each assistant turn in the transcript.
     /// Defaults to "Assistant". Host can override via
-    /// `SessionStarted.assistant_label` (e.g. "kimiflare", "Claude").
+    /// `SessionStarted.assistant_label` (e.g. "your-agent", "Claude").
     pub fn assistant_label(&self) -> &str {
         &self.assistant_label
+    }
+
+    /// Brand shown in the header. Empty until a host supplies one. Set via
+    /// the binary's `--app-title` flag or `SessionStarted.app_title`.
+    pub fn app_title(&self) -> &str {
+        &self.app_title
+    }
+
+    /// Set the header brand. Used by the binary to seed the initial title
+    /// (from `--app-title` / cwd) before the first frame. Blank/whitespace
+    /// values are ignored so the brand is never cleared accidentally.
+    pub fn set_app_title(&mut self, title: &str) {
+        let t = title.trim();
+        if !t.is_empty() {
+            self.app_title = t.to_string();
+        }
     }
 
     /// Currently-pending permission request, if any. The TUI renders the
@@ -888,6 +911,12 @@ impl RenderModel {
                         self.assistant_label = s.to_string();
                     }
                 }
+                if let Some(s) = ev.payload.get("app_title").and_then(|v| v.as_str()) {
+                    let s = s.trim();
+                    if !s.is_empty() {
+                        self.app_title = s.to_string();
+                    }
+                }
             }
             EventType::SessionEnded => {
                 self.push_row(Row {
@@ -988,8 +1017,8 @@ impl RenderModel {
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                 // Strip leading/trailing whitespace and collapse newlines so
-                // hosts that pass JSON-stringified tool arguments (e.g.
-                // KimiFlare's `call.function.arguments`) don't blow up
+                // hosts that pass JSON-stringified tool arguments (e.g. a
+                // `call.function.arguments` field) don't blow up
                 // into a multi-row text dump. Full payload remains visible
                 // via the X-overlay (tool-output captured) or `i`-inspector.
                 let command_display = compact_command(command_raw);
@@ -1975,7 +2004,7 @@ fn current_time_ms() -> i64 {
 /// chars with an ellipsis. Used for the `▸ tool …` display string; the
 /// original full payload is preserved on `ToolState.command`.
 pub fn compact_command(raw: &str) -> String {
-    // If the raw command is a JSON object (the shape KimiFlare's
+    // If the raw command is a JSON object (the shape a host's
     // `call.function.arguments` arrives in), summarise it as
     // `k=v, k=v` instead of dumping braces and quoted keys. Strings get
     // their quotes stripped; nested values fall back to JSON so the
@@ -2085,6 +2114,24 @@ mod tests {
             event_type: et,
             payload,
         }
+    }
+
+    #[test]
+    fn app_title_is_empty_by_default_and_host_supplied() {
+        let mut m = RenderModel::new();
+        // The renderer never brands itself — empty until a host supplies one.
+        assert_eq!(m.app_title(), "");
+        // Binary seeds it from --app-title / cwd.
+        m.set_app_title("myproject");
+        assert_eq!(m.app_title(), "myproject");
+        // SessionStarted overrides at runtime.
+        m.apply(&ev(0, EventType::SessionStarted, json!({"app_title":"acme-cli"})));
+        assert_eq!(m.app_title(), "acme-cli");
+        // Blank/whitespace titles are ignored, keeping the prior brand.
+        m.apply(&ev(1, EventType::SessionStarted, json!({"app_title":"   "})));
+        assert_eq!(m.app_title(), "acme-cli");
+        m.set_app_title("  ");
+        assert_eq!(m.app_title(), "acme-cli");
     }
 
     #[test]

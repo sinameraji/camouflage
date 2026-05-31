@@ -7,7 +7,7 @@
 //! Usage:
 //!     cargo run -p camouflage-headless --bin camouflage-validate -- [path]
 //!     cat events.ndjson | camouflage-validate
-//!     camouflage-validate fixtures/kimiflare-mock.ndjson
+//!     camouflage-validate fixtures/host-mock.ndjson
 
 use camouflage_headless::validate::{validate_stream, ValidationReport};
 use std::io::Read;

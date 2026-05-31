@@ -4,6 +4,10 @@ import type { Event } from "./types.js";
 export interface MountOptions {
   /** Executable name or path. Defaults to "camouflage-tui" (PATH lookup). */
   bin?: string;
+  /** Brand shown in the renderer header. When omitted, auto-detected from
+   *  the host's package.json `name` (falling back to the folder name). The
+   *  renderer never brands itself as "Camouflage". */
+  appTitle?: string;
   /** Extra args to pass to the renderer. `--stdin-events --emit-responses`
    *  are always appended by the binding. */
   args?: string[];
@@ -19,8 +23,8 @@ export interface MountOptions {
   /** When true, the renderer's stdout and stderr go directly to the user's
    *  terminal (TUI rendering is visible to the user), and outbound
    *  NDJSON arrives on fd 3 via the new --responses-fd path. Use this when
-   *  building a "host CLI that internally drives Camouflage" — e.g.
-   *  KimiFlare's eventual Ink replacement. Default false: backward-
+   *  building a "host CLI that internally drives Camouflage" — e.g. a
+   *  host replacing its existing UI layer. Default false: backward-
    *  compatible programmatic mode where both directions ride on the
    *  pipes the binding manages. */
   renderToTerminal?: boolean;

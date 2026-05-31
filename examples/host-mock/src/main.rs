@@ -1,4 +1,4 @@
-//! KimiFlare-style event generator.
+//! Mock host event generator.
 //!
 //! Emits NDJSON that exercises the v0.1.5 surface area in roughly the order a
 //! real coding-agent harness would:
@@ -12,7 +12,7 @@
 //!
 //! Use:
 //!
-//!     cargo run --release -p kimiflare-mock | \
+//!     cargo run --release -p host-mock | \
 //!         cargo run --release -p camouflage-tui -- --stdin-events
 //!
 //! The mock pauses between events so a human can see the transitions; pass

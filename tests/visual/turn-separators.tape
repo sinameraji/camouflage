@@ -1,4 +1,4 @@
-# Exercises v0.5+ transcript labels ("You:" / "kimiflare:") and the
+# Exercises v0.5+ transcript labels ("You:" / "your-agent:") and the
 # pad/rule/pad turn separator inserted after each user and assistant row.
 
 Output out/turn-separators/session.gif

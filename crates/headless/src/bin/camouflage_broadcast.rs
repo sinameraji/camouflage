@@ -7,7 +7,7 @@
 //! transcript.
 //!
 //! Pipeline:
-//!     kimiflare --emit-events -p "..." | camouflage-broadcast --port 8080
+//!     your-agent --emit-events -p "..." | camouflage-broadcast --port 8080
 //!     # then in a browser / websocat:
 //!     websocat ws://localhost:8080
 //!

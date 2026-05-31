@@ -67,7 +67,7 @@ stdout is reserved for rendering):
   "event_type": "SessionStarted",
   "payload": {
     "user_label": "You",
-    "assistant_label": "kimiflare"
+    "assistant_label": "your-agent"
   }
 }
 ```
@@ -78,7 +78,7 @@ Optional payload fields (v0.5+):
 - `user_label` (string) — label rendered before each user turn in the
   transcript. Defaults to `"You"`. Trimmed; empty strings are ignored.
 - `assistant_label` (string) — label rendered before each assistant
-  turn (e.g. `"kimiflare"`, `"Claude"`). Defaults to `"Assistant"`.
+  turn (e.g. `"your-agent"`, `"Claude"`). Defaults to `"Assistant"`.
 
 Both labels can be re-set on any subsequent `SessionStarted` so an
 adapter can update branding mid-session without restarting the TUI.
@@ -381,7 +381,7 @@ data and the eventual handling of the response.
 }
 ```
 Renderer pops a modal SelectList overlay. User's pick (or cancel) comes
-back keyed by `id`. Used by KimiFlare's resume picker, session picker,
+back keyed by `id`. Used by a host's resume picker, session picker,
 theme picker, model picker.
 
 #### `ShowConfirm` (CC-2) + `ConfirmResponse` (outbound)
@@ -445,7 +445,7 @@ Display-only tabular data in a modal. `align` is one of `left` /
     "title": "Session details",
     "items": [
       { "label": "Started", "value": "2h ago" },
-      { "label": "Model", "value": "kimi-k2.6" }
+      { "label": "Model", "value": "your-model-v1" }
     ]
   }
 }
@@ -564,12 +564,12 @@ Display-only marker row. Useful for bookmarking phases of a session.
 
 ## Reference implementations
 
-- **`examples/kimiflare-mock`** — exercises every event type as a
+- **`examples/host-mock`** — exercises every event type as a
   synthetic event generator. Use this to verify a new consumer.
 - **`examples/fake-agent`** — minimal load generator for the bench
   binary.
-- **Real KimiFlare adapter** — lives off-tree in `~/kimi-code-clone-3`
-  on branch `camouflage-adapter` (see `PROGRESS.md`).
+- **Real host adapter** — lives off-tree in the host adapter repo
+  (see `PROGRESS.md`).
 
 ## Conformance test
 
