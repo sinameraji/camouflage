@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0-beta.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v1.1.1-beta.1...camouflage-tui-v2.0.0-beta.1) (2026-05-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* the Toast component has been removed from the SDK.
+
+### Features
+
+* remove Toast (CC-3) component from the SDK ([da50df1](https://github.com/sinameraji/camouflage/commit/da50df15d6bebdaf0ccfb394ccce7b9ac4133539))
+
 ## [1.1.1-beta.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v1.1.0-beta.1...camouflage-tui-v1.1.1-beta.1) (2026-05-31)
 
 
