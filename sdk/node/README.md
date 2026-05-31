@@ -81,7 +81,7 @@ Extends `EventEmitter`. Send events with `send()`; subscribe to outbound events 
 ### Convenience helpers
 
 ```js
-import { mount, selectList, confirm, toast, table, form, wizard } from "camouflage-tui";
+import { mount, selectList, confirm, table, form, wizard } from "camouflage-tui";
 
 const cam = await mount();
 
@@ -97,9 +97,6 @@ const choice = await selectList(cam, {
 
 // Show a yes/no confirmation
 const ok = await confirm(cam, { id: "deploy", prompt: "Deploy to production?" });
-
-// Show a brief notification
-toast(cam, "Build succeeded");
 
 // Show a multi-field form
 const creds = await form(cam, {

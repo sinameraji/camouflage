@@ -426,17 +426,6 @@ Two-button yes/no modal. `PermissionRequested` is structurally a
 specialised `ShowConfirm`; both ship as their own events because
 permissions have additional UX (free-text feedback, multi-action).
 
-#### `ShowToast` (CC-3)
-```json
-{
-  "event_type": "ShowToast",
-  "payload": { "text": "Saved", "kind": "success", "ttl_ms": 1500 }
-}
-```
-Brief non-modal notification. `kind` is one of `info` / `success` /
-`warn` / `error`. `ttl_ms` defaults to 3000. Toast auto-dismisses on TTL
-expiry; no response event.
-
 #### `ShowTable` (CC-6)
 ```json
 {

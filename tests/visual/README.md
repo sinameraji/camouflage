@@ -4,7 +4,7 @@ Scripts a real PTY against `camouflage-tui` via [vhs](https://github.com/charmbr
 
 ## Why
 
-Bugs like literal-`\e[31m`-text-instead-of-color, misaligned toast borders, or "Esc didn't actually clear the splash" only show up to a human eye. Text snapshots miss them. These tests close the loop: run a scenario, look at the PNG, judge it.
+Bugs like literal-`\e[31m`-text-instead-of-color, a mis-wrapped overlay border, or "Esc didn't actually clear the splash" only show up to a human eye. Text snapshots miss them. These tests close the loop: run a scenario, look at the PNG, judge it.
 
 ## Setup
 
@@ -16,7 +16,6 @@ brew install vhs   # also pulls ffmpeg + ttyd
 
 ```sh
 tests/visual/run.sh splash
-tests/visual/run.sh toasts
 tests/visual/run.sh esc-idle
 tests/visual/run.sh esc-stream
 tests/visual/run.sh host-flow

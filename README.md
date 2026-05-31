@@ -90,7 +90,6 @@ No need to build UI from scratch. Camouflage includes:
 | **Permission widget** | Inline approve/deny modal with feedback |
 | **SelectList** | Filterable dropdown picker |
 | **Confirm** | Yes/no dialog |
-| **Toast** | Brief notification (auto-dismisses) |
 | **Form** | Multi-field text/password input |
 | **Table** | Tabular data display |
 | **Wizard** | Multi-step flow composing select/confirm/form steps |
@@ -99,7 +98,7 @@ No need to build UI from scratch. Camouflage includes:
 Each component is triggered by sending an event and (for interactive ones) listening for the response:
 
 ```js
-import { selectList, confirm, form, toast } from "camouflage-tui";
+import { selectList, confirm, form } from "camouflage-tui";
 
 const model = await selectList(cam, {
   id: "model-picker",
@@ -114,8 +113,6 @@ const confirmed = await confirm(cam, {
   id: "deploy",
   prompt: "Deploy to production?",
 });
-
-toast(cam, "Deployed successfully");
 ```
 
 ## Event protocol
