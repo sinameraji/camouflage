@@ -13,6 +13,11 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      releases_created: ${{ steps.release.outputs.releases_created }}
+      # Manifest mode emits per-path outputs (path = sdk/node). Fall back to
+      # the top-level key just in case.
+      tag_name: ${{ steps.release.outputs['sdk/node--tag_name'] || steps.release.outputs.tag_name }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
@@ -97,3 +102,19 @@ jobs:
           else
             echo "No unreleased user-facing crate changes since ${last_tag}."
           fi
+
+  # Build + attach the platform binaries for the release release-please just
+  # cut. This runs via workflow_call (not the tag-push trigger in release.yml)
+  # because release-please pushes the tag with GITHUB_TOKEN, and GitHub does
+  # not trigger `push` workflows from GITHUB_TOKEN events. Chaining here — off
+  # the human merge that triggered this workflow — builds the binaries with no
+  # PAT required.
+  build-binaries:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.releases_created == 'true' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
+    secrets: inherit
