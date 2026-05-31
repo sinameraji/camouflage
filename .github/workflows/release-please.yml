@@ -30,9 +30,25 @@ jobs:
           registry-url: "https://registry.npmjs.org"
         if: ${{ steps.release.outputs.releases_created }}
 
+      # Publish to npm. The version is read from package.json (which
+      # release-please bumped in the released commit) rather than from the
+      # action's `version` output, which is empty in manifest mode — that
+      # emptiness is what previously mislabeled a beta as `latest`.
+      #
+      # The publish is idempotent: if the exact version is already on the
+      # registry we skip instead of failing. npm rejects re-publishing an
+      # existing version with a 403, which used to break this job whenever
+      # the workflow re-ran for an already-released version.
+      #
       # Pre-releases (e.g. 1.0.1-beta.1) publish under the "beta" tag;
       # stable releases publish under "latest".
       - run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          NAME="$(node -p "require('./package.json').name")"
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$NAME@$VERSION is already published — skipping."
+            exit 0
+          fi
           if [[ "$VERSION" == *-* ]]; then
             npm publish --provenance --access public --tag beta
           else
@@ -41,5 +57,4 @@ jobs:
         working-directory: sdk/node
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          VERSION: ${{ steps.release.outputs.version }}
         if: ${{ steps.release.outputs.releases_created }}
