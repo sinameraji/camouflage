@@ -912,6 +912,11 @@ pub fn render<B: Backend>(
             let cursor_y = input_chunk.y + 1 + cursor_line.saturating_sub(scroll_off);
             f.set_cursor(cursor_x, cursor_y);
         }
+        // Transient toasts float just above the status cluster, bottom-right,
+        // newest at the bottom. Non-modal: pickers and modals paint over them.
+        if !model.toasts().is_empty() {
+            draw_toasts(f, area, chunks[7].y, model, theme);
+        }
         if help_open {
             draw_help_overlay(f, area);
         }
@@ -1829,6 +1834,62 @@ fn draw_select_list_overlay(
             .border_style(Style::default().fg(rgb_to_color(theme.overlay_border))),
     );
     f.render_widget(widget, overlay);
+}
+
+/// Transient toast stack. One row per toast, newest at the bottom, stacked
+/// upward from just above the status line and right-aligned. Non-modal and
+/// display-only — the model expires them on a timer (`sweep_expired_toasts`).
+fn draw_toasts(
+    f: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    anchor_bottom_y: u16,
+    model: &RenderModel,
+    theme: &camouflage_renderer::theme::Theme,
+) {
+    use camouflage_renderer::model::ToastKind;
+    let toasts = model.toasts();
+    // Rows available between the top of the screen and the status line.
+    let max_rows = anchor_bottom_y.saturating_sub(area.y) as usize;
+    if toasts.is_empty() || area.width < 12 || max_rows == 0 {
+        return;
+    }
+    // Show the newest toasts that fit above the anchor.
+    let shown = toasts.len().min(max_rows);
+    let slice = &toasts[toasts.len() - shown..];
+    let prefix_w = 2; // "▍ "
+    let max_text = slice
+        .iter()
+        .map(|t| UnicodeWidthStr::width(t.text.as_str()))
+        .max()
+        .unwrap_or(0);
+    // Width: prefix + text + a trailing pad, capped to the screen width.
+    let want = (max_text + prefix_w + 1) as u16;
+    let w = want.min(area.width).max(12);
+    let h = shown as u16;
+    let x = area.x + area.width.saturating_sub(w);
+    let y = anchor_bottom_y.saturating_sub(h);
+    let rect = ratatui::layout::Rect { x, y, width: w, height: h };
+    f.render_widget(Clear, rect);
+    let lines: Vec<Line> = slice
+        .iter()
+        .map(|t| {
+            let color = match t.kind {
+                ToastKind::Info => rgb_to_color(theme.accent),
+                ToastKind::Success => rgb_to_color(theme.diff_add),
+                ToastKind::Warn => Color::Yellow,
+                ToastKind::Error => rgb_to_color(theme.error),
+            };
+            Line::from(vec![
+                Span::styled("▍ ", Style::default().fg(color)),
+                Span::styled(
+                    t.text.clone(),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
+            ])
+        })
+        .collect();
+    let widget = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(widget, rect);
 }
 
 fn draw_metrics_overlay(

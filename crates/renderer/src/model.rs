@@ -136,6 +136,10 @@ pub struct RenderModel {
     /// above the status line. Last-write-wins: a `TodoListUpdate` replaces
     /// the whole list, an empty list clears it.
     todos: Vec<TodoItem>,
+    /// v0.5+ — active transient toasts, populated by `ShowToast`. Each
+    /// carries its own expiry; `sweep_expired_toasts` evicts elapsed ones
+    /// every render tick. Never enters the transcript.
+    toasts: Vec<Toast>,
     /// v0.4.5+ — slash-commands the host advertises. The TUI shows a
     /// picker when the input buffer starts with `/`. Last-write-wins.
     slash_commands: Vec<SlashCmdEntry>,
@@ -464,6 +468,45 @@ impl TodoStatus {
     }
 }
 
+/// Default auto-dismiss for a toast when the host omits `ttl_ms`.
+pub const TOAST_DEFAULT_TTL_MS: i64 = 4_000;
+/// Ceiling on a toast's lifetime so a host can't pin a toast forever.
+pub const TOAST_MAX_TTL_MS: i64 = 15_000;
+/// Most toasts kept on screen at once. Older ones are evicted FIFO so a
+/// burst of feedback can't bury the input box.
+pub const TOAST_MAX_VISIBLE: usize = 3;
+
+/// A transient toast notification, populated by `ShowToast` events and
+/// rendered as a floating stack near the bottom of the screen. Unlike a
+/// `RuntimeError` row it never enters the transcript and auto-dismisses
+/// once `expires_at_ms` passes (swept each render tick).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Toast {
+    pub text: String,
+    pub kind: ToastKind,
+    pub expires_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToastKind {
+    Info,
+    Warn,
+    Error,
+    Success,
+}
+
+impl ToastKind {
+    fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "info" => Some(Self::Info),
+            "warn" => Some(Self::Warn),
+            "error" => Some(Self::Error),
+            "success" => Some(Self::Success),
+            _ => None,
+        }
+    }
+}
+
 impl RenderModel {
     pub fn new() -> Self {
         Self::with_cap(DEFAULT_ROW_CAP)
@@ -487,6 +530,7 @@ impl RenderModel {
             pending_permission: None,
             background_tasks: Vec::new(),
             todos: Vec::new(),
+            toasts: Vec::new(),
             slash_commands: Vec::new(),
             mention_candidates: Vec::new(),
             session_started_seen: false,
@@ -803,6 +847,21 @@ impl RenderModel {
             Some(fin) => (now_ms - fin) < TASK_CELEBRATION_MS,
             None => true,
         });
+    }
+
+    /// Active (non-expired) toasts, oldest first. The draw layer stacks
+    /// them above the status cluster.
+    pub fn toasts(&self) -> &[Toast] {
+        &self.toasts
+    }
+
+    /// Drop toasts whose `expires_at_ms` has passed. Cheap O(n); called
+    /// once per render tick alongside `sweep_finished_tasks`. Returns true
+    /// when at least one toast was evicted so the caller can mark dirty.
+    pub fn sweep_expired_toasts(&mut self, now_ms: i64) -> bool {
+        let before = self.toasts.len();
+        self.toasts.retain(|t| t.expires_at_ms > now_ms);
+        self.toasts.len() != before
     }
 
     /// Optimistic local cancel applied when the user hits Esc / Ctrl+C
@@ -1349,6 +1408,42 @@ impl RenderModel {
                     self.splash = Some(text);
                 }
                 self.dirty = true;
+            }
+            EventType::ShowToast => {
+                let text = ev
+                    .payload
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                // An empty toast is a no-op rather than a blank floating box.
+                if !text.is_empty() {
+                    let kind = ev
+                        .payload
+                        .get("kind")
+                        .and_then(|v| v.as_str())
+                        .and_then(ToastKind::from_str)
+                        .unwrap_or(ToastKind::Info);
+                    let ttl = ev
+                        .payload
+                        .get("ttl_ms")
+                        .and_then(|v| v.as_i64())
+                        .filter(|&t| t > 0)
+                        .unwrap_or(TOAST_DEFAULT_TTL_MS)
+                        .min(TOAST_MAX_TTL_MS);
+                    self.toasts.push(Toast {
+                        text,
+                        kind,
+                        expires_at_ms: ev.timestamp_ms + ttl,
+                    });
+                    // Keep only the newest TOAST_MAX_VISIBLE so a burst of
+                    // feedback can't bury the input box.
+                    let overflow = self.toasts.len().saturating_sub(TOAST_MAX_VISIBLE);
+                    if overflow > 0 {
+                        self.toasts.drain(0..overflow);
+                    }
+                    self.dirty = true;
+                }
             }
             EventType::TranscriptCleared => {
                 // Wipe live rows + history. Keep status segments, registered
@@ -2117,6 +2212,64 @@ mod tests {
         // A full update with an empty list clears the panel.
         m.apply(&ev(2, EventType::TodoListUpdate, json!({"todos":[]})));
         assert!(m.todos().is_empty());
+    }
+
+    fn toast_ev(seq: i64, timestamp_ms: i64, payload: serde_json::Value) -> Event {
+        Event {
+            id: Uuid::new_v4(),
+            session_id: Uuid::nil(),
+            seq,
+            timestamp_ms,
+            schema_version: SCHEMA_VERSION,
+            event_type: EventType::ShowToast,
+            payload,
+        }
+    }
+
+    #[test]
+    fn show_toast_applies_kind_ttl_and_expires() {
+        let mut m = RenderModel::new();
+        assert!(m.toasts().is_empty());
+        // text + explicit kind + ttl → one toast expiring at ts + ttl.
+        m.apply(&toast_ev(0, 1_000, json!({"text":"mode: plan","kind":"warn","ttl_ms":3000})));
+        assert_eq!(m.toasts().len(), 1);
+        assert_eq!(m.toasts()[0].text, "mode: plan");
+        assert_eq!(m.toasts()[0].kind, ToastKind::Warn);
+        assert_eq!(m.toasts()[0].expires_at_ms, 4_000);
+        // Sweep before expiry is a no-op; after expiry it evicts.
+        assert!(!m.sweep_expired_toasts(3_999));
+        assert_eq!(m.toasts().len(), 1);
+        assert!(m.sweep_expired_toasts(4_001));
+        assert!(m.toasts().is_empty());
+    }
+
+    #[test]
+    fn show_toast_defaults_clamps_and_ignores_empty() {
+        let mut m = RenderModel::new();
+        // Empty text is a no-op (no blank floating box).
+        m.apply(&toast_ev(0, 0, json!({"text":""})));
+        assert!(m.toasts().is_empty());
+        // Missing kind/ttl → Info + default ttl.
+        m.apply(&toast_ev(1, 100, json!({"text":"saved"})));
+        assert_eq!(m.toasts()[0].kind, ToastKind::Info);
+        assert_eq!(m.toasts()[0].expires_at_ms, 100 + TOAST_DEFAULT_TTL_MS);
+        // An over-long ttl is clamped to the ceiling.
+        m.apply(&toast_ev(2, 0, json!({"text":"sticky","ttl_ms": 9_000_000})));
+        assert_eq!(m.toasts().last().unwrap().expires_at_ms, TOAST_MAX_TTL_MS);
+    }
+
+    #[test]
+    fn show_toast_keeps_only_newest_when_flooded() {
+        let mut m = RenderModel::new();
+        for i in 0..(TOAST_MAX_VISIBLE + 2) {
+            m.apply(&toast_ev(i as i64, 0, json!({"text": format!("t{i}")})));
+        }
+        assert_eq!(m.toasts().len(), TOAST_MAX_VISIBLE);
+        // Oldest were dropped; the newest survives at the back.
+        assert_eq!(
+            m.toasts().last().unwrap().text,
+            format!("t{}", TOAST_MAX_VISIBLE + 1)
+        );
     }
 
     #[test]

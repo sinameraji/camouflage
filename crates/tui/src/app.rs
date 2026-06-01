@@ -1815,6 +1815,11 @@ pub async fn run(cfg: Config) -> Result<()> {
                 if model.background_tasks().len() != before {
                     model.mark_dirty();
                 }
+                // Expire transient toasts on the same tick so they vanish on
+                // time even when nothing else is happening on screen.
+                if model.sweep_expired_toasts(now_ms()) {
+                    model.mark_dirty();
+                }
                 // Refresh inspector cache if the cursor moved or the row at
                 // the cursor has changed seq (e.g. due to new events).
                 if inspector_open {
