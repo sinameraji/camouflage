@@ -1,6 +1,6 @@
 {
   "name": "camouflage-tui",
-  "version": "2.0.0-beta.1",
+  "version": "2.1.0-beta.1",
   "description": "High-performance terminal renderer for AI agent applications. A React Ink alternative built for streaming, persistence, and replay.",
   "license": "Apache-2.0",
   "type": "module",
