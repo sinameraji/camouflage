@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.0-beta.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.0.0-beta.1...camouflage-tui-v2.1.0-beta.1) (2026-06-03)
+
+
+### Features
+
+* **tui:** rich scrollable task list with progress visualization ([#23](https://github.com/sinameraji/camouflage/issues/23)) ([cd7717f](https://github.com/sinameraji/camouflage/commit/cd7717f41763345a0f444275b17961e3fdb353a9))
+* **tui:** rich scrollable task list with progress visualization ([#23](https://github.com/sinameraji/camouflage/issues/23)) ([7f7e1da](https://github.com/sinameraji/camouflage/commit/7f7e1da7f6685879dfd375094703de24938c0528))
+
 ## [2.0.0-beta.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v1.1.1-beta.1...camouflage-tui-v2.0.0-beta.1) (2026-05-31)
 
 
