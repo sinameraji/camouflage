@@ -145,6 +145,13 @@ pub enum EventType {
     /// drops it so it doesn't eat transcript real-estate forever.
     /// Payload: `{ "text": "...multi-line ANSI string..." }`.
     Splash,
+    /// v0.5+ — Host → renderer: show a transient toast notification near the
+    /// bottom of the screen. Unlike `RuntimeError` (a permanent transcript
+    /// row) a toast auto-dismisses after `ttl_ms` and never consumes
+    /// transcript history — the right surface for ephemeral feedback like
+    /// "mode: plan", "saved", "interrupted". Payload:
+    /// `{ "text": String, "kind"?: "info"|"warn"|"error"|"success", "ttl_ms"?: u64 }`.
+    ShowToast,
 }
 
 impl EventType {
@@ -190,6 +197,7 @@ impl EventType {
             EventType::CancelRequested => "CancelRequested",
             EventType::TranscriptCleared => "TranscriptCleared",
             EventType::Splash => "Splash",
+            EventType::ShowToast => "ShowToast",
         }
     }
 
@@ -239,6 +247,7 @@ impl EventType {
             "CancelRequested" => Self::CancelRequested,
             "TranscriptCleared" => Self::TranscriptCleared,
             "Splash" => Self::Splash,
+            "ShowToast" => Self::ShowToast,
             _ => return None,
         })
     }
@@ -734,6 +743,33 @@ pub mod payloads {
         Next,
         Prev,
     }
+
+    /// v0.5+ — severity/visual treatment for a `ShowToast`. Distinct from
+    /// `Severity` (used by `RuntimeError`) because toasts add a `Success`
+    /// affordance and omit `Fatal`.
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "snake_case")]
+    pub enum ToastKind {
+        Info,
+        Warn,
+        Error,
+        Success,
+    }
+
+    /// v0.5+ — host asks the renderer to show a transient toast. The toast
+    /// auto-dismisses after `ttl_ms` (renderer applies a default when
+    /// omitted) and never enters the transcript.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct ShowToast {
+        pub text: String,
+        /// Visual treatment. Defaults to `Info` when omitted.
+        #[serde(default)]
+        pub kind: Option<ToastKind>,
+        /// Auto-dismiss delay in milliseconds. Renderer applies a default
+        /// (and clamps to a sane ceiling) when omitted.
+        #[serde(default)]
+        pub ttl_ms: Option<u64>,
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -800,8 +836,11 @@ mod tests {
             EventType::WizardCancelled,
             EventType::ModeChangeRequested,
             EventType::CancelRequested,
+            EventType::TranscriptCleared,
+            EventType::Splash,
+            EventType::ShowToast,
         ];
-        assert_eq!(types.len(), 38);
+        assert_eq!(types.len(), 41);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();
@@ -878,6 +917,39 @@ mod tests {
         assert!(p.kind.is_none());
         assert!(p.severity.is_none());
         assert!(p.cta.is_none());
+    }
+
+    #[test]
+    fn show_toast_payload_roundtrip() {
+        // Full payload round-trips, and the kind enum uses snake_case wire
+        // strings the host (kimiflare) already emits.
+        let p = payloads::ShowToast {
+            text: "mode: plan".into(),
+            kind: Some(payloads::ToastKind::Warn),
+            ttl_ms: Some(3500),
+        };
+        let s = serde_json::to_string(&p).unwrap();
+        assert!(s.contains("\"kind\":\"warn\""), "got {s}");
+        let back: payloads::ShowToast = serde_json::from_str(&s).unwrap();
+        assert_eq!(p, back);
+
+        // Minimal payload (text only) — kind/ttl_ms optional for hosts that
+        // don't care about styling or timing.
+        let raw = r#"{"text":"saved"}"#;
+        let m: payloads::ShowToast = serde_json::from_str(raw).unwrap();
+        assert_eq!(m.text, "saved");
+        assert!(m.kind.is_none());
+        assert!(m.ttl_ms.is_none());
+
+        for (kind, wire) in [
+            (payloads::ToastKind::Info, "info"),
+            (payloads::ToastKind::Warn, "warn"),
+            (payloads::ToastKind::Error, "error"),
+            (payloads::ToastKind::Success, "success"),
+        ] {
+            let s = serde_json::to_string(&kind).unwrap();
+            assert_eq!(s, format!("\"{wire}\""));
+        }
     }
 
     #[test]
