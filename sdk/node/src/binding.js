@@ -465,6 +465,17 @@ export function wizard(cam, spec) {
   });
 }
 
+/**
+ * Convenience helper: set the agent's todo/plan checklist. Replaces the
+ * entire list (last-write-wins); pass an empty array to clear the panel.
+ *
+ * @param {CamouflageHandle} cam
+ * @param {{id: string, title: string, status: "pending"|"in_progress"|"completed", started_at_ms?: number, token_delta?: number, progress?: number}[]} todos
+ */
+export function tasksSet(cam, todos) {
+  cam.send("TodoListUpdate", { todos });
+}
+
 function spawnError(err, bin) {
   if (err && err.code === "ENOENT") {
     return new Error(

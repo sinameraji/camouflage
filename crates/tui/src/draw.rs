@@ -8,7 +8,7 @@ use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use ratatui::Terminal;
 use unicode_width::UnicodeWidthStr;
 
@@ -178,6 +178,8 @@ pub fn render<B: Backend>(
     slash_picker_index: usize,
     mention_picker_index: usize,
     slash_sub_state: Option<&(String, Vec<String>, bool, usize)>,
+    todo_scroll_offset: &mut usize,
+    now_ms: i64,
 ) -> Result<()> {
     terminal.draw(|f| {
         let raw_area = f.area();
@@ -210,12 +212,12 @@ pub fn render<B: Backend>(
         let task_line: u16 = if has_tasks { 1 } else { 0 };
         // Agent todo/plan checklist, pinned above the task ribbon. One row
         // per item, capped so a long plan can't swallow the transcript:
-        // at most a third of the screen, hard-capped at 8 rows. The cap is
+        // at most a third of the screen, hard-capped at 10 rows. The cap is
         // only consulted when there's at least one todo.
         let todo_count = model.todos().len();
-        let todo_cap = ((area.height / 3) as usize).clamp(1, 8);
+        let todo_cap = ((area.height / 3) as usize).clamp(1, 10);
         let todo_visible = todo_count.min(todo_cap);
-        let todo_line: u16 = todo_visible as u16;
+        let todo_line: u16 = if todo_count > 0 { todo_visible as u16 } else { 0 };
         let replay_line: u16 = if replay.is_some() { 1 } else { 0 };
         let status_text_width = status_total_width(model, viewport, status);
         let inner_w = area.width.saturating_sub(2).max(1) as usize; // box content width (subtract borders)
@@ -648,42 +650,91 @@ pub fn render<B: Backend>(
         }
         // Agent todo/plan checklist — one item per line (vertical), distinct
         // from the horizontal background-task ribbon below it.
-        if todo_visible > 0 {
+        // v0.5.1+: scrollable List widget with auto-scroll to first active task,
+        // elapsed-time ticker, progress bar/percentage, and token delta.
+        if todo_count > 0 {
             use camouflage_renderer::model::TodoStatus;
             let dim = Style::default().fg(Color::DarkGray);
-            let mut todo_lines: Vec<Line> = Vec::with_capacity(todo_visible);
-            for todo in model.todos().iter().take(todo_visible) {
+            let accent = rgb_to_color(theme.accent);
+            let diff_add = rgb_to_color(theme.diff_add);
+
+            // Build ListItems for ALL todos (scrolling happens via offset).
+            let mut list_items: Vec<ListItem> = Vec::with_capacity(todo_count);
+            for todo in model.todos() {
+                let mut spans: Vec<Span> = Vec::new();
                 let (glyph, glyph_style, title_style) = match todo.status {
                     TodoStatus::Completed => (
-                        "☑",
-                        Style::default().fg(rgb_to_color(theme.diff_add)),
+                        "☑ ",
+                        Style::default().fg(diff_add),
                         dim.add_modifier(Modifier::CROSSED_OUT),
                     ),
                     TodoStatus::InProgress => (
-                        "◐",
-                        Style::default().fg(rgb_to_color(theme.accent)).add_modifier(Modifier::BOLD),
-                        Style::default().fg(Color::Gray),
+                        "◐ ",
+                        Style::default().fg(accent).add_modifier(Modifier::BOLD),
+                        Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD),
                     ),
                     TodoStatus::Pending => (
-                        "☐",
+                        "☐ ",
                         Style::default().fg(Color::DarkGray),
                         Style::default().fg(Color::Gray),
                     ),
                 };
-                todo_lines.push(Line::from(vec![
-                    Span::styled(glyph, glyph_style),
-                    Span::raw(" "),
-                    Span::styled(todo.title.clone(), title_style),
-                ]));
-            }
-            // Surface truncation rather than silently dropping items.
-            if todo_count > todo_visible {
-                let hidden = todo_count - todo_visible;
-                if let Some(last) = todo_lines.last_mut() {
-                    *last = Line::from(Span::styled(format!("… +{} more", hidden), dim));
+                spans.push(Span::styled(glyph, glyph_style));
+                spans.push(Span::styled(todo.title.clone(), title_style));
+
+                // In-progress extras: elapsed time + optional progress.
+                if let TodoStatus::InProgress = todo.status {
+                    if let Some(elapsed) = todo.elapsed_ms(now_ms) {
+                        spans.push(Span::styled(
+                            format!("  {}", format_elapsed_ms(elapsed)),
+                            Style::default().fg(Color::DarkGray),
+                        ));
+                    }
+                    if let Some(p) = todo.progress {
+                        let pct = (p.clamp(0.0, 1.0) * 100.0) as u32;
+                        let bar_w = 8usize;
+                        let filled = ((p.clamp(0.0, 1.0) * bar_w as f32).round() as usize).min(bar_w);
+                        let bar = format!("  [{}{}] {}%", "█".repeat(filled), "░".repeat(bar_w - filled), pct);
+                        spans.push(Span::styled(bar, Style::default().fg(accent)));
+                    }
                 }
+
+                // Completed extras: token delta.
+                if let TodoStatus::Completed = todo.status {
+                    if let Some(td) = todo.token_delta {
+                        let tok_str = if td >= 1000 {
+                            format!("  · {:.1}k tok", td as f64 / 1000.0)
+                        } else {
+                            format!("  · {} tok", td)
+                        };
+                        spans.push(Span::styled(tok_str, Style::default().fg(Color::DarkGray)));
+                    }
+                }
+
+                list_items.push(ListItem::new(Line::from(spans)));
             }
-            f.render_widget(Paragraph::new(todo_lines), chunks[4]);
+
+            // Auto-scroll: if any task is InProgress, ensure the first active
+            // task is visible. Otherwise keep the current offset.
+            let first_active = model.todos().iter().position(|t| matches!(t.status, TodoStatus::InProgress));
+            if let Some(idx) = first_active {
+                // Keep the first active task in view; don't scroll past end.
+                let max_offset = todo_count.saturating_sub(todo_visible);
+                *todo_scroll_offset = idx.min(max_offset);
+            }
+            let max_offset = todo_count.saturating_sub(todo_visible);
+            *todo_scroll_offset = (*todo_scroll_offset).min(max_offset);
+
+            // Slice the visible window so we control scrolling explicitly.
+            let visible_items: Vec<ListItem> = list_items
+                .into_iter()
+                .skip(*todo_scroll_offset)
+                .take(todo_visible)
+                .collect();
+            let list = List::new(visible_items);
+            f.render_widget(list, chunks[4]);
+        } else {
+            *todo_scroll_offset = 0;
         }
         // Task ribbon (only if there are any active tasks).
         if has_tasks {
@@ -2485,9 +2536,10 @@ mod render_tests {
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         let mut vp = ViewportState::new(Uuid::nil(), 24, 80);
         let theme = Theme::builtin("default-dark").unwrap();
+        let mut todo_scroll = 0;
         render(
             &mut terminal, model, &mut vp, "", 0, "", 0, None, None, None, false, None,
-            None, &theme, false, "", 0, 0, None,
+            None, &theme, false, "", 0, 0, None, &mut todo_scroll, 0,
         )
         .unwrap();
         row_strings(terminal.backend().buffer())
@@ -2524,5 +2576,190 @@ mod render_tests {
         let m = RenderModel::new();
         let rows = render_to_rows(&m);
         assert!(!rows.iter().any(|r| r.contains('◐') || r.contains('☑')));
+    }
+
+    /// v0.5.1+: auto-scroll snaps to the first in-progress task so the user
+    /// always sees what's currently happening.
+    #[test]
+    fn task_list_scrolls_to_active_task() {
+        let mut m = RenderModel::new();
+        let todos: Vec<serde_json::Value> = (0..12)
+            .map(|i| {
+                serde_json::json!({
+                    "id": format!("{}", i),
+                    "title": format!("Task {}", i),
+                    "status": if i == 8 { "in_progress" } else { "pending" }
+                })
+            })
+            .collect();
+        m.apply(&ev(0, EventType::TodoListUpdate, serde_json::json!({"todos": todos})));
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut vp = ViewportState::new(Uuid::nil(), 24, 80);
+        let theme = Theme::builtin("default-dark").unwrap();
+        let mut todo_scroll = 0;
+        render(
+            &mut terminal, &m, &mut vp, "", 0, "", 0, None, None, None, false, None,
+            None, &theme, false, "", 0, 0, None, &mut todo_scroll, 0,
+        )
+        .unwrap();
+        let rows = row_strings(terminal.backend().buffer());
+        // The first active task (Task 8) should be visible after auto-scroll.
+        assert!(rows.iter().any(|r| r.contains("Task 8")), "active task visible after auto-scroll");
+        // And the scroll offset should have moved to bring it into view.
+        assert!(todo_scroll > 0, "scroll offset advanced to active task");
+    }
+
+    /// v0.5.1+: in-progress tasks show an elapsed-time ticker.
+    #[test]
+    fn task_list_shows_elapsed_time() {
+        let mut m = RenderModel::new();
+        m.apply(&ev(
+            0,
+            EventType::TodoListUpdate,
+            serde_json::json!({"todos":[
+                {"id":"1","title":"Working","status":"in_progress","started_at_ms":0}
+            ]}),
+        ));
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut vp = ViewportState::new(Uuid::nil(), 24, 80);
+        let theme = Theme::builtin("default-dark").unwrap();
+        let mut todo_scroll = 0;
+        let now_ms = 65_000; // 1m 5s elapsed
+        render(
+            &mut terminal, &m, &mut vp, "", 0, "", 0, None, None, None, false, None,
+            None, &theme, false, "", 0, 0, None, &mut todo_scroll, now_ms,
+        )
+        .unwrap();
+        let rows = row_strings(terminal.backend().buffer());
+        let task_row = rows.iter().find(|r| r.contains("Working")).expect("task visible");
+        assert!(task_row.contains("1m 5s") || task_row.contains("65s"), "elapsed time shown: {}", task_row);
+    }
+
+    /// v0.5.1+: completed tasks show token delta.
+    #[test]
+    fn task_list_shows_token_delta() {
+        let mut m = RenderModel::new();
+        m.apply(&ev(
+            0,
+            EventType::TodoListUpdate,
+            serde_json::json!({"todos":[
+                {"id":"1","title":"Done","status":"completed","token_delta":1250}
+            ]}),
+        ));
+        let rows = render_to_rows(&m);
+        let task_row = rows.iter().find(|r| r.contains("Done")).expect("task visible");
+        assert!(task_row.contains("1.2k tok"), "token delta shown: {}", task_row);
+    }
+
+    /// v0.5.1+: a long todo list at a small terminal height must not break the
+    /// overall layout — the panel caps its height and scrolls internally.
+    #[test]
+    fn task_list_overflow_no_layout_break() {
+        let mut m = RenderModel::new();
+        let todos: Vec<serde_json::Value> = (0..15)
+            .map(|i| serde_json::json!({"id": format!("{}", i), "title": format!("Task {}", i), "status": "pending"}))
+            .collect();
+        m.apply(&ev(0, EventType::TodoListUpdate, serde_json::json!({"todos": todos})));
+        // Small terminal: 12 rows total.
+        let backend = TestBackend::new(80, 12);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut vp = ViewportState::new(Uuid::nil(), 12, 80);
+        let theme = Theme::builtin("default-dark").unwrap();
+        let mut todo_scroll = 0;
+        render(
+            &mut terminal, &m, &mut vp, "", 0, "", 0, None, None, None, false, None,
+            None, &theme, false, "", 0, 0, None, &mut todo_scroll, 0,
+        )
+        .unwrap();
+        let rows = row_strings(terminal.backend().buffer());
+        // Header should still be on row 0, input box should still render at bottom.
+        assert!(rows[0].contains("session="), "header still on top row");
+        // At least one todo should be visible, but not all 15.
+        let visible_todos = rows.iter().filter(|r| r.contains("Task ")).count();
+        assert!(visible_todos > 0 && visible_todos < 15, "some but not all todos visible: {}", visible_todos);
+    }
+
+    // Scratch visual harness: render a realistic coding-assistant turn at a
+    // real terminal size and dump the screen as text. Run with:
+    //   cargo test -p camouflage-tui visual_scene -- --nocapture --ignored
+    #[test]
+    #[ignore]
+    fn visual_scene() {
+        let (w, h): (u16, u16) = (110, 34);
+        let mut m = RenderModel::new();
+        let mut seq = 0i64;
+        let mut next = |et, p| {
+            let e = ev(seq, et, p);
+            seq += 1;
+            e
+        };
+        m.apply(&next(
+            EventType::SessionStarted,
+            serde_json::json!({"app_title":"kimiflare","assistant_label":"kimi"}),
+        ));
+        m.apply(&next(
+            EventType::UserMessageCreated,
+            serde_json::json!({"text":"Add a --json flag to the export command and update the help text."}),
+        ));
+        m.apply(&next(EventType::AssistantStreamStarted, serde_json::json!({"stream_id":"s1"})));
+        for tok in [
+            "I'll add the flag in two steps:\n\n",
+            "1. Register `--json` on the `export` subcommand.\n",
+            "2. Branch the formatter so it emits NDJSON when the flag is set.\n\n",
+            "Let me start by reading the command definition.",
+        ] {
+            m.apply(&next(
+                EventType::AssistantTokenDelta,
+                serde_json::json!({"stream_id":"s1","token":tok}),
+            ));
+        }
+        m.apply(&next(EventType::AssistantMessageCompleted, serde_json::json!({"stream_id":"s1"})));
+        m.apply(&next(
+            EventType::ToolExecutionStarted,
+            serde_json::json!({"tool_id":"t1","tool":"read","command":"{\"path\":\"src/cli/export.rs\"}"}),
+        ));
+        m.apply(&next(
+            EventType::ToolExecutionFinished,
+            serde_json::json!({"tool_id":"t1","exit_code":0,"status":"done"}),
+        ));
+        m.apply(&next(
+            EventType::TodoListUpdate,
+            serde_json::json!({"todos":[
+                {"id":"1","title":"Read export.rs","status":"completed"},
+                {"id":"2","title":"Register --json flag","status":"in_progress"},
+                {"id":"3","title":"Emit NDJSON when set","status":"pending"},
+                {"id":"4","title":"Update help text","status":"pending"}
+            ]}),
+        ));
+        m.apply(&next(
+            EventType::StatusUpdate,
+            serde_json::json!({"segments":{
+                "mode":"auto","phase":"thinking","elapsed":"49s",
+                "tokens":"in 19k","cost":"$0.04","branch":"main"
+            }}),
+        ));
+        m.apply(&next(
+            EventType::ShowToast,
+            serde_json::json!({"text":"mode: auto","kind":"info","ttl_ms":4000}),
+        ));
+
+        let backend = TestBackend::new(w, h);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut vp = ViewportState::new(Uuid::nil(), h, w);
+        let theme = Theme::builtin("default-dark").unwrap();
+        let mut todo_scroll = 0;
+        render(
+            &mut terminal, &m, &mut vp, "", 0, "", 1, None, None, None, false, None,
+            None, &theme, false, "", 0, 0, None, &mut todo_scroll, 0,
+        )
+        .unwrap();
+        let rows = row_strings(terminal.backend().buffer());
+        println!("\n┌{}┐", "─".repeat(w as usize));
+        for r in &rows {
+            println!("│{:<width$}│", r.trim_end(), width = w as usize);
+        }
+        println!("└{}┘", "─".repeat(w as usize));
     }
 }

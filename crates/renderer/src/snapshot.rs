@@ -62,11 +62,17 @@ pub enum SnapshotTodoStatus {
 }
 
 /// One item in the agent's todo/plan checklist (see `TodoListUpdate`).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SnapshotTodo {
     pub id: String,
     pub title: String,
     pub status: SnapshotTodoStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_delta: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

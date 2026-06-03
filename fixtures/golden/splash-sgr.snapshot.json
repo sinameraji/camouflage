@@ -1,0 +1,15 @@
+{
+  "total_rows": 1,
+  "rows": [
+    {
+      "seq": 0,
+      "kind": "system",
+      "text": "session started"
+    }
+  ],
+  "status": {
+    "mode": "edit",
+    "phase": "idle"
+  },
+  "tasks": []
+}

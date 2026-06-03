@@ -30,6 +30,7 @@ export type EventType =
   | "RuntimeError"
   | "StatusUpdate"
   | "BackgroundTaskUpdate"
+  | "TodoListUpdate"
   | "ViewportMarker"
   | "UserInputSubmitted"
   | "PermissionResponse"
@@ -114,6 +115,20 @@ export type BackgroundTaskUpdate = {
   state: BackgroundTaskState;
   progress?: number;
 };
+
+export type TodoStatus = "pending" | "in_progress" | "completed";
+export type TodoItem = {
+  id: string;
+  title: string;
+  status: TodoStatus;
+  /** Epoch ms when the task began. Used for elapsed-time ticker. */
+  started_at_ms?: number;
+  /** Tokens consumed on completion. Shown as `· 1.2k tok`. */
+  token_delta?: number;
+  /** 0.0..=1.0 for in-progress tasks. Shown as progress bar/percentage. */
+  progress?: number;
+};
+export type TodoListUpdate = { todos: TodoItem[] };
 
 export type SessionCompacted = { old_seq?: number; new_seq?: number };
 export type ViewportMarker = { label?: string };
@@ -269,6 +284,7 @@ export type Event = EnvelopeMeta &
     | { event_type: "RuntimeError"; payload: RuntimeError }
     | { event_type: "StatusUpdate"; payload: StatusUpdate }
     | { event_type: "BackgroundTaskUpdate"; payload: BackgroundTaskUpdate }
+    | { event_type: "TodoListUpdate"; payload: TodoListUpdate }
     | { event_type: "ViewportMarker"; payload: ViewportMarker }
     | { event_type: "UserInputSubmitted"; payload: UserInputSubmitted }
     | { event_type: "PermissionResponse"; payload: PermissionResponse }

@@ -184,6 +184,9 @@ pub async fn run(cfg: Config) -> Result<()> {
     let mut slash_sub_state: Option<(String, Vec<String>, bool, usize)> = None;
     // v0.4.5: @-mention picker selection cursor.
     let mut mention_picker_index: usize = 0;
+    // v0.5.1+: scroll offset for the todo checklist panel. Auto-updated by
+    // the draw layer so the first in-progress task is always visible.
+    let mut todo_scroll_offset: usize = 0;
     // v0.4.6: per-session input history. Each submitted user prompt is
     // pushed; Up/Down at the input prompt walks through them. `index` is
     // the cursor (None = "live" buffer, not browsing history).
@@ -1841,15 +1844,18 @@ pub async fn run(cfg: Config) -> Result<()> {
                     }
                 }
                 // A spinner is "alive" if any tool isn't finished OR the host's
-                // phase segment is in a spinnable state. When alive, redraw
-                // every tick so the glyph rotates even if the model is clean.
+                // phase segment is in a spinnable state OR any todo is in
+                // progress (so the elapsed-time ticker updates). When alive,
+                // redraw every tick so glyphs rotate and timers tick even if
+                // the model is clean.
                 let any_unfinished_tool = model.tools().values().any(|t| !t.finished);
                 let phase_spins = model
                     .status_segments()
                     .get("phase")
                     .map(|p| matches!(p.as_str(), "thinking" | "streaming" | "tool" | "running"))
                     .unwrap_or(false);
-                let spinner_alive = any_unfinished_tool || phase_spins;
+                let any_in_progress_todo = model.todos().iter().any(|t| matches!(t.status, camouflage_renderer::model::TodoStatus::InProgress));
+                let spinner_alive = any_unfinished_tool || phase_spins || any_in_progress_todo;
                 if model.dirty() || spinner_alive {
                     let insp = if inspector_open {
                         Some(draw::InspectorView {
@@ -1905,6 +1911,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                         playing: rs.playing,
                         speed_mult: rs.speed_mult,
                     });
+                    let now_ms = now_ms();
                     draw::render(
                         &mut terminal,
                         &model,
@@ -1925,6 +1932,8 @@ pub async fn run(cfg: Config) -> Result<()> {
                         slash_picker_index,
                         mention_picker_index,
                         slash_sub_state.as_ref(),
+                        &mut todo_scroll_offset,
+                        now_ms,
                     )?;
                     last_frame_time_us = draw_start.elapsed().as_micros();
                     model.mark_clean();
