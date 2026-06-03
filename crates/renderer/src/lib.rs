@@ -88,6 +88,9 @@ impl SnapshotRenderer for RenderModel {
                     TodoStatus::InProgress => SnapshotTodoStatus::InProgress,
                     TodoStatus::Completed => SnapshotTodoStatus::Completed,
                 },
+                started_at_ms: t.started_at_ms,
+                token_delta: t.token_delta,
+                progress: t.progress,
             })
             .collect();
         let pending_permission = self.pending_permission().map(|p| SnapshotPermission {

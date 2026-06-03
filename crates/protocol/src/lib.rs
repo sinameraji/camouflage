@@ -410,16 +410,25 @@ pub mod payloads {
     }
 
     /// One item in a `TodoListUpdate`.
-    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
     pub struct TodoItem {
         pub id: String,
         pub title: String,
         pub status: TodoStatus,
+        /// v0.5.1+ — when the task began (epoch ms). Used for elapsed-time ticker.
+        #[serde(default)]
+        pub started_at_ms: Option<i64>,
+        /// v0.5.1+ — tokens consumed on completion. Shown as `· 1.2k tok`.
+        #[serde(default)]
+        pub token_delta: Option<u32>,
+        /// v0.5.1+ — 0.0..=1.0 for in-progress tasks. Shown as progress bar/percentage.
+        #[serde(default)]
+        pub progress: Option<f32>,
     }
 
     /// v0.5+ — the agent's todo/plan checklist. The host sends the FULL list
     /// on every update (last-write-wins); an empty `todos` clears the panel.
-    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
     pub struct TodoListUpdate {
         pub todos: Vec<TodoItem>,
     }

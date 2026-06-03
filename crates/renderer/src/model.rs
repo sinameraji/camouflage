@@ -443,11 +443,27 @@ impl BackgroundTaskState {
 /// `TodoListUpdate` events. Unlike `BackgroundTask` (an async-job ribbon),
 /// this is a stable plan the user works through; it's rendered as a vertical
 /// checklist and persists until the host sends a new list.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TodoItem {
     pub id: String,
     pub title: String,
     pub status: TodoStatus,
+    /// v0.5.1+ — when the task began (epoch ms). Used for elapsed-time ticker.
+    pub started_at_ms: Option<i64>,
+    /// v0.5.1+ — tokens consumed on completion. Shown as `· 1.2k tok`.
+    pub token_delta: Option<u32>,
+    /// v0.5.1+ — 0.0..=1.0 for in-progress tasks. Shown as progress bar/percentage.
+    pub progress: Option<f32>,
+}
+
+impl TodoItem {
+    /// Elapsed ms for an active (in-progress) task, relative to `now_ms`.
+    pub fn elapsed_ms(&self, now_ms: i64) -> Option<i64> {
+        match self.status {
+            TodoStatus::InProgress => self.started_at_ms.map(|s| (now_ms - s).max(0)),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1575,10 +1591,24 @@ impl RenderModel {
                             .and_then(|x| x.as_str())
                             .and_then(TodoStatus::from_str)
                             .unwrap_or(TodoStatus::Pending);
+                        let started_at_ms = v
+                            .get("started_at_ms")
+                            .and_then(|x| x.as_i64());
+                        let token_delta = v
+                            .get("token_delta")
+                            .and_then(|x| x.as_u64())
+                            .map(|n| n as u32);
+                        let progress = v
+                            .get("progress")
+                            .and_then(|x| x.as_f64())
+                            .map(|f| f as f32);
                         self.todos.push(TodoItem {
                             id: v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
                             title: title.to_string(),
                             status,
+                            started_at_ms,
+                            token_delta,
+                            progress,
                         });
                     }
                 }

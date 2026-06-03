@@ -1,0 +1,35 @@
+{
+  "total_rows": 5,
+  "rows": [
+    {
+      "seq": 0,
+      "kind": "system",
+      "text": "session started"
+    },
+    {
+      "seq": 2,
+      "kind": "user",
+      "text": "can you summarize the file src/auth/login.ts?"
+    },
+    {
+      "seq": 3,
+      "kind": "assistant",
+      "text": "Sure — that file defines the login flow. It exports a single `login()` handler that validates credentials, issues a session token, and writes it to a secure cookie."
+    },
+    {
+      "seq": 9,
+      "kind": "user",
+      "text": "thanks, that helps"
+    },
+    {
+      "seq": 10,
+      "kind": "assistant",
+      "text": "You're welcome — let me know if you want to dig into the session-token rotation logic next."
+    }
+  ],
+  "status": {
+    "mode": "edit",
+    "phase": "idle"
+  },
+  "tasks": []
+}
