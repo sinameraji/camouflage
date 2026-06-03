@@ -56,6 +56,11 @@ pub enum Key {
     ScrollUp,
     /// Mouse wheel down (when SGR mouse capture is enabled).
     ScrollDown,
+    /// Shift+Enter — insert a newline without submitting the input.
+    /// Parsed from kitty/xterm modified-key sequences (ESC [13;2u or
+    /// ESC [27;2;13~). Terminals that don't emit a distinct sequence
+    /// will treat Shift+Enter as plain Enter.
+    ShiftEnter,
     /// Bracketed-paste payload — the literal text the user pasted,
     /// delivered as a single key so the input layer can insert it
     /// atomically (and embedded newlines / control chars don't trigger
@@ -240,12 +245,25 @@ impl EscParser {
                     let k = match b {
                         b'A' => Some(Key::Up),
                         b'B' => Some(Key::Down),
+                        // Kitty keyboard protocol: ESC [13;2u = Shift+Enter.
+                        b'u' if s == "13;2" => Some(Key::ShiftEnter),
                         b'C' => {
-                            // ESC [1;3C = Meta+Right (alt for Option+Right).
-                            if s == "1;3" { Some(Key::WordRight) } else { Some(Key::Right) }
+                            // ESC [1;3C = Meta+Right (Option+Right).
+                            // ESC [1;5C = Ctrl+Right.
+                            if s == "1;3" || s == "1;5" {
+                                Some(Key::WordRight)
+                            } else {
+                                Some(Key::Right)
+                            }
                         }
                         b'D' => {
-                            if s == "1;3" { Some(Key::WordLeft) } else { Some(Key::Left) }
+                            // ESC [1;3D = Meta+Left (Option+Left).
+                            // ESC [1;5D = Ctrl+Left.
+                            if s == "1;3" || s == "1;5" {
+                                Some(Key::WordLeft)
+                            } else {
+                                Some(Key::Left)
+                            }
                         }
                         b'H' => Some(Key::Home),
                         b'F' => Some(Key::End),
@@ -280,17 +298,22 @@ impl EscParser {
                             }
                         }
                         b'~' => {
-                            // Function keys with optional modifier suffix.
-                            // We ignore modifiers and just look at the base
-                            // number before the first ';' (e.g. "5;3" → 5).
-                            let base = s.split(';').next().unwrap_or("");
-                            match base {
-                                "1" | "7" => Some(Key::Home),
-                                "3" => Some(Key::Delete),
-                                "4" | "8" => Some(Key::End),
-                                "5" => Some(Key::PageUp),
-                                "6" => Some(Key::PageDown),
-                                _ => None,
+                            // xterm modifyOtherKeys: ESC [27;2;13~ = Shift+Enter.
+                            if s == "27;2;13" {
+                                Some(Key::ShiftEnter)
+                            } else {
+                                // Function keys with optional modifier suffix.
+                                // We ignore modifiers and just look at the base
+                                // number before the first ';' (e.g. "5;3" → 5).
+                                let base = s.split(';').next().unwrap_or("");
+                                match base {
+                                    "1" | "7" => Some(Key::Home),
+                                    "3" => Some(Key::Delete),
+                                    "4" | "8" => Some(Key::End),
+                                    "5" => Some(Key::PageUp),
+                                    "6" => Some(Key::PageDown),
+                                    _ => None,
+                                }
                             }
                         }
                         _ => None,
@@ -520,5 +543,29 @@ mod tests {
             [Key::Paste(s), Key::Enter] => assert_eq!(s, "x"),
             other => panic!("expected [Paste, Enter], got {:?}", other),
         }
+    }
+
+    #[test]
+    fn parse_shift_enter_kitty() {
+        let mut p = EscParser::new();
+        // Kitty keyboard protocol: ESC [13;2u
+        let keys = feed_all(&mut p, b"\x1b[13;2u");
+        assert!(matches!(keys.as_slice(), [Key::ShiftEnter]));
+    }
+
+    #[test]
+    fn parse_shift_enter_xterm_modifyotherkeys() {
+        let mut p = EscParser::new();
+        // xterm modifyOtherKeys: ESC [27;2;13~
+        let keys = feed_all(&mut p, b"\x1b[27;2;13~");
+        assert!(matches!(keys.as_slice(), [Key::ShiftEnter]));
+    }
+
+    #[test]
+    fn parse_ctrl_arrow_word_jump() {
+        let mut p = EscParser::new();
+        // ESC [1;5D = Ctrl+Left, ESC [1;5C = Ctrl+Right.
+        let keys = feed_all(&mut p, b"\x1b[1;5D\x1b[1;5C");
+        assert!(matches!(keys.as_slice(), [Key::WordLeft, Key::WordRight]));
     }
 }

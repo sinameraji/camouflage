@@ -192,6 +192,10 @@ pub async fn run(cfg: Config) -> Result<()> {
     // the cursor (None = "live" buffer, not browsing history).
     let mut input_history: Vec<String> = Vec::new();
     let mut input_history_index: Option<usize> = None;
+    // v0.5+: multi-line paste preview. When a paste contains newlines or
+    // exceeds 500 chars, we show a preview overlay and require confirmation
+    // before inserting it into the input buffer.
+    let mut paste_preview: Option<String> = None;
     // Timestamp of the most recent Ctrl+C. Used to implement the
     // "press Ctrl+C twice to exit" semantics: a lone Ctrl+C emits
     // CancelRequested (interrupt the agent) and arms this timestamp;
@@ -737,10 +741,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                     _ => {}
                 }
             }
-            if input_focused
-                && !input_history.is_empty()
-                && (input_buf.is_empty() || input_history_index.is_some())
-            {
+            if input_focused && !input_history.is_empty() {
                 match key {
                     crate::tty::Key::Up => {
                         let next = match input_history_index {
@@ -1124,6 +1125,30 @@ pub async fn run(cfg: Config) -> Result<()> {
             } else {
                 mention_picker_index = 0;
             }
+            // v0.5+: paste preview short-circuit. When a large or multi-line
+            // paste is pending confirmation, consume keys to accept/reject.
+            if let Some(ref text) = paste_preview {
+                match key {
+                    crate::tty::Key::Enter | crate::tty::Key::Char('y') => {
+                        for c in text.chars() {
+                            input::insert_at_cursor(&mut input_buf, &mut input_cursor, c);
+                        }
+                        paste_preview = None;
+                        model.mark_dirty();
+                        continue;
+                    }
+                    crate::tty::Key::Esc | crate::tty::Key::Char('n') => {
+                        paste_preview = None;
+                        model.mark_dirty();
+                        continue;
+                    }
+                    _ => {
+                        // Ignore all other keys while the preview is open.
+                        model.mark_dirty();
+                        continue;
+                    }
+                }
+            }
             // Priority order: search prompt → pending permission widget →
             // inspector cursor (if open) → replay controls (if --replay) →
             // normal handler.
@@ -1147,6 +1172,14 @@ pub async fn run(cfg: Config) -> Result<()> {
                 (replay_state.as_ref(), input::handle_key_replay(key.clone(), &input_buf))
             {
                 act
+            } else if matches!(key, crate::tty::Key::Paste(ref t) if t.contains('\n') || t.len() > 500)
+            {
+                // Multi-line or large paste: show preview instead of inserting.
+                if let crate::tty::Key::Paste(text) = key {
+                    paste_preview = Some(text);
+                    model.mark_dirty();
+                }
+                input::Action::None
             } else {
                 input::handle_key(key, &mut input_buf, &mut input_cursor)
             };
@@ -1934,6 +1967,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                         slash_sub_state.as_ref(),
                         &mut todo_scroll_offset,
                         now_ms,
+                        paste_preview.as_deref(),
                     )?;
                     last_frame_time_us = draw_start.elapsed().as_micros();
                     model.mark_clean();
