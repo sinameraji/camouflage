@@ -205,6 +205,10 @@ pub fn handle_key(k: Key, buf: &mut String, cursor: &mut usize) -> Action {
                 Action::SubmitInput(text)
             }
         }
+        Key::ShiftEnter => {
+            insert_at_cursor(buf, cursor, '\n');
+            Action::None
+        }
         Key::Esc => Action::CancelStream,
         // Cursor navigation: when there IS text, Left/Right/Home/End move
         // the insertion point. When the input is empty, Home falls through

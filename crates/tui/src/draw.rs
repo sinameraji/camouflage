@@ -180,6 +180,7 @@ pub fn render<B: Backend>(
     slash_sub_state: Option<&(String, Vec<String>, bool, usize)>,
     todo_scroll_offset: &mut usize,
     now_ms: i64,
+    paste_preview: Option<&str>,
 ) -> Result<()> {
     terminal.draw(|f| {
         let raw_area = f.area();
@@ -244,7 +245,9 @@ pub fn render<B: Backend>(
             }
         } else {
             let input_w = UnicodeWidthStr::width(input_buf).max(1);
-            let content_lines = ((input_w + inner_w - 1) / inner_w).max(1).min(3) as u16;
+            let newline_count = input_buf.matches('\n').count();
+            let wrap_lines = ((input_w + inner_w - 1) / inner_w).max(1);
+            let content_lines = (wrap_lines + newline_count).max(1).min(8) as u16;
             content_lines + 2 // top + bottom border
         };
         // Splash: host-supplied multi-line ANSI text (e.g. CLI logo)
@@ -912,24 +915,14 @@ pub fn render<B: Backend>(
                 );
             f.render_widget(widget, input_chunk);
         } else {
-            // Cursor + scroll math. The input box has a fixed visible
-            // height (3 content lines max — see bottom_height above), so
-            // long voice-dictated prompts wrap past the bottom of the box.
-            // We compute the total wrapped line count and, when it exceeds
-            // what fits, scroll the Paragraph so the cursor's line is the
-            // bottom visible line — and show a "+N lines · M chars" badge
-            // in the title so the user knows nothing was truncated.
+            // Cursor + scroll math. Accounts for explicit newlines (Shift+Enter)
+            // as well as wrapping. The prompt "› " only appears on the first
+            // visual line; subsequent lines start at column 0.
             let prompt_w: u16 = 2; // "› "
-            let typed_before_cursor: String = input_buf.chars().take(input_cursor).collect();
-            let cursor_col_advance = UnicodeWidthStr::width(typed_before_cursor.as_str()) as u16;
-            let total_w = UnicodeWidthStr::width(input_buf) as u16 + prompt_w;
             let inner_w = input_chunk.width.saturating_sub(2).max(1);
-            let total_x = 1u16 + prompt_w + cursor_col_advance; // 1 = left border
-            let cursor_line = (total_x.saturating_sub(1)) / inner_w; // 0-indexed visual line
-            let total_lines = if total_w == 0 { 1 } else { (total_w + inner_w - 1) / inner_w }.max(1);
+            let (cursor_line, cursor_col, total_lines) =
+                input_cursor_geometry(input_buf, input_cursor, inner_w, prompt_w);
             let visible_lines = input_chunk.height.saturating_sub(2).max(1);
-            // Scroll so the cursor stays in view; clamp so we never scroll
-            // past the end of the buffer.
             let scroll_off: u16 = cursor_line
                 .saturating_sub(visible_lines.saturating_sub(1))
                 .min(total_lines.saturating_sub(visible_lines));
@@ -959,7 +952,7 @@ pub fn render<B: Backend>(
                     .title(Span::styled(title, title_style)),
             );
             f.render_widget(input, input_chunk);
-            let cursor_x = input_chunk.x + (total_x % inner_w);
+            let cursor_x = input_chunk.x + 1 + cursor_col;
             let cursor_y = input_chunk.y + 1 + cursor_line.saturating_sub(scroll_off);
             f.set_cursor(cursor_x, cursor_y);
         }
@@ -976,6 +969,9 @@ pub fn render<B: Backend>(
         }
         if tool_output_open {
             draw_tool_output_overlay(f, area, model);
+        }
+        if let Some(text) = paste_preview {
+            draw_paste_preview_overlay(f, area, text);
         }
         if let Some(sub) = slash_sub_state {
             if model.pending_permission().is_none() && search.is_none() {
@@ -1094,6 +1090,49 @@ fn draw_help_overlay(f: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
                 .borders(Borders::ALL)
                 .title(" help ")
                 .border_style(Style::default().fg(Color::Yellow)),
+        );
+    f.render_widget(widget, overlay);
+}
+
+fn draw_paste_preview_overlay(
+    f: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    text: &str,
+) {
+    let line_count = text.matches('\n').count() + 1;
+    let visible_lines = line_count.min(10) as u16;
+    let h = visible_lines + 4; // title + content + footer + borders
+    let w = (area.width.saturating_mul(80) / 100).max(40).min(area.width.saturating_sub(4));
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y.saturating_add(area.height).saturating_sub(h).saturating_sub(3);
+    let overlay = ratatui::layout::Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
+    f.render_widget(Clear, overlay);
+
+    let dim = Style::default().fg(Color::DarkGray);
+    let mut lines: Vec<Line> = Vec::new();
+    for line in text.lines().take(10) {
+        lines.push(Line::from(Span::raw(line)));
+    }
+    if line_count > 10 {
+        lines.push(Line::from(Span::styled(" …", dim)));
+    }
+    lines.push(Line::from(Span::styled(
+        format!("{} lines · {} chars", line_count, text.chars().count()),
+        dim,
+    )));
+
+    let widget = Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("paste preview — Enter to accept · Esc to cancel")
+                .border_style(Style::default().fg(Color::Cyan)),
         );
     f.render_widget(widget, overlay);
 }
@@ -2498,6 +2537,79 @@ fn bright_color(c: u16) -> Color {
     }
 }
 
+/// Compute the visual line and column of the cursor in a potentially
+/// multi-line input buffer, accounting for wrapping. Returns
+/// `(cursor_line, cursor_col, total_lines)` where all values are in
+/// *visual* (wrapped) line units.
+fn input_cursor_geometry(
+    buf: &str,
+    cursor: usize,
+    inner_w: u16,
+    prompt_w: u16,
+) -> (u16, u16, u16) {
+    let inner_w = inner_w.max(1);
+    let text_before: String = buf.chars().take(cursor).collect();
+    let lines_before: Vec<&str> = text_before.split('\n').collect();
+    let all_lines: Vec<&str> = buf.split('\n').collect();
+
+    let mut visual_line: u16 = 0;
+    for (i, line) in lines_before.iter().enumerate() {
+        let line_w = UnicodeWidthStr::width(*line) as u16;
+        let effective_w = if i == 0 {
+            prompt_w + line_w
+        } else {
+            line_w
+        };
+        let line_visual = if effective_w == 0 {
+            1
+        } else {
+            ((effective_w + inner_w - 1) / inner_w).max(1)
+        };
+        if i + 1 < lines_before.len() {
+            visual_line += line_visual;
+        } else {
+            // Current line: cursor column within this visual line.
+            let col = if i == 0 { prompt_w + line_w } else { line_w };
+            let col_in_line = col % inner_w;
+            let cursor_col = if col_in_line == 0 && line_w > 0 {
+                inner_w.min(col)
+            } else {
+                col_in_line
+            };
+            return (visual_line + (col / inner_w), cursor_col, {
+                let mut total: u16 = 0;
+                for (j, l) in all_lines.iter().enumerate() {
+                    let w = UnicodeWidthStr::width(*l) as u16;
+                    let eff = if j == 0 { prompt_w + w } else { w };
+                    total += if eff == 0 {
+                        1
+                    } else {
+                        ((eff + inner_w - 1) / inner_w).max(1)
+                    };
+                }
+                total
+            });
+        }
+    }
+    // Empty buffer or cursor at start.
+    let total = if all_lines.is_empty() {
+        1
+    } else {
+        let mut t: u16 = 0;
+        for (j, l) in all_lines.iter().enumerate() {
+            let w = UnicodeWidthStr::width(*l) as u16;
+            let eff = if j == 0 { prompt_w + w } else { w };
+            t += if eff == 0 {
+                1
+            } else {
+                ((eff + inner_w - 1) / inner_w).max(1)
+            };
+        }
+        t
+    };
+    (0, prompt_w, total)
+}
+
 #[cfg(test)]
 mod render_tests {
     use super::*;
@@ -2539,7 +2651,7 @@ mod render_tests {
         let mut todo_scroll = 0;
         render(
             &mut terminal, model, &mut vp, "", 0, "", 0, None, None, None, false, None,
-            None, &theme, false, "", 0, 0, None, &mut todo_scroll, 0,
+            None, &theme, false, "", 0, 0, None, &mut todo_scroll, 0, None,
         )
         .unwrap();
         row_strings(terminal.backend().buffer())
@@ -2600,7 +2712,7 @@ mod render_tests {
         let mut todo_scroll = 0;
         render(
             &mut terminal, &m, &mut vp, "", 0, "", 0, None, None, None, false, None,
-            None, &theme, false, "", 0, 0, None, &mut todo_scroll, 0,
+            None, &theme, false, "", 0, 0, None, &mut todo_scroll, 0, None,
         )
         .unwrap();
         let rows = row_strings(terminal.backend().buffer());
@@ -2629,7 +2741,7 @@ mod render_tests {
         let now_ms = 65_000; // 1m 5s elapsed
         render(
             &mut terminal, &m, &mut vp, "", 0, "", 0, None, None, None, false, None,
-            None, &theme, false, "", 0, 0, None, &mut todo_scroll, now_ms,
+            None, &theme, false, "", 0, 0, None, &mut todo_scroll, now_ms, None,
         )
         .unwrap();
         let rows = row_strings(terminal.backend().buffer());
@@ -2670,7 +2782,7 @@ mod render_tests {
         let mut todo_scroll = 0;
         render(
             &mut terminal, &m, &mut vp, "", 0, "", 0, None, None, None, false, None,
-            None, &theme, false, "", 0, 0, None, &mut todo_scroll, 0,
+            None, &theme, false, "", 0, 0, None, &mut todo_scroll, 0, None,
         )
         .unwrap();
         let rows = row_strings(terminal.backend().buffer());
@@ -2752,7 +2864,7 @@ mod render_tests {
         let mut todo_scroll = 0;
         render(
             &mut terminal, &m, &mut vp, "", 0, "", 1, None, None, None, false, None,
-            None, &theme, false, "", 0, 0, None, &mut todo_scroll, 0,
+            None, &theme, false, "", 0, 0, None, &mut todo_scroll, 0, None,
         )
         .unwrap();
         let rows = row_strings(terminal.backend().buffer());
