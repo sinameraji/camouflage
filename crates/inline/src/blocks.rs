@@ -233,13 +233,14 @@ fn render_tool(t: &ToolBlock, width: usize, theme: &Theme, ctx: RenderCtx) -> Ve
     let out_indent = "    ";
 
     if t.status == ToolStatus::Running {
-        if t.output.is_empty() {
+        let output = trim_trailing_empty(&t.output);
+        if output.is_empty() {
             if let Some(start) = t.started_at_ms {
                 let ms = (ctx.now_ms - start).max(0) as u64;
                 out.extend(sub(Line::styled(format_elapsed(ms), dim)));
             }
         } else {
-            for l in t.output.iter().rev().take(4).rev() {
+            for l in output.iter().rev().take(4).rev() {
                 out.extend(wrap(&Line::styled(format!("{out_indent}{l}"), dim), width, &Line::raw(out_indent)));
             }
         }
@@ -263,10 +264,11 @@ fn render_tool(t: &ToolBlock, width: usize, theme: &Theme, ctx: RenderCtx) -> Ve
         out.extend(render_diff(path, diff, width, theme));
     }
 
-    if !t.output.is_empty() {
-        let show = if ctx.expanded { t.output.len() } else { t.preview.min(t.output.len()) };
-        let highlighted = t.output_lang.as_deref().map(|lang| highlight(&t.output[..show].join("\n"), lang));
-        for (i, l) in t.output[..show].iter().enumerate() {
+    let output = trim_trailing_empty(&t.output);
+    if !output.is_empty() {
+        let show = if ctx.expanded { output.len() } else { t.preview.min(output.len()) };
+        let highlighted = t.output_lang.as_deref().map(|lang| highlight(&output[..show].join("\n"), lang));
+        for (i, l) in output[..show].iter().enumerate() {
             let mut line = Line::raw(out_indent);
             match &highlighted {
                 Some(h) => line.spans.extend(h.get(i).cloned().unwrap_or_default()),
@@ -279,13 +281,22 @@ fn render_tool(t: &ToolBlock, width: usize, theme: &Theme, ctx: RenderCtx) -> Ve
             }
             out.extend(wrap(&line, width, &Line::raw(out_indent)));
         }
-        let rest = t.output.len() - show;
+        let rest = output.len() - show;
         if rest > 0 {
-            let what = if show > 0 { format!("… +{rest} more lines") } else { format!("… {rest} lines") };
+            let noun = if rest == 1 { "line" } else { "lines" };
+            let what = if show > 0 { format!("… +{rest} more {noun}") } else { format!("… {rest} {noun}") };
             out.push(Line::styled(format!("{out_indent}{what} (ctrl+o to expand)"), dim));
         }
     }
     out
+}
+
+fn trim_trailing_empty(lines: &[String]) -> &[String] {
+    let mut end = lines.len();
+    while end > 0 && lines[end - 1].is_empty() {
+        end -= 1;
+    }
+    &lines[..end]
 }
 
 pub fn render_diff(path: &str, diff: &[DiffLine], width: usize, theme: &Theme) -> Vec<Line> {

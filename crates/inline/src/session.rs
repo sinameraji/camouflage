@@ -79,6 +79,8 @@ struct Prompt {
     title: String,
     subtitle: Option<String>,
     diff: Option<(String, Vec<crate::blocks::DiffLine>)>,
+    /// `diff` rendered at `.0` width, reused across frames.
+    diff_lines: Option<(usize, Vec<Line>)>,
     question: Option<String>,
     options: Vec<String>,
     hints: Vec<Option<String>>,
@@ -160,6 +162,11 @@ impl Session {
     pub fn resize(&mut self, width: usize, height: usize) {
         self.width = width.max(20);
         self.height = height.max(6);
+        if let Some(p) = self.prompt.as_mut() {
+            if let Some((path, d)) = &p.diff {
+                p.diff_lines = Some((self.width, chrome::diff_preview(&self.theme, path, d, self.width)));
+            }
+        }
     }
 
     pub fn set_history(&mut self, history: Vec<String>) {
@@ -333,12 +340,14 @@ impl Session {
                 let detail = s("detail");
                 let diff = p.get("diff").and_then(parse_diff_payload);
                 let title = if action.is_empty() { format!("Allow {tool}?") } else { capitalize(&action) };
-                let subtitle = if !detail.is_empty() { Some(detail) } else { diff.as_ref().map(|(path, _)| path.clone()) };
+                let subtitle = if !detail.is_empty() { Some(detail) } else { diff.as_ref().map(|(path, _)| path.clone()) }
+                    .filter(|sub| !title.contains(sub.as_str()));
                 let app = self.app_name.clone();
                 self.prompt = Some(Prompt {
                     kind: PromptKind::Permission { request_id: s("request_id") },
                     title,
                     subtitle,
+                    diff_lines: diff.as_ref().map(|(path, d)| (self.width, chrome::diff_preview(&self.theme, path, d, self.width))),
                     diff,
                     question: Some(format!("Do you want to allow this {}?", if tool.is_empty() { "action" } else { &tool })),
                     options: vec![
@@ -369,6 +378,7 @@ impl Session {
                     title: s("prompt"),
                     subtitle: None,
                     diff: None,
+                    diff_lines: None,
                     question: None,
                     options: labels,
                     hints,
@@ -386,6 +396,7 @@ impl Session {
                     title: s("prompt"),
                     subtitle: None,
                     diff: None,
+                    diff_lines: None,
                     question: None,
                     options: vec![yes, no],
                     hints: Vec::new(),
@@ -801,7 +812,7 @@ impl Session {
             lines.push(Line::new());
             lines.extend(render_block(&Block::Plan { items: plan.clone(), live: true }, self.width, t, ctx));
         }
-        if busy {
+        if busy && self.prompt.is_none() {
             lines.push(Line::new());
             let elapsed = self.busy_since.map(|b| (now - b).max(0) as u64).unwrap_or(0);
             let tokens = (self.streamed_chars - self.streamed_at_busy) / 4;
@@ -844,7 +855,8 @@ impl Session {
     pub fn next_wakeup(&self, now: i64) -> Option<i64> {
         let mut next: Option<i64> = None;
         let mut want = |t: i64| next = Some(next.map_or(t, |n: i64| n.min(t)));
-        if self.is_busy() || !self.tasks.is_empty() {
+        // Waiting on the user (a prompt is open) is idle: nothing animates.
+        if (self.is_busy() && self.prompt.is_none()) || !self.tasks.is_empty() {
             want(now + FRAME_MS - now.rem_euclid(FRAME_MS));
         }
         if let Some((_, _, until)) = &self.foot {
@@ -1062,7 +1074,7 @@ fn prompt_view(p: &Prompt, height: usize) -> PromptView {
     PromptView {
         title: p.title.clone(),
         subtitle,
-        diff: p.diff.clone(),
+        diff_lines: p.diff_lines.as_ref().map(|(_, l)| l.clone()),
         question: p.question.clone(),
         options: shown.iter().map(|&i| p.options[i].clone()).collect(),
         hints: shown.iter().map(|&i| p.hints.get(i).cloned().flatten()).collect(),
@@ -1092,31 +1104,25 @@ fn paragraph_split(md: &str) -> Option<usize> {
     best
 }
 
+/// Append a chunk of tool output. A trailing empty entry means the last
+/// line ended with a newline; the renderer ignores it. Carriage returns
+/// (progress bars) keep only the text after the last one.
 fn append_output(out: &mut Vec<String>, chunk: &str) {
-    let text = crate::ansi::strip_ansi(chunk);
-    let mut parts = text.split('\n');
-    if let Some(first) = parts.next() {
-        let starts_new = chunk_starts_new_line(out);
-        match out.last_mut() {
-            Some(last) if !starts_new => last.push_str(first),
-            _ => out.push(first.to_string()),
-        }
+    let chunk = chunk.replace("\r\n", "\n");
+    let clean = |p: &str| crate::ansi::strip_ansi(p.rsplit('\r').next().unwrap_or(""));
+    let mut parts = chunk.split('\n');
+    let first = clean(parts.next().unwrap_or(""));
+    match out.last_mut() {
+        Some(last) => last.push_str(&first),
+        None => out.push(first),
     }
     for p in parts {
-        out.push(p.to_string());
-    }
-    if out.last().map(|l| l.is_empty()).unwrap_or(false) {
-        out.pop();
-        out.push(String::new());
+        out.push(clean(p));
     }
     if out.len() > TOOL_TAIL_LINES {
         let drop = out.len() - TOOL_TAIL_LINES;
         out.drain(..drop);
     }
-}
-
-fn chunk_starts_new_line(out: &[String]) -> bool {
-    out.last().map(|l| l.is_empty()).unwrap_or(true)
 }
 
 fn parse_diff_payload(d: &Value) -> Option<(String, Vec<crate::blocks::DiffLine>)> {
@@ -1338,6 +1344,15 @@ mod tests {
     }
 
     #[test]
+    fn waiting_on_a_prompt_needs_no_wakeups() {
+        let mut s = session();
+        s.apply(&ev(EventType::StatusUpdate, json!({"segments": {"phase": "tool"}})), 0);
+        assert!(s.next_wakeup(0).is_some());
+        s.apply(&ev(EventType::PermissionRequested, json!({"request_id": "r", "tool": "bash", "action": "run npm test"})), 0);
+        assert_eq!(s.next_wakeup(0), None);
+    }
+
+    #[test]
     fn select_lists_filter_as_you_type() {
         let mut s = session();
         s.apply(
@@ -1386,6 +1401,15 @@ mod tests {
         let live = live_text(&s, 0);
         let footer = live.last().unwrap();
         assert!(footer.contains("plan mode on") && footer.ends_with("kimi-k2.6 · $0.04"), "{footer}");
+    }
+
+    #[test]
+    fn tool_output_chunks_split_into_lines() {
+        let mut out = Vec::new();
+        append_output(&mut out, "one\n\x1b[32mtwo\x1b[0m\nthr");
+        append_output(&mut out, "ee\n");
+        append_output(&mut out, "10%\r50%\r100%\n");
+        assert_eq!(out, vec!["one", "two", "three", "100%", ""]);
     }
 
     #[test]

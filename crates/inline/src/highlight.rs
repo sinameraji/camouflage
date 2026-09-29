@@ -14,6 +14,12 @@ fn syntaxes() -> &'static SyntaxSet {
     SET.get_or_init(SyntaxSet::load_defaults_newlines)
 }
 
+/// Load the syntax definitions ahead of time (call from a background
+/// thread at startup) so the first code block or diff doesn't stall a frame.
+pub fn warm() {
+    let _ = syntaxes();
+}
+
 fn find_syntax(lang: &str) -> Option<&'static SyntaxReference> {
     let set = syntaxes();
     let lang = lang.trim().to_ascii_lowercase();

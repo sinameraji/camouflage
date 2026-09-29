@@ -1,4 +1,5 @@
 mod app;
+mod inline_app;
 mod draw;
 mod input;
 pub(crate) mod scrolllog;
@@ -62,6 +63,18 @@ struct Args {
     /// renderer never brands itself as "Camouflage".
     #[arg(long, value_name = "NAME")]
     app_title: Option<String>,
+
+    /// Rendering mode. `inline` prints finished output into the terminal's
+    /// normal scrollback and redraws only a small live region; `fullscreen`
+    /// is the v2 alternate-screen UI (also used for --replay and --play).
+    #[arg(long, value_enum, default_value_t = UiMode::Fullscreen)]
+    ui: UiMode,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+enum UiMode {
+    Inline,
+    Fullscreen,
 }
 
 /// Resolve the header brand: explicit `--app-title`, else the basename of
@@ -116,6 +129,18 @@ fn main() -> Result<()> {
     let emit_responses = args.emit_responses.unwrap_or(emit_responses_default);
     if args.responses_fd.is_some() && args.emit_responses == Some(true) {
         anyhow::bail!("--responses-fd and --emit-responses=true are mutually exclusive");
+    }
+
+    if args.ui == UiMode::Inline && args.replay.is_none() && args.play.is_none() {
+        let result = rt.block_on(inline_app::run(inline_app::InlineConfig {
+            store,
+            stdin_events: args.stdin_events,
+            emit_responses,
+            responses_fd: args.responses_fd,
+            app_title: resolve_app_title(args.app_title),
+        }));
+        rt.shutdown_background();
+        return result;
     }
 
     let result = rt.block_on(app::run(app::Config {

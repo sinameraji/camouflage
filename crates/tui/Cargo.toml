@@ -17,8 +17,9 @@ camouflage-protocol = { workspace = true }
 camouflage-store = { workspace = true }
 camouflage-renderer = { workspace = true }
 camouflage-headless = { workspace = true }
+camouflage-inline = { path = "../inline" }
 ratatui = { workspace = true }
-crossterm = { workspace = true }
+crossterm = { workspace = true, features = ["use-dev-tty"] }
 tokio = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
@@ -28,3 +29,6 @@ tracing-subscriber = { workspace = true }
 serde_json = { workspace = true }
 libc = { workspace = true }
 unicode-width = { workspace = true }
+
+[dev-dependencies]
+vt100 = "0.16"
