@@ -184,14 +184,14 @@ Known limits of the Ink hotfix (the Camouflage rewrite removes them):
 - Ink keeps its own copy of all printed output and reprints it on some redraws (for example a resize), so a `/clear`ed screen can come back after a resize.
 
 **B. Camouflage rewrite**
-- [ ] B1. Inline renderer: printed output plus a small live area (§3). Full-screen mode becomes the transcript/replay view.
-- [ ] B2. Event-driven loop with no fixed ticker; one animation clock; settle on turn end; skip identical frames; slow down when unfocused (§4.2).
-- [ ] B3. Input: switch to crossterm with `use-dev-tty`; move by visible character; UTF-8/IME; `\`+Enter / Alt+Enter; undo and yank; keep the draft while browsing history; no single-key global shortcuts.
-- [ ] B4. Markdown with pulldown-cmark and syntax highlighting with syntect.
+- [~] B1. Inline renderer: printed output plus a small live area (§3). Done behind `--ui inline` (#31 writer, #32 blocks and markdown, #33 editor and chrome, #34 session, #35 binary). Left: make it the default; turn full-screen mode into the Ctrl+O transcript/replay view.
+- [~] B2. Event-driven loop with no fixed ticker, settle on turn end, skip identical frames: done (#34, #35); waiting on a prompt counts as idle. Left: slow down when the terminal is unfocused.
+- [x] B3. Input (#33, #35): crossterm with `use-dev-tty`, movement by grapheme, UTF-8, `\`+Enter / Shift+Enter / Alt+Enter, undo and yank, draft kept while browsing history, paste chips, no single-key shortcuts.
+- [x] B4. Markdown with pulldown-cmark, syntax highlighting with syntect mapped onto the terminal palette (#32).
 - [ ] B5. Protocol: row ids and updates, a generic block type, host-set theme, accent and keymap, a version check, a warning for unknown events.
 - [ ] B6. SDK: TypeScript types generated from the Rust types; helpers reject when the renderer exits; `renderToTerminal` by default; capture the host's console output.
 - [ ] B7. Fix the smaller bugs in §1.1 (forms, panic handler, crash dump location, search over SQLite).
-- [ ] B8. End-to-end tests that drive the binary through a pseudo-terminal and snapshot the screen, plus the soak test from §4.2.
+- [~] B8. End-to-end pseudo-terminal tests and the idle soak (#35). Left: record real autopilot sessions as fixtures.
 
 ## Work log
 
@@ -200,4 +200,10 @@ Known limits of the Ink hotfix (the Camouflage rewrite removes them):
   - Measured with a 2,000-turn transcript and one visible spinner: the old `ChatView` wrote **727,785 bytes per frame** (the whole history, about 10 times a second); the new one writes **61 bytes**. With no spinner the idle UI writes nothing and runs no timer.
   - Full suite: 904/905 pass. The one failure (`theme-contrast.test.ts`) fails on a clean `main` too.
   - Found that `history.jsonl` only had today's entry, which fits the same cross-process race (a read during another process's rewrite comes back empty). Backed up `usage.json` to `usage.json.bak-2026-09-29`.
-  - Nothing committed yet.
+  - Committed as autopilot PR #663 (squash-merge; release-please will pick it up as 1.2.2 under Performance Improvements). Waiting for review: merging needs the owner.
+- **2026-09-29 (later)** — Camouflage inline renderer built as a stack of PRs, each waiting for review and merge (merge commits, as usual in this repo):
+  - #30 this doc · #31 terminal writer · #32 transcript blocks and markdown · #33 editor and chrome · #34 session model · #35 `--ui inline` binary mode and end-to-end tests.
+  - Driven end to end on a pseudo-terminal: typing capital letters, `—`, `café` and emoji works; the transcript stays in scrollback after exit; tables, code and inline diffs render as in the prototype.
+  - Idle soak: 2.2 s more idle writes 0 bytes and causes 0 extra wakeups (the test fails with an injected 80 ms tick: 8 vs 35 wakeups).
+  - Release build latency: ~6 ms from a host token to the screen, ~25 ms for a permission prompt.
+  - Next: SDK update (B6), then the new autopilot integration (§6), then make inline the default and release.
