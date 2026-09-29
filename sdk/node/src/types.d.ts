@@ -48,7 +48,10 @@ export type EventType =
   | "WizardCompleted"
   | "WizardCancelled"
   | "ModeChangeRequested"
-  | "CancelRequested";
+  | "CancelRequested"
+  | "TranscriptCleared"
+  | "Splash"
+  | "ShowToast";
 
 export type Direction = "inbound" | "outbound";
 
@@ -65,11 +68,38 @@ export interface EnvelopeMeta {
 export type UserMessage = { text: string };
 export type AssistantStreamStarted = { stream_id: string };
 export type AssistantTokenDelta = { stream_id: string; token: string };
-export type AssistantMessageCompleted = { stream_id: string };
+export type AssistantMessageCompleted = {
+  stream_id: string;
+  /** Optional final text; replaces what was streamed (e.g. after cleanup). */
+  text?: string;
+};
 
-export type ToolStarted = { tool_id: string; tool: string; command: string };
+export type ToolStarted = {
+  tool_id: string;
+  /** Tool name shown in bold, e.g. "Read" or "Bash". */
+  tool: string;
+  /** Arguments shown after the name, e.g. a path or a command line. */
+  command: string;
+  /** When the tool started (epoch ms). Defaults to when the event arrives. */
+  started_at_ms?: number;
+};
 export type ToolOutput = { tool_id: string; chunk: string };
-export type ToolFinished = { tool_id: string; exit_code: number };
+export type ToolFinished = {
+  tool_id: string;
+  exit_code: number;
+  /** Overrides the status derived from exit_code. */
+  status?: "done" | "error" | "cancelled" | "rejected";
+  /** One-line result under the tool row, e.g. "142 lines" or "14 passed". */
+  summary?: string;
+  /** Full output; replaces anything streamed via ToolExecutionStdout. */
+  output?: string;
+  /** Output lines shown before "ctrl+o to expand". Default 0 (12 on error). */
+  preview?: number;
+  /** Highlight the output as this language (e.g. "ts" for a written file). */
+  output_lang?: string;
+  /** Show this diff under the tool row. */
+  diff?: DiffPayload;
+};
 
 export type PatchProposed = {
   path: string;
@@ -83,8 +113,11 @@ export type PatchApplied = { path: string };
 export type PermissionRequested = {
   request_id: string;
   tool: string;
+  /** Prompt title, e.g. "edit src/auth/session.ts". */
   action: string;
   detail?: string;
+  /** Diff preview for edits. */
+  diff?: DiffPayload;
 };
 export type PermissionGranted = { request_id: string };
 export type PermissionDenied = { request_id: string };
@@ -104,6 +137,14 @@ export type RuntimeError = {
   cta?: Cta;
 };
 
+/**
+ * Status segments. Well-known keys: `mode` ("edit" | "plan" | "auto"),
+ * `phase` ("thinking" | "streaming" | "tool" | "running" shows the spinner;
+ * anything else, e.g. "idle", ends the turn and settles spinners),
+ * `activity` (spinner verb, e.g. "Reading files"), `model`, `tokens`,
+ * `cost`, `branch`, `warn`. Other keys are shown in the footer. An empty
+ * value removes a segment.
+ */
 export type StatusUpdate = {
   segments: Record<string, string>;
 };
@@ -261,11 +302,42 @@ export type ModeChangeRequested = {
   direction: "next" | "prev";
 };
 
+/** Optional welcome and branding for the inline renderer. */
+export type SessionStarted = {
+  /** First welcome line, shown in the accent color. Defaults to the app title. */
+  title?: string;
+  /** Dim lines under the title (model, directory, hints). */
+  detail?: string[];
+  /** Accent color: a terminal color name ("orange", "blue", …) or "#rrggbb". */
+  accent?: string;
+  /** Your agent's name, used in prompts like "tell <name> what to do". */
+  assistant_label?: string;
+  user_label?: string;
+};
+
+/** Multi-line text (may contain ANSI colors) printed as-is, e.g. a logo. */
+export type Splash = { text: string };
+
+/** A short message shown in the footer (inline) or as a toast (full screen). */
+export type ShowToast = {
+  text: string;
+  kind?: "info" | "warn" | "error" | "success";
+  ttl_ms?: number;
+};
+
+/** A diff to show inline: full before/after text, or a unified diff. */
+export type DiffPayload = {
+  path: string;
+  before?: string;
+  after?: string;
+  unified?: string;
+};
+
 // Tagged union --------------------------------------------------------------
 
 export type Event = EnvelopeMeta &
   (
-    | { event_type: "SessionStarted"; payload?: Record<string, never> }
+    | { event_type: "SessionStarted"; payload?: SessionStarted }
     | { event_type: "SessionEnded"; payload?: Record<string, never> }
     | { event_type: "SessionCompacted"; payload: SessionCompacted }
     | { event_type: "UserMessageCreated"; payload: UserMessage }
@@ -303,7 +375,13 @@ export type Event = EnvelopeMeta &
     | { event_type: "WizardCancelled"; payload: WizardCancelled }
     | { event_type: "ModeChangeRequested"; payload: ModeChangeRequested }
     | { event_type: "CancelRequested"; payload?: Record<string, never> }
+    | { event_type: "TranscriptCleared"; payload?: Record<string, never> }
+    | { event_type: "Splash"; payload: Splash }
+    | { event_type: "ShowToast"; payload: ShowToast }
   );
+
+/** The payload type for a given event type, e.g. `PayloadOf<"ShowToast">`. */
+export type PayloadOf<T extends EventType> = Extract<Event, { event_type: T }> extends { payload?: infer P } ? P : never;
 
 // Reader --------------------------------------------------------------------
 

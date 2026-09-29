@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { mount, selectList, confirm } from "./index.js";
+import { mount, selectList, confirm, permission } from "./index.js";
 
 const FAKE = join(dirname(fileURLToPath(import.meta.url)), "__fake-renderer.js");
 
@@ -72,10 +72,12 @@ test("permissionResponse convenience event fires", async () => {
   await cam.close();
 });
 
-test("send() throws after close()", async () => {
+test("send() after close() is a no-op that returns false", async () => {
+  // Hosts send a final StatusUpdate/SessionEnded during cleanup, often after
+  // the renderer has exited; throwing there would crash the host (496035a).
   const cam = await mountFake();
   await cam.close();
-  assert.throws(() => cam.send("SessionStarted", {}), /after close/);
+  assert.equal(cam.send("SessionStarted", {}), false);
 });
 
 test("close() resolves with the child's exit code", async () => {
@@ -135,3 +137,35 @@ async function waitUntil(predicate, deadlineMs) {
     await new Promise((r) => setTimeout(r, 10));
   }
 }
+
+test("helpers settle instead of hanging when the renderer exits", async () => {
+  const cam = await mountFake();
+  const pending = [
+    selectList(cam, { id: "pick", prompt: "Pick", options: [] }),
+    confirm(cam, { id: "ok", prompt: "OK?" }),
+    permission(cam, { request_id: "r1", tool: "bash", action: "run npm test" }),
+  ];
+  // The fake echoes inbound events back; kill it before anyone answers.
+  cam.kill("SIGKILL");
+  const [sel, conf, perm] = await Promise.all(pending);
+  assert.deepEqual(sel, { id: "pick", cancelled: true });
+  assert.deepEqual(conf, { id: "ok", cancelled: true });
+  assert.equal(perm.choice, "deny");
+});
+
+test("permission() resolves with the user's answer", async () => {
+  const cam = await mountFake();
+  const answer = permission(cam, { request_id: "r2", tool: "edit", action: "edit a.ts" });
+  // Stand in for the user: the fake echoes this response back to us.
+  cam.send("PermissionResponse", { request_id: "r2", choice: "allow_session", feedback: "" });
+  assert.equal((await answer).choice, "allow_session");
+  await cam.close();
+});
+
+test("ui option passes --ui to the renderer", async () => {
+  const fakeArgv = join(dirname(fileURLToPath(import.meta.url)), "__fake-argv.js");
+  const cam = await mount({ bin: fakeArgv, ui: "inline", appTitle: "demo" });
+  const text = await new Promise((resolve) => cam.on("userInput", resolve));
+  assert.match(text, /--ui inline/);
+  await cam.close();
+});

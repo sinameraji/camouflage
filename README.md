@@ -37,7 +37,7 @@ Pre-built binaries are downloaded automatically for macOS and Linux. No Rust too
 ```js
 import { mount } from "camouflage-tui";
 
-const cam = await mount();
+const cam = await mount({ ui: "inline" });
 
 // Start a session
 cam.send("SessionStarted", {});

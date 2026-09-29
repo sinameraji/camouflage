@@ -245,7 +245,8 @@ export async function mount(opts = {}) {
       titleArgs.push("--app-title", title);
     }
   }
-  const args = [...defaultArgs, ...titleArgs, ...userArgs];
+  const uiArgs = opts.ui && !opts.skipDefaultArgs && !userArgs.includes("--ui") ? ["--ui", opts.ui] : [];
+  const args = [...defaultArgs, ...uiArgs, ...titleArgs, ...userArgs];
 
   const child = spawn(bin, args, {
     stdio,
@@ -353,44 +354,81 @@ export async function mount(opts = {}) {
 }
 
 /**
+ * Resolve with the first `eventName` response whose id matches, or with
+ * `onExit` if the renderer exits first, so callers never hang on a dead
+ * renderer.
+ */
+function awaitResponse(cam, eventName, matches, onExit) {
+  return new Promise((resolve) => {
+    if (cam._closed) {
+      resolve(onExit);
+      return;
+    }
+    const cleanup = () => {
+      cam.off(eventName, listener);
+      cam.off("exit", exitListener);
+    };
+    const listener = (resp) => {
+      if (!matches(resp)) return;
+      cleanup();
+      resolve(resp);
+    };
+    const exitListener = () => {
+      cleanup();
+      resolve(onExit);
+    };
+    cam.on(eventName, listener);
+    cam.on("exit", exitListener);
+  });
+}
+
+/**
  * Convenience helper: emit a ShowSelectList and resolve to the user's
- * SelectListResponse for that id. Subscribes once, unsubscribes after
- * the response arrives.
+ * SelectListResponse for that id. Resolves `{ cancelled: true }` if the
+ * renderer exits first.
  *
  * @param {CamouflageHandle} cam
  * @param {{id: string, prompt: string, options: object[], default?: string, allow_filter?: boolean, allow_cancel?: boolean}} spec
  * @returns {Promise<{id: string, value?: string, cancelled: boolean}>}
  */
 export function selectList(cam, spec) {
-  return new Promise((resolve) => {
-    const listener = (resp) => {
-      if (resp.id !== spec.id) return;
-      cam.off("selectListResponse", listener);
-      resolve(resp);
-    };
-    cam.on("selectListResponse", listener);
-    cam.send("ShowSelectList", spec);
-  });
+  const done = awaitResponse(cam, "selectListResponse", (r) => r.id === spec.id, { id: spec.id, cancelled: true });
+  cam.send("ShowSelectList", spec);
+  return done;
 }
 
 /**
  * Convenience helper: emit a ShowConfirm and resolve to the user's
- * ConfirmResponse for that id.
+ * ConfirmResponse for that id. Resolves `{ cancelled: true }` if the
+ * renderer exits first.
  *
  * @param {CamouflageHandle} cam
  * @param {{id: string, prompt: string, yes_label?: string, no_label?: string, default?: "yes"|"no", allow_cancel?: boolean}} spec
  * @returns {Promise<{id: string, value?: boolean, cancelled: boolean}>}
  */
 export function confirm(cam, spec) {
-  return new Promise((resolve) => {
-    const listener = (resp) => {
-      if (resp.id !== spec.id) return;
-      cam.off("confirmResponse", listener);
-      resolve(resp);
-    };
-    cam.on("confirmResponse", listener);
-    cam.send("ShowConfirm", spec);
-  });
+  const done = awaitResponse(cam, "confirmResponse", (r) => r.id === spec.id, { id: spec.id, cancelled: true });
+  cam.send("ShowConfirm", spec);
+  return done;
+}
+
+/**
+ * Ask the user for permission and resolve to their answer. Resolves
+ * `{ choice: "deny" }` if the renderer exits first.
+ *
+ * @param {CamouflageHandle} cam
+ * @param {{request_id: string, tool: string, action: string, detail?: string, diff?: object}} spec
+ * @returns {Promise<{request_id: string, choice: "allow_once"|"allow_session"|"deny", feedback?: string}>}
+ */
+export function permission(cam, spec) {
+  const done = awaitResponse(
+    cam,
+    "permissionResponse",
+    (r) => r.request_id === spec.request_id,
+    { request_id: spec.request_id, choice: "deny", feedback: "" },
+  );
+  cam.send("PermissionRequested", spec);
+  return done;
 }
 
 /**
@@ -422,15 +460,9 @@ export function keyValueView(cam, spec) {
  * @returns {Promise<{id: string, values?: Record<string, string>, cancelled: boolean}>}
  */
 export function form(cam, spec) {
-  return new Promise((resolve) => {
-    const listener = (resp) => {
-      if (resp.id !== spec.id) return;
-      cam.off("formResponse", listener);
-      resolve(resp);
-    };
-    cam.on("formResponse", listener);
-    cam.send("ShowForm", spec);
-  });
+  const done = awaitResponse(cam, "formResponse", (r) => r.id === spec.id, { id: spec.id, cancelled: true });
+  cam.send("ShowForm", spec);
+  return done;
 }
 
 /**
@@ -444,25 +476,13 @@ export function form(cam, spec) {
  * @returns {Promise<{id: string, results?: Record<string, any>, cancelled?: boolean, at_step?: number}>}
  */
 export function wizard(cam, spec) {
-  return new Promise((resolve) => {
-    const onCompleted = (resp) => {
-      if (resp.id !== spec.id) return;
-      cleanup();
-      resolve(resp);
-    };
-    const onCancelled = (resp) => {
-      if (resp.id !== spec.id) return;
-      cleanup();
-      resolve({ id: resp.id, cancelled: true, at_step: resp.at_step });
-    };
-    const cleanup = () => {
-      cam.off("wizardCompleted", onCompleted);
-      cam.off("wizardCancelled", onCancelled);
-    };
-    cam.on("wizardCompleted", onCompleted);
-    cam.on("wizardCancelled", onCancelled);
-    cam.send("ShowWizard", spec);
-  });
+  const completed = awaitResponse(cam, "wizardCompleted", (r) => r.id === spec.id, null);
+  const cancelled = awaitResponse(cam, "wizardCancelled", (r) => r.id === spec.id, null);
+  cam.send("ShowWizard", spec);
+  return Promise.race([
+    completed.then((r) => r ?? { id: spec.id, cancelled: true, at_step: 0 }),
+    cancelled.then((r) => ({ id: spec.id, cancelled: true, at_step: r?.at_step ?? 0 })),
+  ]);
 }
 
 /**
