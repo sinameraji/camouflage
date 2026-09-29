@@ -1,0 +1,13 @@
+[package]
+name = "camouflage-inline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Inline terminal rendering for Camouflage: print finished output once, redraw a small live region."
+
+[dependencies]
+unicode-width = { workspace = true }
+unicode-segmentation = "1.12"
+
+[dev-dependencies]
+vt100 = "0.16"
