@@ -70,14 +70,12 @@ pub fn input_box(
     let inner = width.saturating_sub(4).max(4);
     let text_w = inner.saturating_sub(2).max(2);
     let mut rows_out: Vec<Line> = Vec::new();
-    let cursor;
-
-    if editor.is_empty() {
+    let cursor = if editor.is_empty() {
         let mut l = Line::new();
         l.push("› ", theme.accent());
         l.push(truncate(placeholder, text_w), theme.dim());
         rows_out.push(l);
-        cursor = (0, 2);
+        (0, 2)
     } else {
         let text = editor.text();
         let rows = editor.rows(text_w);
@@ -91,8 +89,8 @@ pub fn input_box(
             l.spans.extend(input_spans(&text[r.start..r.end], theme));
             rows_out.push(l);
         }
-        cursor = (cr - first, 2 + cc);
-    }
+        (cr - first, 2 + cc)
+    };
 
     let mut out = Vec::with_capacity(rows_out.len() + 2);
     out.push(Line::styled(format!("╭{}╮", "─".repeat(width.saturating_sub(2))), border));
