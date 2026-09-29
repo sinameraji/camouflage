@@ -8,6 +8,7 @@ members = [
     "crates/headless",
     "crates/bench",
     "crates/sdk",
+    "crates/inline",
     "examples/fake-agent",
     "examples/host-mock",
 ]
