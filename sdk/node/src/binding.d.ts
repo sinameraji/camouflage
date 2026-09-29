@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { Event } from "./types.js";
+import type { Event, EventType, PayloadOf, PermissionRequested, TodoItem } from "./types.js";
 
 export interface MountOptions {
   /** Executable name or path. Defaults to "camouflage-tui" (PATH lookup). */
@@ -28,6 +28,11 @@ export interface MountOptions {
    *  compatible programmatic mode where both directions ride on the
    *  pipes the binding manages. */
   renderToTerminal?: boolean;
+  /** Renderer UI. `"inline"` prints finished output into the terminal's
+   *  normal scrollback and redraws only a small live region at the bottom;
+   *  it draws on the terminal even in the default piped mode. Default
+   *  `"fullscreen"` (the v2 alternate-screen UI). */
+  ui?: "inline" | "fullscreen";
 }
 
 export interface PermissionResponseEvent {
@@ -188,9 +193,10 @@ export interface ExitEvent {
 
 export interface CamouflageHandle extends EventEmitter {
   /** Send one event INTO the renderer. */
-  send(event_type: string, payload?: object): boolean;
+  /** Send one event to the renderer. The payload is typed per event. */
+  send<T extends EventType>(event_type: T, payload?: PayloadOf<T>): boolean;
   /** Send a pre-built Event object. */
-  sendEvent(ev: { event_type: string; payload?: object }): boolean;
+  sendEvent(ev: Event): boolean;
   /** Gracefully close: end stdin, wait for child exit, resolve with code. */
   close(): Promise<number>;
   /** Force-kill the renderer. */
@@ -226,3 +232,12 @@ export interface CamouflageHandle extends EventEmitter {
  *   await cam.close();
  */
 export function mount(opts?: MountOptions): Promise<CamouflageHandle>;
+
+/**
+ * Ask the user for permission and resolve to their answer. Resolves with
+ * `{ choice: "deny" }` if the renderer exits first, so a caller never hangs.
+ */
+export function permission(cam: CamouflageHandle, spec: PermissionRequested): Promise<PermissionResponseEvent>;
+
+/** Replace the agent's plan checklist. Pass an empty array to clear it. */
+export function tasksSet(cam: CamouflageHandle, todos: TodoItem[]): void;

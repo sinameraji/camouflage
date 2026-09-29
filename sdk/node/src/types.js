@@ -13,7 +13,7 @@ const KNOWN_TYPES = new Set([
   "ToolExecutionStarted", "ToolExecutionStdout", "ToolExecutionStderr", "ToolExecutionFinished",
   "PatchProposed", "PatchApplied",
   "PermissionRequested", "PermissionGranted", "PermissionDenied",
-  "RuntimeError", "StatusUpdate", "BackgroundTaskUpdate", "ViewportMarker",
+  "RuntimeError", "StatusUpdate", "BackgroundTaskUpdate", "TodoListUpdate", "ViewportMarker",
   "UserInputSubmitted", "PermissionResponse",
   "SlashCommandsRegistered", "MentionCandidatesRegistered",
   "ShowSelectList", "SelectListResponse",
@@ -22,6 +22,7 @@ const KNOWN_TYPES = new Set([
   "ShowForm", "FormResponse",
   "ShowWizard", "WizardCompleted", "WizardCancelled",
   "ModeChangeRequested", "CancelRequested",
+  "TranscriptCleared", "Splash", "ShowToast",
 ]);
 
 /**
