@@ -202,8 +202,9 @@ pub struct PromptView {
     pub title: String,
     /// A second line under the title (a path, or an explanation).
     pub subtitle: Option<String>,
-    /// Optional diff preview (path, lines).
-    pub diff: Option<(String, Vec<DiffLine>)>,
+    /// Optional diff preview, already rendered (see `diff_preview`), so a
+    /// redraw doesn't re-highlight it.
+    pub diff_lines: Option<Vec<Line>>,
     pub question: Option<String>,
     pub options: Vec<String>,
     pub hints: Vec<Option<String>>,
@@ -223,11 +224,11 @@ pub fn prompt_box(theme: &Theme, p: &PromptView, width: usize, max_rows: usize) 
     if let Some(s) = &p.subtitle {
         content.extend(wrap(&Line::styled(s.clone(), theme.dim()), inner, &Line::new()));
     }
-    if let Some((path, diff)) = &p.diff {
+    if let Some(diff_lines) = &p.diff_lines {
         content.push(Line::new());
         // Leave room for everything else; show the start of a long diff.
         let budget = max_rows.saturating_sub(8 + p.options.len()).max(3);
-        let mut lines = render_diff(path, diff, inner, theme);
+        let mut lines = diff_lines.clone();
         if lines.len() > budget {
             let more = lines.len() - budget;
             lines.truncate(budget);
@@ -278,6 +279,12 @@ pub fn prompt_box(theme: &Theme, p: &PromptView, width: usize, max_rows: usize) 
     out.push(Line::styled(format!("╰{}╯", "─".repeat(width.saturating_sub(2))), border));
     out.push(Line::styled(format!("  {}", truncate(&p.footer, width.saturating_sub(2))), theme.dim()));
     out
+}
+
+/// Render a diff for a prompt box of this total width. Do it once per
+/// prompt (and per resize), not per frame.
+pub fn diff_preview(theme: &Theme, path: &str, diff: &[DiffLine], width: usize) -> Vec<Line> {
+    render_diff(path, diff, width.saturating_sub(4).max(8), theme)
 }
 
 fn clip(line: Line, width: usize) -> Line {
@@ -393,7 +400,7 @@ mod tests {
         let p = PromptView {
             title: "Edit file".into(),
             subtitle: Some("src/auth/session.ts".into()),
-            diff: None,
+            diff_lines: None,
             question: Some("Make this edit?".into()),
             options: vec!["Yes".into(), "Yes, for this session".into(), "No".into()],
             hints: vec![],
