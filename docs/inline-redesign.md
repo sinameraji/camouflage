@@ -206,4 +206,10 @@ Known limits of the Ink hotfix (the Camouflage rewrite removes them):
   - Driven end to end on a pseudo-terminal: typing capital letters, `—`, `café` and emoji works; the transcript stays in scrollback after exit; tables, code and inline diffs render as in the prototype.
   - Idle soak: 2.2 s more idle writes 0 bytes and causes 0 extra wakeups (the test fails with an injected 80 ms tick: 8 vs 35 wakeups).
   - Release build latency: ~6 ms from a host token to the screen, ~25 ms for a permission prompt.
-  - Next: SDK update (B6), then the new autopilot integration (§6), then make inline the default and release.
+  - #36 SDK: `mount({ ui: "inline" })`, `permission()` helper, helpers settle when the renderer exits, typed `send()`, and a drift test between the SDK types and the protocol enum.
+  - The autopilot hotfix (#663) was merged and shipped in autopilot 1.2.2.
+- **Resume here:**
+  1. Merge the Camouflage stack in order: #30, #31, #32, #33, #34, #35, #36. Each PR's base is the one before it, so retarget to `main` as each lands. Then merge the release-please PR.
+  2. Build the autopilot integration on branch `feat/camouflage-inline` in `~/autopilot-idle-cpu` (branched from 1.3.0; nothing written yet). Plan: a new `src/camouflage-mode.ts` built on `emit-mode.ts`, which already maps `runAgentTurn` callbacks to events. Reuse from the Ink app: tool titles (`humanizeToolTitle`, `render.title`/`render.diff` in `src/ui/tool-view.tsx`), `recordUsage`, `saveSessionSafe`, and the mode and system-prompt rebuild. Use `permission()` with diffs, Shift+Tab mode cycling, `CancelRequested` → abort, and core slash commands (/help /clear /model /compact /cost /exit). Re-enable `--ui camouflage` in `src/index.tsx`. Keep the glue under ~800 lines.
+  3. Version trap: autopilot pins `camouflage-tui` at `^2.1.0-beta.1`, and a caret range on a prerelease won't match `2.2.0-beta.x`. Bump the range explicitly after the release.
+  4. Make `--ui inline` the default in Camouflage once autopilot runs on it daily.
