@@ -5,6 +5,8 @@
 //! `docs/inline-redesign.md` §3 for the design and its rules.
 
 pub mod blocks;
+pub mod chrome;
+pub mod editor;
 pub mod highlight;
 pub mod markdown;
 pub mod style;
@@ -17,4 +19,5 @@ pub use term::{InlineTerminal, LiveFrame};
 pub use theme::Theme;
 pub use blocks::{render_block, Block, RenderCtx};
 pub use markdown::render_markdown;
+pub use editor::{EditKey, EditOutcome, Editor};
 pub use width::{str_width, truncate, wrap};
