@@ -776,6 +776,11 @@ impl Session {
         let mut out = Vec::new();
         while self.entries.first().map(|e| e.done).unwrap_or(false) {
             let e = self.entries.remove(0);
+            // A reply that ended before any text (e.g. the API failed) has
+            // nothing to show; printing it would only add a blank row.
+            if matches!(&e.block, Block::Assistant { markdown } if markdown.trim().is_empty()) {
+                continue;
+            }
             if let Some(prev) = &self.last_printed {
                 if gap_between(prev, &e.block) {
                     out.push(Line::new());
@@ -1410,6 +1415,16 @@ mod tests {
         append_output(&mut out, "ee\n");
         append_output(&mut out, "10%\r50%\r100%\n");
         assert_eq!(out, vec!["one", "two", "three", "100%", ""]);
+    }
+
+    #[test]
+    fn empty_replies_print_nothing() {
+        let mut s = session();
+        s.apply(&ev(EventType::UserMessageCreated, json!({"text": "hi"})), 0);
+        s.apply(&ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})), 0);
+        s.apply(&ev(EventType::AssistantMessageCompleted, json!({"stream_id": "s"})), 0);
+        s.apply(&ev(EventType::RuntimeError, json!({"message": "network error"})), 0);
+        assert_eq!(history_text(&mut s, 0), vec!["› hi", "", "✗ network error"]);
     }
 
     #[test]
