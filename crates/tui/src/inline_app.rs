@@ -80,6 +80,7 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     // (the idle soak test uses these to prove idle means no wakeups).
     let mut wakeups: u64 = 0;
     let mut frames: u64 = 0;
+    let mut by_source: std::collections::BTreeMap<String, u64> = Default::default();
     let result: Result<()> = async {
         loop {
             let now = now_ms();
@@ -96,6 +97,14 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
             };
             let Some(first) = input else { break };
             wakeups += 1;
+            let source = match &first {
+                Input::Host(_) => "host".to_string(),
+                Input::HostClosed => "host_closed".to_string(),
+                Input::Tick => "tick".to_string(),
+                Input::Term(TermEvent::Key(k)) => format!("key:{:?}", k.code),
+                Input::Term(other) => format!("term:{}", format!("{other:?}").split('(').next().unwrap_or("?")),
+            };
+            *by_source.entry(source).or_default() += 1;
 
             // Handle this input and anything else already queued, then draw
             // once: a burst of tokens costs one frame, not one per token.
@@ -181,7 +190,7 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     leave_terminal_modes();
     persist(&store, &seq, session_id, EventType::SessionEnded, serde_json::json!({}));
     if let Some(path) = std::env::var_os("CAMOUFLAGE_STATS_PATH") {
-        let _ = std::fs::write(path, serde_json::json!({ "wakeups": wakeups, "frames": frames }).to_string());
+        let _ = std::fs::write(path, serde_json::json!({ "wakeups": wakeups, "frames": frames, "by_source": by_source }).to_string());
     }
     result
 }
@@ -366,11 +375,13 @@ fn enter_terminal_modes() -> Result<()> {
     crossterm::terminal::enable_raw_mode()?;
     let mut tty = tty_writer();
     tty.write_all(ENTER_MODES)?;
-    // Ask for disambiguated keys (kitty protocol) where supported, so
-    // Shift+Enter arrives as its own key.
-    if crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
-        tty.write_all(b"\x1b[>1u")?;
-    }
+    // Ask for disambiguated keys (kitty protocol) so Shift+Enter arrives as
+    // its own key. Terminals without it ignore the sequence. Don't probe
+    // with crossterm's supports_keyboard_enhancement(): it writes its query
+    // to stdout, which in piped mode is the host's event stream (it
+    // corrupted the first outbound event), and then waits for an answer
+    // that never comes.
+    tty.write_all(b"\x1b[>1u")?;
     tty.flush()?;
     Ok(())
 }
