@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.2.0-beta.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.1.0-beta.1...camouflage-tui-v2.2.0-beta.1) (2026-09-30)
+
+
+### Features
+
+* **inline:** land the inline renderer stack ([#32](https://github.com/sinameraji/camouflage/issues/32)–[#36](https://github.com/sinameraji/camouflage/issues/36)) ([354ef8f](https://github.com/sinameraji/camouflage/commit/354ef8f51748ba8ecaa76b38cb384460edc9b1cf))
+* **sdk:** add inline mode, a permission helper, and typed send ([7e0a4cc](https://github.com/sinameraji/camouflage/commit/7e0a4cc19f1d6d5000796b321b4987ae17a7b1a8))
+* **sdk:** add inline mode, a permission helper, and typed send ([7f8b4db](https://github.com/sinameraji/camouflage/commit/7f8b4dbb1178c63815ebc6ef54f43506b585ea09))
+
 ## [2.1.0-beta.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.0.0-beta.1...camouflage-tui-v2.1.0-beta.1) (2026-06-03)
 
 
