@@ -4,6 +4,14 @@ on:
   push:
     branches:
       - main
+  # Recovery: publish an existing release to npm (e.g. after fixing npm
+  # auth). Binaries for it can be (re)built with the Release workflow.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to publish (e.g. camouflage-tui-v2.2.1-beta.1)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -12,6 +20,7 @@ permissions:
 
 jobs:
   release-please:
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     outputs:
       releases_created: ${{ steps.release.outputs.releases_created }}
@@ -25,44 +34,6 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: .release-please-config.json
           manifest-file: .release-please-manifest.json
-
-      - uses: actions/checkout@v4
-        if: ${{ steps.release.outputs.releases_created }}
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          registry-url: "https://registry.npmjs.org"
-        if: ${{ steps.release.outputs.releases_created }}
-
-      # Publish to npm. The version is read from package.json (which
-      # release-please bumped in the released commit) rather than from the
-      # action's `version` output, which is empty in manifest mode — that
-      # emptiness is what previously mislabeled a beta as `latest`.
-      #
-      # The publish is idempotent: if the exact version is already on the
-      # registry we skip instead of failing. npm rejects re-publishing an
-      # existing version with a 403, which used to break this job whenever
-      # the workflow re-ran for an already-released version.
-      #
-      # Pre-releases (e.g. 1.0.1-beta.1) publish under the "beta" tag;
-      # stable releases publish under "latest".
-      - run: |
-          VERSION="$(node -p "require('./package.json').version")"
-          NAME="$(node -p "require('./package.json').name")"
-          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
-            echo "$NAME@$VERSION is already published — skipping."
-            exit 0
-          fi
-          if [[ "$VERSION" == *-* ]]; then
-            npm publish --provenance --access public --tag beta
-          else
-            npm publish --provenance --access public
-          fi
-        working-directory: sdk/node
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        if: ${{ steps.release.outputs.releases_created }}
 
       # release-please only tracks the sdk/node package path, but the
       # published binary is built from crates/**. A user-facing change to the
@@ -118,3 +89,50 @@ jobs:
     with:
       tag: ${{ needs.release-please.outputs.tag_name }}
     secrets: inherit
+
+  # Publish to npm after the binaries are attached to the GitHub release:
+  # the package's install script downloads them from there, so publishing
+  # first would give early installers a missing binary.
+  #
+  # Auth: npm trusted publishing (OIDC, configured on npmjs.com for this
+  # repo and this workflow file) needs npm >= 11.5.1, installed below. If an
+  # NPM_TOKEN secret is set it's used as a fallback.
+  #
+  # The version is read from package.json at the tag. Publishing is
+  # idempotent: an already-published version is skipped. Pre-releases go
+  # to the "beta" dist-tag, stable releases to "latest".
+  publish:
+    needs: [release-please, build-binaries]
+    if: >-
+      ${{ always() && (
+        (github.event_name == 'push' && needs.release-please.outputs.releases_created == 'true' && needs.build-binaries.result == 'success')
+        || github.event_name == 'workflow_dispatch'
+      ) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.release-please.outputs.tag_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+      - run: npm install -g npm@latest
+      - run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          NAME="$(node -p "require('./package.json').name")"
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$NAME@$VERSION is already published — skipping."
+            exit 0
+          fi
+          if [[ "$VERSION" == *-* ]]; then
+            npm publish --provenance --access public --tag beta
+          else
+            npm publish --provenance --access public
+          fi
+        working-directory: sdk/node
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
