@@ -150,7 +150,7 @@ impl Pty {
     }
 
     /// Close stdin (the host going away) and return the child's CPU time
-    /// and how many times its event loop woke up.
+    /// and how many times its event loop woke up on a timer.
     fn finish(mut self) -> (Duration, u64) {
         drop(self.child.stdin.take());
         let pid = self.child.id() as libc::pid_t;
@@ -164,7 +164,13 @@ impl Pty {
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        (tv(usage.ru_utime) + tv(usage.ru_stime), stats["wakeups"].as_u64().unwrap_or(u64::MAX))
+        // Timer wakeups only: host events and keys legitimately wake the loop
+        // (and a burst arrives in a varying number of batches).
+        let ticks = stats["by_source"]["tick"].as_u64().unwrap_or(0);
+        if stats.is_null() {
+            return (tv(usage.ru_utime) + tv(usage.ru_stime), u64::MAX);
+        }
+        (tv(usage.ru_utime) + tv(usage.ru_stime), ticks)
     }
 }
 
@@ -233,7 +239,77 @@ fn idle_costs_nothing() {
     let (short_cpu, short_wakeups, _) = run(Duration::from_millis(300));
     let (long_cpu, long_wakeups, written) = run(Duration::from_millis(2500));
     assert_eq!(written, 0, "an idle renderer must not write to the terminal");
-    assert_eq!(long_wakeups, short_wakeups, "an idle renderer must not wake up (short run {short_wakeups}, long run {long_wakeups})");
+    assert_eq!(short_wakeups, 0, "nothing animates here, so the loop must never wake on a timer");
+    assert_eq!(long_wakeups, 0, "an idle renderer must not wake on a timer ({long_wakeups} timer wakeups in 2.5s idle)");
     let extra = long_cpu.saturating_sub(short_cpu);
     assert!(extra < Duration::from_millis(60), "2.2s more idle cost {extra:?} of CPU (short {short_cpu:?}, long {long_cpu:?})");
+}
+
+/// The SDK's default mode: stdout is a pipe carrying outbound events and the
+/// renderer draws on /dev/tty. Nothing but NDJSON may appear on that pipe,
+/// and the very first event must arrive intact.
+#[test]
+fn piped_stdout_carries_only_clean_events() {
+    let (mut master, mut slave): (RawFd, RawFd) = (0, 0);
+    let mut ws = libc::winsize { ws_row: ROWS, ws_col: COLS, ws_xpixel: 0, ws_ypixel: 0 };
+    let rc = unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), &mut ws) };
+    assert_eq!(rc, 0);
+    let db = tempdir::TempDir::new();
+    let slave_fd = slave;
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_camouflage-tui"));
+    cmd.args(["--ui", "inline", "--stdin-events", "--emit-responses", "--db"])
+        .arg(db.0.join("s.db"))
+        .env("TERM", "xterm-256color")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd.pre_exec(move || {
+            libc::setsid();
+            libc::ioctl(slave_fd, libc::TIOCSCTTY as _, 0);
+            Ok(())
+        });
+    }
+    let mut child = cmd.spawn().unwrap();
+    unsafe { libc::close(slave) };
+    let mut tty = unsafe { std::fs::File::from_raw_fd(master) };
+    // Drain the tty so the renderer never blocks drawing.
+    let mut drain = tty.try_clone().unwrap();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 65536];
+        while let Ok(n) = drain.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+        }
+    });
+    let mut events = child.stdout.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut all = Vec::new();
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = events.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            all.extend_from_slice(&buf[..n]);
+            let _ = tx.send(all.clone());
+        }
+    });
+    std::thread::sleep(Duration::from_millis(400));
+    tty.write_all(b"/help\r").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut got = Vec::new();
+    while Instant::now() < deadline && !got.ends_with(b"\n") {
+        if let Ok(b) = rx.recv_timeout(Duration::from_millis(100)) {
+            got = b;
+        }
+    }
+    let _ = child.kill();
+    let text = String::from_utf8_lossy(&got).to_string();
+    let first = text.lines().next().unwrap_or("");
+    let ev: serde_json::Value = serde_json::from_str(first).unwrap_or_else(|e| panic!("first outbound line isn't JSON ({e}): {first:?}"));
+    assert_eq!(ev["event_type"], "UserInputSubmitted");
+    assert_eq!(ev["payload"]["text"], "/help");
 }
