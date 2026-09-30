@@ -45,7 +45,9 @@ struct Args {
     /// renderer (host-style adapters). Defaults to true when
     /// --stdin-events is set, false otherwise. Mutually exclusive with
     /// --responses-fd.
-    #[arg(long)]
+    /// A bare `--emit-responses` means true (the Node SDK has always passed
+    /// it that way).
+    #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     emit_responses: Option<bool>,
 
     /// Write outbound NDJSON events to the given pre-opened file descriptor
@@ -69,6 +71,21 @@ struct Args {
     /// is the v2 alternate-screen UI (also used for --replay and --play).
     #[arg(long, value_enum, default_value_t = UiMode::Fullscreen)]
     ui: UiMode,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emit_responses_accepts_a_bare_flag() {
+        let a = Args::try_parse_from(["camouflage-tui", "--stdin-events", "--emit-responses"]).unwrap();
+        assert_eq!(a.emit_responses, Some(true));
+        let b = Args::try_parse_from(["camouflage-tui", "--emit-responses=false"]).unwrap();
+        assert_eq!(b.emit_responses, Some(false));
+        let c = Args::try_parse_from(["camouflage-tui", "--emit-responses", "--ui", "inline"]).unwrap();
+        assert_eq!((c.emit_responses, c.ui), (Some(true), UiMode::Inline));
+    }
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
