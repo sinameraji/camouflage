@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.2-beta.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.2.1-beta.1...camouflage-tui-v2.2.2-beta.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* **sdk:** release camouflage-tui 2.2.2-beta.1 (rebuild binary from b5e1ab44466e) ([02f1b38](https://github.com/sinameraji/camouflage/commit/02f1b38b647c738683e10d8d8113550470b6e8f6))
+* **tui:** keep the host's event stream clean in inline piped mode ([fb435f9](https://github.com/sinameraji/camouflage/commit/fb435f98f5c7eb00ee78ac54b57607e59c3bdfa7))
+
 ## [2.2.1-beta.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.2.0-beta.1...camouflage-tui-v2.2.1-beta.1) (2026-09-30)
 
 
