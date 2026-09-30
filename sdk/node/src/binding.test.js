@@ -169,3 +169,15 @@ test("ui option passes --ui to the renderer", async () => {
   assert.match(text, /--ui inline/);
   await cam.close();
 });
+
+test("a renderer that exits at startup doesn't crash the host", async () => {
+  const cam = await mount({ bin: process.execPath, args: ["-e", "process.exit(3)"], skipDefaultArgs: true });
+  const exited = new Promise((resolve) => cam.on("exit", resolve));
+  // Keep writing while (and after) the child dies; nothing may throw.
+  for (let i = 0; i < 50; i++) {
+    cam.send("AssistantTokenDelta", { stream_id: "s", token: "x".repeat(1000) });
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  await exited;
+  assert.equal(cam.send("SessionEnded", {}), false);
+});

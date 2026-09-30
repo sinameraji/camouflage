@@ -231,7 +231,7 @@ export async function mount(opts = {}) {
     defaultArgs = ["--stdin-events", "--responses-fd", "3"];
     stdio = ["pipe", "inherit", "inherit", "pipe"];
   } else {
-    defaultArgs = ["--stdin-events", "--emit-responses"];
+    defaultArgs = ["--stdin-events", "--emit-responses=true"];
     stdio = ["pipe", "pipe", stderrMode];
   }
   // Brand the header with the host app's name (explicit > auto-detected).
@@ -267,6 +267,13 @@ export async function mount(opts = {}) {
   });
 
   const handle = new CamouflageHandle(child, child.stdin);
+
+  // If the renderer exits, writes to its stdin fail with EPIPE. Unhandled,
+  // that 'error' event would crash the host process; treat it as closed.
+  child.stdin.on("error", (err) => {
+    handle._closed = true;
+    if (err && err.code !== "EPIPE") handle.emit("invalid", { line: "", error: String(err) });
+  });
 
   // Stream outbound events (UserInputSubmitted, PermissionResponse) from
   // whichever stream the renderer is writing them to. In renderToTerminal
