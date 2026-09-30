@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.1-beta.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.2.0-beta.1...camouflage-tui-v2.2.1-beta.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* **sdk:** make the default piped mode start, and survive a dead renderer ([4794cef](https://github.com/sinameraji/camouflage/commit/4794cefc85676fccbfe47de29a732970a6185059))
+
 ## [2.2.0-beta.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.1.0-beta.1...camouflage-tui-v2.2.0-beta.1) (2026-09-30)
 
 
