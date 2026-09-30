@@ -15,9 +15,9 @@ The `postinstall` script downloads a pre-built native binary for your platform (
 ```js
 import { mount } from "camouflage-tui";
 
-const cam = await mount();
+const cam = await mount({ ui: "inline" });
 
-cam.send("SessionStarted", {});
+cam.send("SessionStarted", { title: "my-agent", detail: ["model · ~/project"], accent: "orange" });
 cam.send("UserMessageCreated", { text: "investigate failing test" });
 cam.send("AssistantStreamStarted", { stream_id: "s1" });
 cam.send("AssistantTokenDelta", { stream_id: "s1", token: "Looking " });
@@ -51,7 +51,33 @@ interface MountOptions {
   env?: NodeJS.ProcessEnv;   // merged with process.env
   inheritStderr?: boolean;   // default true; false → "stderr" event
   renderToTerminal?: boolean; // true → stdout goes to terminal, responses on fd 3
+  ui?: "inline" | "fullscreen"; // default "fullscreen"; see below
 }
+```
+
+`ui: "inline"` prints finished output into the terminal's normal scrollback
+and redraws only a small live region (the reply being streamed, the
+spinner, the input box). The transcript stays after exit, text selection
+works normally, and an idle renderer uses no CPU. It draws on the terminal
+(`/dev/tty`) even in the default piped mode, so it works with a plain
+`mount({ ui: "inline" })`.
+
+### Helpers that wait for the user
+
+`selectList`, `confirm`, `permission`, `form` and `wizard` send a prompt and
+resolve with the user's answer. If the renderer exits first they resolve
+as cancelled (`permission` resolves `{ choice: "deny" }`), so a host never
+hangs on a dead renderer.
+
+```js
+import { permission } from "camouflage-tui";
+
+const { choice } = await permission(cam, {
+  request_id: "r1",
+  tool: "edit",
+  action: "edit src/auth/session.ts",
+  diff: { path: "src/auth/session.ts", before, after },
+});
 ```
 
 ### `CamouflageHandle`

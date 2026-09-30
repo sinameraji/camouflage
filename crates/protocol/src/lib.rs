@@ -858,6 +858,36 @@ mod tests {
         }
     }
 
+    /// The Node SDK's type lists are hand-written; fail the build when they
+    /// fall behind this enum (autopilot once deleted `TranscriptCleared`
+    /// calls because the SDK types didn't list it).
+    #[test]
+    fn node_sdk_knows_every_event_type() {
+        let runtime = include_str!("../../../sdk/node/src/types.js");
+        let types = include_str!("../../../sdk/node/src/types.d.ts");
+        let all = [
+            EventType::SessionStarted, EventType::SessionEnded, EventType::UserMessageCreated,
+            EventType::AssistantStreamStarted, EventType::AssistantTokenDelta, EventType::AssistantMessageCompleted,
+            EventType::ToolExecutionStarted, EventType::ToolExecutionStdout, EventType::ToolExecutionStderr,
+            EventType::ToolExecutionFinished, EventType::PatchProposed, EventType::PatchApplied,
+            EventType::PermissionRequested, EventType::PermissionGranted, EventType::PermissionDenied,
+            EventType::RuntimeError, EventType::SessionCompacted, EventType::ViewportMarker,
+            EventType::StatusUpdate, EventType::BackgroundTaskUpdate, EventType::TodoListUpdate,
+            EventType::UserInputSubmitted, EventType::PermissionResponse, EventType::SlashCommandsRegistered,
+            EventType::MentionCandidatesRegistered, EventType::ShowSelectList, EventType::SelectListResponse,
+            EventType::ShowConfirm, EventType::ConfirmResponse, EventType::ShowTable, EventType::ShowKeyValueView,
+            EventType::ShowForm, EventType::FormResponse, EventType::ShowWizard, EventType::WizardCompleted,
+            EventType::WizardCancelled, EventType::ModeChangeRequested, EventType::CancelRequested,
+            EventType::TranscriptCleared, EventType::Splash, EventType::ShowToast,
+        ];
+        for t in all {
+            let quoted = format!("\"{}\"", t.as_str());
+            assert!(runtime.contains(&quoted), "sdk/node/src/types.js is missing {quoted}");
+            assert!(types.contains(&format!("| {quoted}")), "sdk/node/src/types.d.ts EventType is missing {quoted}");
+            assert!(types.contains(&format!("event_type: {quoted}")), "sdk/node/src/types.d.ts Event union is missing {quoted}");
+        }
+    }
+
     #[test]
     fn direction_classification() {
         assert_eq!(EventType::SessionStarted.direction(), Direction::Inbound);

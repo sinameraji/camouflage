@@ -59,6 +59,13 @@ export {
   WizardStepResult,
   WizardCompleted,
   WizardCancelled,
+  SessionStarted,
+  Splash,
+  ShowToast,
+  DiffPayload,
+  TodoItem,
+  TodoListUpdate,
+  PayloadOf,
   // Tagged union
   Event,
   // Helpers
@@ -71,6 +78,8 @@ export {
   mount,
   selectList,
   confirm,
+  permission,
+  tasksSet,
   table,
   keyValueView,
   form,

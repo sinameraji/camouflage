@@ -6,8 +6,12 @@ license.workspace = true
 description = "Inline terminal rendering for Camouflage: print finished output once, redraw a small live region."
 
 [dependencies]
+camouflage-protocol = { workspace = true }
+serde_json = { workspace = true }
 unicode-width = { workspace = true }
 unicode-segmentation = "1.12"
+pulldown-cmark = { version = "0.13", default-features = false }
+syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "regex-fancy"] }
 
 [dev-dependencies]
 vt100 = "0.16"
