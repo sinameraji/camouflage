@@ -9,7 +9,7 @@
  */
 
 import { createWriteStream, mkdirSync, chmodSync, existsSync, unlinkSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { get as httpsGet } from "node:https";
@@ -64,7 +64,7 @@ async function main() {
       await download(url, tmpPath);
 
       // Extract the binary from the tarball (Windows 10+ ships tar.exe).
-      execSync(`tar xzf "${tmpPath}" -C "${BIN_DIR}"`, { stdio: "pipe" });
+      execFileSync("tar", ["xzf", tmpPath, "-C", BIN_DIR], { stdio: "pipe" });
       unlinkSync(tmpPath);
 
       chmodSync(BIN_PATH, 0o755);
