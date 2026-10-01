@@ -342,6 +342,8 @@ export async function mount(opts = {}) {
         process.stderr.write(`[sdk:esc] CancelRequested line arrived, emitting cancelRequested\n`);
       }
       handle.emit("cancelRequested", {});
+    } else if (ev.event_type === "MentionQuery") {
+      handle.emit("mentionQuery", { query: ev.payload?.query ?? "" });
     }
     // Always also emit the raw Event for advanced consumers.
     handle.emit("event", ev);

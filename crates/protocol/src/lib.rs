@@ -152,6 +152,12 @@ pub enum EventType {
     /// "mode: plan", "saved", "interrupted". Payload:
     /// `{ "text": String, "kind"?: "info"|"warn"|"error"|"success", "ttl_ms"?: u64 }`.
     ShowToast,
+    /// v2.3+ — Renderer → host: the user is typing a path mention
+    /// (`@./`, `@../`, `@~/`, `@/`). Payload `{ "query": "<text after @>" }`.
+    /// The host answers with `MentionCandidatesRegistered` carrying
+    /// `for_query` (the directory part it listed) and that directory's
+    /// entries; folder tokens end in `/`. Sent once per directory.
+    MentionQuery,
 }
 
 impl EventType {
@@ -198,6 +204,7 @@ impl EventType {
             EventType::TranscriptCleared => "TranscriptCleared",
             EventType::Splash => "Splash",
             EventType::ShowToast => "ShowToast",
+            EventType::MentionQuery => "MentionQuery",
         }
     }
 
@@ -248,6 +255,7 @@ impl EventType {
             "TranscriptCleared" => Self::TranscriptCleared,
             "Splash" => Self::Splash,
             "ShowToast" => Self::ShowToast,
+            "MentionQuery" => Self::MentionQuery,
             _ => return None,
         })
     }
@@ -263,7 +271,8 @@ impl EventType {
             | EventType::WizardCompleted
             | EventType::WizardCancelled
             | EventType::ModeChangeRequested
-            | EventType::CancelRequested => Direction::Outbound,
+            | EventType::CancelRequested
+            | EventType::MentionQuery => Direction::Outbound,
             _ => Direction::Inbound,
         }
     }
@@ -491,6 +500,18 @@ pub mod payloads {
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub struct MentionCandidatesRegistered {
         pub candidates: Vec<MentionCandidate>,
+        /// v2.3+ — set when answering a `MentionQuery`: the directory part
+        /// these entries list (e.g. `../`). Without it, the candidates
+        /// replace the default list.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub for_query: Option<String>,
+    }
+
+    /// v2.3+ — renderer → host: the text after `@` while the user types a
+    /// path mention.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct MentionQuery {
+        pub query: String,
     }
 
     /// v0.4.6+ (CC-1) — one option in a `ShowSelectList`.
@@ -848,8 +869,9 @@ mod tests {
             EventType::TranscriptCleared,
             EventType::Splash,
             EventType::ShowToast,
+            EventType::MentionQuery,
         ];
-        assert_eq!(types.len(), 41);
+        assert_eq!(types.len(), 42);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();
@@ -879,6 +901,7 @@ mod tests {
             EventType::ShowForm, EventType::FormResponse, EventType::ShowWizard, EventType::WizardCompleted,
             EventType::WizardCancelled, EventType::ModeChangeRequested, EventType::CancelRequested,
             EventType::TranscriptCleared, EventType::Splash, EventType::ShowToast,
+            EventType::MentionQuery,
         ];
         for t in all {
             let quoted = format!("\"{}\"", t.as_str());

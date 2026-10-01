@@ -22,7 +22,7 @@ const KNOWN_TYPES = new Set([
   "ShowForm", "FormResponse",
   "ShowWizard", "WizardCompleted", "WizardCancelled",
   "ModeChangeRequested", "CancelRequested",
-  "TranscriptCleared", "Splash", "ShowToast",
+  "TranscriptCleared", "Splash", "ShowToast", "MentionQuery",
 ]);
 
 /**

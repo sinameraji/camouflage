@@ -155,6 +155,9 @@ fn validate_payload(event_type: EventType, payload: serde_json::Value) -> Result
         CancelRequested => {
             // No typed payload (CancelRequested is bodyless); accept any value.
         }
+        MentionQuery => {
+            serde_json::from_value::<payloads::MentionQuery>(payload)?;
+        }
         // Events without typed payloads — any JSON value is accepted.
         SessionStarted
         | SessionEnded

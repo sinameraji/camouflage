@@ -51,7 +51,8 @@ export type EventType =
   | "CancelRequested"
   | "TranscriptCleared"
   | "Splash"
-  | "ShowToast";
+  | "ShowToast"
+  | "MentionQuery";
 
 export type Direction = "inbound" | "outbound";
 
@@ -194,7 +195,12 @@ export type MentionCandidate = {
   label?: string;
   kind?: string;
 };
-export type MentionCandidatesRegistered = { candidates: MentionCandidate[] };
+export type MentionCandidatesRegistered = {
+  candidates: MentionCandidate[];
+  /** Set when answering a MentionQuery: the directory part these entries are
+   *  for (e.g. "../"). Without it the list replaces the default candidates. */
+  for_query?: string;
+};
 
 export type SelectListOption = {
   value: string;
@@ -325,6 +331,13 @@ export type ShowToast = {
   ttl_ms?: number;
 };
 
+/**
+ * Renderer → host: the user is typing a path after `@` (`./`, `../`, `~`,
+ * `/`). Answer with MentionCandidatesRegistered `{ for_query, candidates }`
+ * listing that directory; folder tokens end in "/".
+ */
+export type MentionQuery = { query: string };
+
 /** A diff to show inline: full before/after text, or a unified diff. */
 export type DiffPayload = {
   path: string;
@@ -378,6 +391,7 @@ export type Event = EnvelopeMeta &
     | { event_type: "TranscriptCleared"; payload?: Record<string, never> }
     | { event_type: "Splash"; payload: Splash }
     | { event_type: "ShowToast"; payload: ShowToast }
+    | { event_type: "MentionQuery"; payload: MentionQuery }
   );
 
 /** The payload type for a given event type, e.g. `PayloadOf<"ShowToast">`. */
