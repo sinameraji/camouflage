@@ -12,6 +12,8 @@ use crate::width::{str_width, wrap};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 pub fn render_markdown(src: &str, width: usize, theme: &Theme) -> Vec<Line> {
+    let src = ansi_to_tags(src);
+    let src: &str = &src;
     let mut r = Renderer::new(width.max(10), theme);
     let opts = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     for ev in Parser::new_ext(src, opts) {
@@ -41,6 +43,8 @@ struct Renderer<'t> {
     code: Option<(String, String)>,
     table: Option<TableState>,
     link: Option<String>,
+    /// Open inline HTML tags, so `</span>` pops the style its `<span>` pushed.
+    html: Vec<String>,
 }
 
 impl<'t> Renderer<'t> {
@@ -58,6 +62,7 @@ impl<'t> Renderer<'t> {
             code: None,
             table: None,
             link: None,
+            html: Vec::new(),
         }
     }
 
@@ -164,14 +169,101 @@ impl<'t> Renderer<'t> {
                 self.out.push(Line::styled("─".repeat(n), self.theme.dim()));
             }
             Event::TaskListMarker(done) => self.text(if done { "[x] " } else { "[ ] " }),
-            Event::Html(t) | Event::InlineHtml(t) => {
-                let dim = self.theme.dim();
-                self.push_style(dim);
-                self.text(t.trim_end_matches('\n'));
-                self.pop_style();
-            }
+            Event::Html(t) | Event::InlineHtml(t) => self.html(&t),
             Event::FootnoteReference(t) => self.text(&format!("[{t}]")),
             _ => {}
+        }
+    }
+
+    /// Inline HTML from model text. Formatting tags become terminal styles
+    /// (`<span style="color: red">`, `<font color>`, `<b>`, `<i>`, `<u>`,
+    /// `<s>`, `<mark>`, `<br>`); other tags are dropped so raw markup never
+    /// shows; text between tags (in HTML blocks) is kept.
+    fn html(&mut self, raw: &str) {
+        let mut rest = raw;
+        while !rest.is_empty() {
+            let Some(lt) = rest.find('<') else {
+                self.text(rest.trim_end_matches('\n'));
+                break;
+            };
+            if lt > 0 {
+                self.text(&rest[..lt]);
+            }
+            let Some(gt) = rest[lt..].find('>') else {
+                self.text(&rest[lt..]);
+                break;
+            };
+            self.html_tag(&rest[lt + 1..lt + gt]);
+            rest = &rest[lt + gt + 1..];
+        }
+    }
+
+    fn html_tag(&mut self, inner: &str) {
+        let inner = inner.trim();
+        // ANSI color codes, rewritten as <ansi-…> tags before parsing.
+        if let Some(params) = inner.strip_prefix("ansi-") {
+            let params = params.replace('-', ";");
+            if params.is_empty() || params == "0" {
+                while let Some(pos) = self.html.iter().rposition(|t| t == "ansi") {
+                    for _ in pos..self.html.len() {
+                        self.pop_style();
+                    }
+                    self.html.truncate(pos);
+                }
+            } else {
+                let st = crate::ansi::apply_sgr(Style::new(), &params);
+                self.push_style(st);
+                self.html.push("ansi".into());
+            }
+            return;
+        }
+        if let Some(name) = inner.strip_prefix('/') {
+            let name = name.trim().to_ascii_lowercase();
+            if let Some(pos) = self.html.iter().rposition(|t| *t == name) {
+                for _ in pos..self.html.len() {
+                    self.pop_style();
+                }
+                self.html.truncate(pos);
+            }
+            return;
+        }
+        let name: String = inner.chars().take_while(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase();
+        let attrs = inner[name.len()..].to_ascii_lowercase();
+        if name == "br" {
+            self.flush_inline();
+            return;
+        }
+        let style = match name.as_str() {
+            "b" | "strong" => Some(Style::new().bold()),
+            "i" | "em" => Some(Style::new().italic()),
+            "u" | "ins" => Some(Style::new().underline()),
+            "s" | "del" | "strike" => Some(Style::new().strike()),
+            "mark" => Some(Style::new().bg(crate::style::Color::Yellow).fg(crate::style::Color::Black)),
+            "code" | "kbd" => Some(self.theme.inline_code()),
+            "span" | "font" | "div" | "p" => {
+                let mut st = Style::new();
+                if let Some(c) = css_value(&attrs, "color").or_else(|| attr_value(&attrs, "color")).and_then(|v| html_color(&v)) {
+                    st = st.fg(c);
+                }
+                if let Some(c) = css_value(&attrs, "background-color").or_else(|| css_value(&attrs, "background")).and_then(|v| html_color(&v)) {
+                    st = st.bg(c);
+                }
+                if css_value(&attrs, "font-weight").map(|w| w == "bold" || w.parse::<u32>().map(|n| n >= 600).unwrap_or(false)).unwrap_or(false) {
+                    st = st.bold();
+                }
+                if css_value(&attrs, "font-style").as_deref() == Some("italic") {
+                    st = st.italic();
+                }
+                Some(st)
+            }
+            _ => None,
+        };
+        // Self-closing tags (`<br/>`, `<span/>`) open nothing.
+        if let Some(st) = style {
+            if !inner.ends_with('/') {
+                self.push_style(st);
+                self.html.push(name);
+            }
         }
     }
 
@@ -367,6 +459,100 @@ impl<'t> Renderer<'t> {
     }
 }
 
+/// Rewrite ANSI SGR codes as `<ansi-…>` tags (other escapes are dropped).
+/// pulldown-cmark splits text at `[`, so escapes can't be handled per text
+/// event; as tags they arrive whole and nest with the markdown.
+fn ansi_to_tags(src: &str) -> std::borrow::Cow<'_, str> {
+    if !src.contains('\x1b') {
+        return std::borrow::Cow::Borrowed(src);
+    }
+    let mut out = String::with_capacity(src.len());
+    let mut chars = src.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        if chars.peek() != Some(&'[') {
+            chars.next();
+            continue;
+        }
+        chars.next();
+        let mut params = String::new();
+        let mut fin = None;
+        for p in chars.by_ref() {
+            if ('\x40'..='\x7e').contains(&p) {
+                fin = Some(p);
+                break;
+            }
+            params.push(p);
+        }
+        if fin == Some('m') && params.chars().all(|c| c.is_ascii_digit() || c == ';' || c == ':') {
+            out.push_str(&format!("<ansi-{}>", params.replace([';', ':'], "-")));
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
+/// `color: red` out of a `style="…"` attribute.
+fn css_value(attrs: &str, prop: &str) -> Option<String> {
+    let style = attr_value(attrs, "style")?;
+    style.split(';').find_map(|decl| {
+        let (k, v) = decl.split_once(':')?;
+        (k.trim() == prop).then(|| v.trim().trim_end_matches("!important").trim().to_string())
+    })
+}
+
+/// The value of `name="…"`, `name='…'` or `name=bare`.
+fn attr_value(attrs: &str, name: &str) -> Option<String> {
+    let mut search = attrs;
+    while let Some(i) = search.find(name) {
+        let before_ok = i == 0 || !search.as_bytes()[i - 1].is_ascii_alphanumeric() && search.as_bytes()[i - 1] != b'-';
+        let after = search[i + name.len()..].trim_start();
+        if before_ok {
+            if let Some(v) = after.strip_prefix('=') {
+                let v = v.trim_start();
+                return Some(match v.chars().next() {
+                    Some(q @ ('"' | '\'')) => v[1..].split(q).next().unwrap_or("").to_string(),
+                    _ => v.split_whitespace().next().unwrap_or("").to_string(),
+                });
+            }
+        }
+        search = &search[i + name.len()..];
+    }
+    None
+}
+
+/// CSS color names and hex values, mapped onto the terminal palette (hex
+/// stays truecolor).
+fn html_color(v: &str) -> Option<crate::style::Color> {
+    use crate::style::Color;
+    let v = v.trim();
+    if let Some(hex) = v.strip_prefix('#') {
+        let full = match hex.len() {
+            3 => hex.chars().flat_map(|c| [c, c]).collect::<String>(),
+            6 => hex.to_string(),
+            _ => return None,
+        };
+        let n = u32::from_str_radix(&full, 16).ok()?;
+        return Some(Color::Rgb((n >> 16) as u8, (n >> 8) as u8, n as u8));
+    }
+    Some(match v {
+        "red" | "crimson" | "darkred" => Color::Red,
+        "green" | "lime" | "darkgreen" | "seagreen" => Color::Green,
+        "yellow" | "gold" => Color::Yellow,
+        "blue" | "navy" | "royalblue" | "dodgerblue" => Color::Blue,
+        "magenta" | "purple" | "violet" | "fuchsia" | "orchid" => Color::Magenta,
+        "cyan" | "teal" | "aqua" | "turquoise" => Color::Cyan,
+        "orange" | "darkorange" => Color::Indexed(208),
+        "pink" | "hotpink" => Color::Indexed(205),
+        "gray" | "grey" | "silver" | "darkgray" | "darkgrey" => Color::BrightBlack,
+        "white" => Color::White,
+        "black" => Color::Black,
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -429,6 +615,30 @@ mod tests {
         assert!(spans.iter().any(|s| s.text == "bold" && s.style.bold));
         assert!(spans.iter().any(|s| s.text == "code" && s.style.fg == crate::style::Color::Blue));
         assert!(spans.iter().any(|s| s.text == "it" && s.style.italic));
+    }
+
+    #[test]
+    fn inline_html_colors_become_terminal_colors() {
+        use crate::style::Color;
+        let lines = render_markdown(r##"Here it is in <span style="color: red;">red</span>, <b>bold</b> and <font color="#00ff00">green</font>."##, 60, &Theme::default());
+        assert_eq!(text(&lines), vec!["Here it is in red, bold and green."]);
+        let find = |t: &str| lines[0].spans.iter().find(|s| s.text == t).unwrap().style;
+        assert_eq!(find("red").fg, Color::Red);
+        assert!(find("bold").bold);
+        assert_eq!(find("green").fg, Color::Rgb(0, 255, 0));
+        assert!(find(", ").is_plain(), "styles end at the closing tag");
+    }
+
+    #[test]
+    fn unknown_tags_never_show_as_raw_markup() {
+        assert_eq!(md("a <details>b</details> c<br>d", 40), vec!["a b c", "d"]);
+    }
+
+    #[test]
+    fn ansi_color_in_text_is_kept() {
+        let lines = render_markdown("status: \x1b[32mok\x1b[0m done", 40, &Theme::default());
+        assert_eq!(text(&lines), vec!["status: ok done"]);
+        assert_eq!(lines[0].spans.iter().find(|s| s.text == "ok").unwrap().style.fg, crate::style::Color::Green);
     }
 
     #[test]

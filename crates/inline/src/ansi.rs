@@ -99,7 +99,7 @@ fn bright(n: u16) -> Color {
     }
 }
 
-fn apply_sgr(mut s: Style, params: &str) -> Style {
+pub(crate) fn apply_sgr(mut s: Style, params: &str) -> Style {
     let nums: Vec<u16> = if params.is_empty() {
         vec![0]
     } else {
