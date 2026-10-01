@@ -221,3 +221,27 @@ Known limits of the Ink hotfix (the Camouflage rewrite removes them):
   - autopilot #672 brings back `--ui camouflage` on `^2.2.2-beta.1`, verified with the published package in a pseudo-terminal (real model turn, `/help`, modes, cost, 0 bytes while idle, clean exit).
   - Release gotcha: release-please only tracks `sdk/node`, and has no option to add `crates/` (checked 17.11.2). Crate-only fixes need `scripts/trigger-binary-release.sh` (a `Release-As:` commit) to ship.
 - **Next:** /compact and the MCP/LSP/memory managers in autopilot's Camouflage mode; daily-drive it; then make `--ui inline` the Camouflage default and `camouflage` the autopilot default.
+
+## 8. Roadmap: Ink parity, then defaults (2026-10-01)
+
+autopilot 1.5.0 ships `--ui camouflage`. First real use: speed and smoothness are a clear win; the gaps are feature parity. Ink has 31 slash commands; Camouflage mode has 6. Ink's `@` picker can browse `../`, `~/` and absolute paths (autopilot #650); Camouflage's can't.
+
+**R1. Slash-command parity through an adapter (autopilot).** The Ink handlers in `src/ui/slash-commands.ts` take a 71-field context. Most fields are refs and plain setters; 20 open Ink-only pickers and modals. Implement that context on top of Camouflage instead of rewriting each command:
+- `setEvents` becomes renderer events (info/error notices, assistant text, tool rows), so every command that only prints works at once: /cost, /compact, /fresh, /init, /checkpoint(s), /memory search|clear, /mcp|lsp|hooks reload, /key, /logout, /update, /settings, /shell, /jev, /subagents, custom commands.
+- Each `setShowXPicker(true)` maps to a Camouflage prompt: model, mode, resume, memory, skills, shell, help, hooks dashboard, multi-agent, LSP wizard, remote, changelog image, command wizard, theme (accent).
+- Boot the same managers as Ink: MCP, LSP, memory, hooks, skills.
+- Also: `!` shell commands, queued follow-ups (#669), the plan-complete picker, the multi-agent worker list, reasoning display.
+
+**R2. Renderer features (Camouflage).**
+- Host-driven `@` completion: a new outbound event carries the text after `@`; the host answers with entries for that directory. Paths starting `./`, `../`, `~`, `/` list that directory; picking a folder keeps the picker open inside it.
+- Forms and wizards in inline mode (today they answer "cancelled"), needed for several autopilot modals.
+- Color in model text: map inline HTML (`<span style="color: …">`, `<font color>`, `<mark>`, `<u>`) to terminal colors, and pass ANSI color through. Neither UI does this today; add a line to autopilot's system prompt saying it's available.
+- Ctrl+O transcript view: full screen, built from SQLite, searchable (rule 3 of §3).
+- Runtime theme/accent from the host (for /theme).
+- Slow down or pause when the terminal is unfocused; Windows support.
+
+**R3. Defaults.** After daily driving: make `camouflage` autopilot's default UI and `inline` Camouflage's default; full-screen mode becomes the replay viewer. Record real autopilot sessions as `.camo` fixtures for CI.
+
+**Release note:** release-please only tracks `sdk/node`. Crate-only fixes need `scripts/trigger-binary-release.sh`. Consider moving the npm package to the repo root so every change counts.
+
+Order: R1 adapter and managers first (largest gap, mostly reuse), then `@` navigation and forms, then color, then the rest.
