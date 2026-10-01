@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.4.0-beta.3](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.0-beta.2...camouflage-tui-v2.4.0-beta.3) (2026-10-01)
+
+
+### Bug Fixes
+
+* **inline:** don't print a streamed reply twice when the host sends final text ([3179027](https://github.com/sinameraji/camouflage/commit/3179027030c2458a44c8f8734a643b3c83b200eb))
+* **sdk:** release camouflage-tui 2.4.0-beta.3 ([e9007bb](https://github.com/sinameraji/camouflage/commit/e9007bb31dc5706c0bd6c332b9330d9160798a07))
+
 ## [2.4.0-beta.2](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.0-beta.1...camouflage-tui-v2.4.0-beta.2) (2026-10-01)
 
 
