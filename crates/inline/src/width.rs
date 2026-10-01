@@ -40,6 +40,43 @@ pub fn truncate(s: &str, max: usize) -> String {
     out
 }
 
+/// Shorten to at most `max` cells by cutting the middle, so both the start
+/// and the end (often a file name) stay readable: `npx tsx --te…store.ts`.
+pub fn ellipsize_middle(s: &str, max: usize) -> String {
+    if str_width(s) <= max {
+        return s.to_string();
+    }
+    if max < 8 {
+        return truncate(s, max);
+    }
+    let graphemes: Vec<&str> = s.graphemes(true).collect();
+    let keep = max - 1;
+    let tail_w = keep * 2 / 5;
+    let head_w = keep - tail_w;
+    let mut head = String::new();
+    let mut w = 0;
+    for g in &graphemes {
+        let gw = grapheme_width(g);
+        if w + gw > head_w {
+            break;
+        }
+        head.push_str(g);
+        w += gw;
+    }
+    let mut tail: Vec<&str> = Vec::new();
+    let mut w = 0;
+    for g in graphemes.iter().rev() {
+        let gw = grapheme_width(g);
+        if w + gw > tail_w {
+            break;
+        }
+        tail.push(g);
+        w += gw;
+    }
+    tail.reverse();
+    format!("{head}…{}", tail.concat())
+}
+
 /// Word-wrap `line` to `width` cells. Continuation rows start with `indent`
 /// (for hanging indents under a glyph column). Words longer than a row are
 /// split by grapheme. Spaces at a wrap point are dropped.
