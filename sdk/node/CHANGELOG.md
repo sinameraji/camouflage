@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.4.0-beta.4](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.0-beta.3...camouflage-tui-v2.4.0-beta.4) (2026-10-01)
+
+
+### Features
+
+* **inline:** quiet mode: one row per tool, folded reads, faint live output ([3e1a342](https://github.com/sinameraji/camouflage/commit/3e1a3422401b32ce10343953ad11524edee76c07))
+
+
+### Bug Fixes
+
+* **sdk:** release camouflage-tui 2.4.0-beta.4 ([311ffb6](https://github.com/sinameraji/camouflage/commit/311ffb6efc0089f9c2987cb0a8c90ef4aba307ff))
+
 ## [2.4.0-beta.3](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.0-beta.2...camouflage-tui-v2.4.0-beta.3) (2026-10-01)
 
 
