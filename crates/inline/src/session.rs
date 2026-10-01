@@ -27,6 +27,9 @@ use std::collections::{BTreeMap, HashMap};
 
 /// Spinner frame interval.
 pub const FRAME_MS: i64 = 80;
+/// Frame interval while the terminal is in the background: the spinner
+/// steps once a second and output is batched (docs/inline-redesign.md B2).
+pub const UNFOCUSED_FRAME_MS: i64 = 1000;
 const CTRL_C_WINDOW_MS: i64 = 1600;
 const TOOL_TAIL_LINES: usize = 400;
 
@@ -143,6 +146,10 @@ pub struct Session {
     outbound: Vec<Outbound>,
     /// The host asked to clear the transcript; the app clears the screen.
     pub clear_screen: bool,
+    /// False while the terminal window is in the background (focus
+    /// reporting, DEC 1004). Terminals without it never report, so this
+    /// stays true.
+    pub focused: bool,
     /// The user asked to exit.
     pub exit: bool,
 }
@@ -186,6 +193,7 @@ impl Session {
             reasoning: HashMap::new(),
             outbound: Vec::new(),
             clear_screen: false,
+            focused: true,
             exit: false,
         }
     }
@@ -997,7 +1005,8 @@ impl Session {
         let mut want = |t: i64| next = Some(next.map_or(t, |n: i64| n.min(t)));
         // Waiting on the user (a prompt is open) is idle: nothing animates.
         if (self.is_busy() && self.prompt.is_none()) || !self.tasks.is_empty() {
-            want(now + FRAME_MS - now.rem_euclid(FRAME_MS));
+            let step = if self.focused { FRAME_MS } else { UNFOCUSED_FRAME_MS };
+            want(now + step - now.rem_euclid(step));
         }
         if let Some((_, _, until)) = &self.foot {
             if *until > now {

@@ -8,7 +8,7 @@
 
 use anyhow::{Context, Result};
 use camouflage_headless::{NdjsonDecoder, NdjsonError};
-use camouflage_inline::session::{Key, Session};
+use camouflage_inline::session::{Key, Session, UNFOCUSED_FRAME_MS};
 use camouflage_inline::{InlineTerminal, Theme};
 use camouflage_protocol::{Event, EventType, SCHEMA_VERSION};
 use camouflage_store::{EventStore, SqliteStore};
@@ -56,8 +56,9 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     let outbound = spawn_outbound(responses_fd, emit_responses, stdout_is_tty)?;
     let (tx, mut rx) = mpsc::channel::<Input>(4096);
 
+    let writer = spawn_store_writer(store.clone());
     if stdin_events {
-        spawn_host_reader(session_id, tx.clone(), store.clone(), seq.clone());
+        spawn_host_reader(session_id, tx.clone(), writer.0.clone(), seq.clone());
     }
     spawn_key_reader(tx.clone());
     spawn_signal_handler(tx.clone());
@@ -76,6 +77,10 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     persist(&store, &seq, session_id, EventType::SessionStarted, serde_json::json!({ "synthetic": true }));
 
     let mut last_frame = None;
+    // While the terminal is unfocused, draws are batched to one per
+    // UNFOCUSED_FRAME_MS; `deferred` means there's an undrawn change.
+    let mut last_draw: i64 = 0;
+    let mut deferred = false;
     // Loop statistics, written on exit when CAMOUFLAGE_STATS_PATH is set
     // (the idle soak test uses these to prove idle means no wakeups).
     let mut wakeups: u64 = 0;
@@ -84,7 +89,11 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     let result: Result<()> = async {
         loop {
             let now = now_ms();
-            let deadline = session.next_wakeup(now);
+            let mut deadline = session.next_wakeup(now);
+            if deferred {
+                let at = last_draw + UNFOCUSED_FRAME_MS;
+                deadline = Some(deadline.map_or(at, |d| d.min(at)));
+            }
             let input = match deadline {
                 Some(at) => {
                     let wait = std::time::Duration::from_millis((at - now).max(1) as u64);
@@ -111,11 +120,18 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
             let mut pending = Some(first);
             let mut handled = 0;
             let mut host_closed = false;
+            // Anything the user did is drawn at once, focused or not.
+            let mut urgent = false;
             while let Some(inp) = pending.take() {
                 let now = now_ms();
+                if matches!(inp, Input::Term(_)) {
+                    urgent = true;
+                }
                 match inp {
                     Input::Host(ev) => session.apply(&ev, now),
                     Input::HostClosed => host_closed = true,
+                    Input::Term(TermEvent::FocusLost) => session.focused = false,
+                    Input::Term(TermEvent::FocusGained) => session.focused = true,
                     Input::Term(TermEvent::Resize(w, h)) => {
                         session.resize((w as usize).saturating_sub(1), h as usize);
                         let frame = session.live_frame(now);
@@ -152,6 +168,12 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
             }
 
             let now = now_ms();
+            if !session.focused && !urgent && !session.clear_screen && !session.exit && !host_closed && now - last_draw < UNFOCUSED_FRAME_MS {
+                deferred = true;
+                continue;
+            }
+            deferred = false;
+            last_draw = now;
             if session.clear_screen {
                 session.clear_screen = false;
                 term.get_mut().write_all(b"\x1b[2J\x1b[H")?;
@@ -188,6 +210,12 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     }
     let _ = term.finish();
     leave_terminal_modes();
+    // Flush what the writer still holds before the final event.
+    let (writer_tx, writer_thread) = writer;
+    let _ = writer_tx.send(None);
+    if let Some(t) = writer_thread {
+        let _ = t.join();
+    }
     persist(&store, &seq, session_id, EventType::SessionEnded, serde_json::json!({}));
     if let Some(path) = std::env::var_os("CAMOUFLAGE_STATS_PATH") {
         let _ = std::fs::write(path, serde_json::json!({ "wakeups": wakeups, "frames": frames, "by_source": by_source }).to_string());
@@ -228,10 +256,50 @@ fn map_key(k: KeyEvent) -> Option<Key> {
     })
 }
 
-/// Read NDJSON from stdin, persist each event, then hand it to the loop.
+/// How long the store writer gathers events into one transaction. One
+/// transaction per streamed token cost more CPU than drawing them.
+const STORE_BATCH_MS: u64 = 250;
+
+/// Persist events on a background thread, grouped into one transaction per
+/// STORE_BATCH_MS. Sleeps (no timers) when no events arrive. A crash loses
+/// at most the last batch from the store; the screen is unaffected.
+/// `None` asks the writer to flush and stop; the host reader may still hold
+/// a sender while it waits on stdin.
+type StoreMsg = Option<Event>;
+
+fn spawn_store_writer(store: Arc<SqliteStore>) -> (std::sync::mpsc::Sender<StoreMsg>, Option<std::thread::JoinHandle<()>>) {
+    let (tx, rx) = std::sync::mpsc::channel::<StoreMsg>();
+    let handle = std::thread::Builder::new()
+        .name("camouflage-store".into())
+        .spawn(move || {
+            while let Ok(Some(first)) = rx.recv() {
+                let mut batch = vec![first];
+                let mut close = false;
+                let until = std::time::Instant::now() + std::time::Duration::from_millis(STORE_BATCH_MS);
+                while let Some(left) = until.checked_duration_since(std::time::Instant::now()) {
+                    match rx.recv_timeout(left) {
+                        Ok(Some(ev)) => batch.push(ev),
+                        Ok(None) => {
+                            close = true;
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let _ = store.append_batch(&batch);
+                if close {
+                    break;
+                }
+            }
+        })
+        .ok();
+    (tx, handle)
+}
+
+/// Read NDJSON from stdin, queue each event for the store, then hand it to the loop.
 /// Unknown event types produce one visible warning each instead of being
 /// dropped silently.
-fn spawn_host_reader(session_id: Uuid, tx: mpsc::Sender<Input>, store: Arc<SqliteStore>, seq: Arc<AtomicI64>) {
+fn spawn_host_reader(session_id: Uuid, tx: mpsc::Sender<Input>, writer: std::sync::mpsc::Sender<StoreMsg>, seq: Arc<AtomicI64>) {
     tokio::spawn(async move {
         let decoder = NdjsonDecoder::new(session_id);
         let mut lines = BufReader::new(tokio::io::stdin()).lines();
@@ -259,10 +327,7 @@ fn spawn_host_reader(session_id: Uuid, tx: mpsc::Sender<Input>, store: Arc<Sqlit
             if ev.schema_version == 0 {
                 ev.schema_version = SCHEMA_VERSION;
             }
-            // Persist before render.
-            let store2 = store.clone();
-            let ev2 = ev.clone();
-            let _ = tokio::task::spawn_blocking(move || store2.append_batch(std::slice::from_ref(&ev2))).await;
+            let _ = writer.send(Some(ev.clone()));
             if tx.send(Input::Host(ev)).await.is_err() {
                 return;
             }
@@ -368,8 +433,10 @@ fn detect_theme() -> Theme {
     }
 }
 
-const ENTER_MODES: &[u8] = b"\x1b[?2004h";
-const LEAVE_MODES: &[u8] = b"\x1b[?2004l\x1b[<u\x1b[0m\x1b[?25h";
+/// Bracketed paste and focus reporting (so the loop can slow down while
+/// the terminal is in the background).
+const ENTER_MODES: &[u8] = b"\x1b[?2004h\x1b[?1004h";
+const LEAVE_MODES: &[u8] = b"\x1b[?2004l\x1b[?1004l\x1b[<u\x1b[0m\x1b[?25h";
 
 fn enter_terminal_modes() -> Result<()> {
     crossterm::terminal::enable_raw_mode()?;
