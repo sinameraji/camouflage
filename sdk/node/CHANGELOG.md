@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.4.0-beta.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.3.0-beta.1...camouflage-tui-v2.4.0-beta.1) (2026-10-01)
+
+
+### Features
+
+* **inline:** multi-line form fields ([050a1d2](https://github.com/sinameraji/camouflage/commit/050a1d2b9500d909ef74ded2050b8400d36ae20c))
+* **inline:** multi-line form fields ([1a364e8](https://github.com/sinameraji/camouflage/commit/1a364e87a1ffb1378a7c3e9b9fe181e7f87ab0af))
+* **inline:** show the model's reasoning with Ctrl+R ([199bcae](https://github.com/sinameraji/camouflage/commit/199bcae57170c7171727cb50f09e85bbef595562))
+* **inline:** show the model's reasoning with Ctrl+R ([a924923](https://github.com/sinameraji/camouflage/commit/a9249233f566785feb498b5335eaed4368b866e6))
+
 ## [2.3.0-beta.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.2.2-beta.1...camouflage-tui-v2.3.0-beta.1) (2026-10-01)
 
 
