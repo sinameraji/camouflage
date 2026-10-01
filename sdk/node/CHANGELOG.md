@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.4.0-beta.6](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.0-beta.5...camouflage-tui-v2.4.0-beta.6) (2026-10-01)
+
+
+### Bug Fixes
+
+* **inline:** info notices are dim hints, not reply-colored text ([5879680](https://github.com/sinameraji/camouflage/commit/5879680ffaab75e6083b9afbeae1179f30a0515e))
+* **sdk:** release camouflage-tui 2.4.0-beta.6 ([a638662](https://github.com/sinameraji/camouflage/commit/a6386626330d83e486fb0604bed6d7b5505d5287))
+
 ## [2.4.0-beta.5](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.5.0-beta.4...camouflage-tui-v2.4.0-beta.5) (2026-10-01)
 
 
