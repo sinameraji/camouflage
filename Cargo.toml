@@ -20,21 +20,21 @@ license = "Apache-2.0"
 rust-version = "1.75"
 
 [workspace.dependencies]
-ratatui = { version = "0.28", features = ["unstable-rendered-line-info"] }
-crossterm = "0.28"
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
+crossterm = "0.29"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync", "time", "signal", "fs"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
-thiserror = "1"
+thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 libc = "0.2"
 unicode-width = "0.2"
-tokio-tungstenite = "0.24"
+tokio-tungstenite = "0.30"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 
 camouflage-protocol = { path = "crates/protocol" }
