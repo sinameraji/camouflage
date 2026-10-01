@@ -245,3 +245,31 @@ autopilot 1.5.0 ships `--ui camouflage`. First real use: speed and smoothness ar
 **Release note:** release-please only tracks `sdk/node`. Crate-only fixes need `scripts/trigger-binary-release.sh`. Consider moving the npm package to the repo root so every change counts.
 
 Order: R1 adapter and managers first (largest gap, mostly reuse), then `@` navigation and forms, then color, then the rest.
+
+### 8.1 Parity checklist (autopilot `--ui camouflage` vs Ink)
+
+Updated as PRs land. "✅" means checked against the Ink implementation, not assumed. PR numbers: autopilot `ap#`, camouflage `cf#`.
+
+| Command / feature | Ink | Camouflage | Status |
+|---|---|---|---|
+| Output-only commands: /exit /clear /fresh /reasoning /cost /jev /subagents /key /settings /plan /auto /edit /checkpoint /compact /init /update /mcp /hello /logout /remote <prompt>, and every command's argument forms | Ink handlers | Same handlers via the App bridge (ap#685) | ✅ |
+| /model | Featured "Best & latest" + current, context/price columns, tools-only, fuzzy search | Same data and layout (ap#688), rich select (cf#49) | ⏳ merge |
+| /resume | Fuzzy search over title and id, pages | Title/age/count columns, fuzzy search incl. first prompt (ap#688, cf#49) | ⏳ merge |
+| /mode, /checkpoints, plan options, plan complete | Pickers | Pickers (ap#685) | ✅ |
+| /help | Paged menu that runs commands | All pages as sections + custom commands; argument entries ask via a form (ap#688, cf#50) | ⏳ merge |
+| /theme, /shell | Pickers | Pickers with current marked (ap#688) | ⏳ merge |
+| /memory | Toggle, stats, search, clear with confirm | Same (ap#688, cf#50 for the search form) | ⏳ merge |
+| /skills | Menu; add/edit/… print "type /skills x <name>" | Menu; actions ask for the name in a form (ap#688) | ⏳ merge |
+| /command list, /command delete | List; picker + confirm | Same (ap#688) | ⏳ merge |
+| /command create, /command edit | Multi-step wizard with preview | — | ❌ next |
+| /lsp config | LSP setup wizard | — | ❌ next |
+| /multi-agent | Multi-step settings | — | ❌ next |
+| /inbox, /remote (dashboard), /changelog-image | Modals with steps/forms | — | ❌ next |
+| /ui | Ink only | ink or camouflage, saved (ap#688) | ⏳ merge |
+| Custom commands in `/` picker | Yes | Yes (ap#688) | ⏳ merge |
+| `@` mentions incl. `../`, `~/`, `/` | Yes (#650) | Yes (cf#47, ap#685) | ⏳ release |
+| `!` shell commands, queued follow-ups | Yes | Same App code (ap#685) | ✅ |
+| MCP / LSP / memory / hooks / skills managers | Yes | Same App code (ap#685) | ✅ |
+| Ctrl+R reasoning display | Yes | — (needs renderer support) | ❌ |
+| Color in model text | No | Inline HTML + ANSI (cf#51) | ⏳ merge |
+| Ctrl+O full transcript | Verbose toggle | Expands collapsed output in the live area | ⚠️ |
