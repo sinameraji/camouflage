@@ -81,6 +81,12 @@ struct Prompt {
     question: Option<String>,
     options: Vec<String>,
     hints: Vec<Option<String>>,
+    /// Rich select lists: per-option group header, aligned columns, on/off
+    /// state, and extra search text. Empty for other prompts.
+    sections: Vec<Option<String>>,
+    columns: Vec<Vec<String>>,
+    states: Vec<Option<bool>>,
+    keywords: Vec<String>,
     current: Option<usize>,
     selected: usize,
     filter: String,
@@ -363,6 +369,10 @@ impl Session {
                         format!("No, and tell {} what to do differently", if app.is_empty() { "the agent" } else { &app }),
                     ],
                     hints: Vec::new(),
+                    sections: Vec::new(),
+                    columns: Vec::new(),
+                    states: Vec::new(),
+                    keywords: Vec::new(),
                     current: None,
                     selected: 0,
                     filter: String::new(),
@@ -370,9 +380,8 @@ impl Session {
             }
             EventType::ShowSelectList => {
                 let opts: Vec<&Value> = p.get("options").and_then(Value::as_array).map(|a| a.iter().collect()).unwrap_or_default();
-                let values: Vec<String> = opts.iter().map(|o| o.get("value").and_then(Value::as_str).unwrap_or("").to_string()).collect();
-                let labels = opts.iter().map(|o| o.get("label").and_then(Value::as_str).unwrap_or("").to_string()).collect();
-                let hints = opts.iter().map(|o| o.get("description").and_then(Value::as_str).map(str::to_string)).collect();
+                let field = |o: &Value, k: &str| o.get(k).and_then(Value::as_str).map(str::to_string);
+                let values: Vec<String> = opts.iter().map(|o| field(o, "value").unwrap_or_default()).collect();
                 let default = p.get("default").and_then(Value::as_str);
                 let selected = default.and_then(|d| values.iter().position(|v| v == d)).unwrap_or(0);
                 self.prompt = Some(Prompt {
@@ -383,12 +392,24 @@ impl Session {
                         filterable: p.get("allow_filter").and_then(Value::as_bool).unwrap_or(true),
                     },
                     title: s("prompt"),
-                    subtitle: None,
+                    subtitle: p.get("subtitle").and_then(Value::as_str).map(str::to_string),
                     diff: None,
                     diff_lines: None,
                     question: None,
-                    options: labels,
-                    hints,
+                    options: opts.iter().map(|o| field(o, "label").unwrap_or_default()).collect(),
+                    hints: opts.iter().map(|o| field(o, "description")).collect(),
+                    sections: opts.iter().map(|o| field(o, "section")).collect(),
+                    columns: opts
+                        .iter()
+                        .map(|o| {
+                            o.get("columns")
+                                .and_then(Value::as_array)
+                                .map(|c| c.iter().map(|v| v.as_str().unwrap_or("").to_string()).collect())
+                                .unwrap_or_default()
+                        })
+                        .collect(),
+                    states: opts.iter().map(|o| o.get("state").and_then(Value::as_str).map(|v| v == "on")).collect(),
+                    keywords: opts.iter().map(|o| field(o, "keywords").unwrap_or_default()).collect(),
                     current: default.map(|_| selected),
                     selected,
                     filter: String::new(),
@@ -407,6 +428,10 @@ impl Session {
                     question: None,
                     options: vec![yes, no],
                     hints: Vec::new(),
+                    sections: Vec::new(),
+                    columns: Vec::new(),
+                    states: Vec::new(),
+                    keywords: Vec::new(),
                     current: None,
                     selected,
                     filter: String::new(),
@@ -1129,25 +1154,77 @@ fn path_dir(q: &str) -> Option<String> {
     Some(q[..=q.rfind('/')?].to_string())
 }
 
+/// Options to show, in order. With a filter: fuzzy matches over the label,
+/// then the description and keywords, best first.
 fn visible_options(p: &Prompt) -> Vec<usize> {
-    let f = p.filter.to_lowercase();
-    (0..p.options.len()).filter(|&i| f.is_empty() || p.options[i].to_lowercase().contains(&f)).collect()
+    if p.filter.is_empty() {
+        return (0..p.options.len()).collect();
+    }
+    let mut scored: Vec<(usize, usize)> = (0..p.options.len())
+        .filter_map(|i| {
+            let label = fuzzy(&p.options[i], &p.filter).map(|(s, _)| s);
+            let extra = || {
+                let hay = format!(
+                    "{} {}",
+                    p.hints.get(i).cloned().flatten().unwrap_or_default(),
+                    p.keywords.get(i).cloned().unwrap_or_default()
+                );
+                fuzzy(&hay, &p.filter).map(|(s, _)| s + 1000)
+            };
+            label.or_else(extra).map(|score| (score, i))
+        })
+        .collect();
+    scored.sort();
+    scored.into_iter().map(|(_, i)| i).collect()
 }
 
 fn prompt_view(p: &Prompt, height: usize) -> PromptView {
     let visible = visible_options(p);
+    let filtering = !p.filter.is_empty();
     // Window long lists around the selection.
-    let room = height.saturating_sub(10).clamp(3, 12);
+    let room = height.saturating_sub(10).clamp(3, 14);
     let pos = visible.iter().position(|&i| i == p.selected).unwrap_or(0);
     let start = pos.saturating_sub(room / 2).min(visible.len().saturating_sub(room));
-    let shown: Vec<usize> = visible.iter().copied().skip(start).take(room).collect();
+    let mut shown: Vec<usize> = visible.iter().copied().skip(start).take(room).collect();
+    // Section headers take rows too; trim from the far end of the selection.
+    let header_rows = |rows: &[usize]| -> usize {
+        if filtering {
+            return 0;
+        }
+        let mut last: Option<&String> = None;
+        rows.iter()
+            .filter(|&&i| {
+                let sec = p.sections.get(i).and_then(|s| s.as_ref());
+                let new = sec.is_some() && sec != last;
+                last = sec;
+                new
+            })
+            .count()
+    };
+    while shown.len() > 3 && shown.len() + header_rows(&shown) > room {
+        if shown.last() != Some(&p.selected) {
+            shown.pop();
+        } else {
+            shown.remove(0);
+        }
+    }
+    let mut sections = Vec::with_capacity(shown.len());
+    let mut last: Option<String> = None;
+    for &i in &shown {
+        let sec = p.sections.get(i).cloned().flatten();
+        sections.push(if !filtering && sec.is_some() && sec != last { sec.clone() } else { None });
+        last = sec;
+    }
     let mut subtitle = p.subtitle.clone();
-    if !p.filter.is_empty() || (matches!(p.kind, PromptKind::Select { filterable: true, .. }) && p.options.len() > room) {
-        subtitle = Some(format!("Filter: {}  ({} of {})", p.filter, visible.len(), p.options.len()));
+    let is_select = matches!(p.kind, PromptKind::Select { filterable: true, .. });
+    if filtering || (is_select && p.options.len() > room) {
+        let shown_count = if filtering { visible.len() } else { p.options.len() };
+        let search = if filtering { format!("Search: {}", p.filter) } else { "Type to search".to_string() };
+        subtitle = Some(format!("{search}  ·  {shown_count} of {}", p.options.len()));
     }
     let (esc_is_last, footer) = match p.kind {
         PromptKind::Permission { .. } => (true, "↑↓ to choose · enter to confirm · esc to interrupt".to_string()),
-        PromptKind::Select { filterable: true, .. } => (false, "↑↓ to choose · type to filter · enter to select · esc to cancel".to_string()),
+        PromptKind::Select { filterable: true, .. } => (false, "↑↓ to choose · type to search · enter to select · esc to cancel".to_string()),
         _ => (false, "↑↓ to choose · enter to select · esc to cancel".to_string()),
     };
     PromptView {
@@ -1155,8 +1232,12 @@ fn prompt_view(p: &Prompt, height: usize) -> PromptView {
         subtitle,
         diff_lines: p.diff_lines.as_ref().map(|(_, l)| l.clone()),
         question: p.question.clone(),
+        numbered: matches!(p.kind, PromptKind::Permission { .. } | PromptKind::Confirm { .. }) || p.options.len() <= 9,
         options: shown.iter().map(|&i| p.options[i].clone()).collect(),
         hints: shown.iter().map(|&i| p.hints.get(i).cloned().flatten()).collect(),
+        sections,
+        columns: shown.iter().map(|&i| p.columns.get(i).cloned().unwrap_or_default()).collect(),
+        states: shown.iter().map(|&i| p.states.get(i).copied().flatten()).collect(),
         current: p.current.and_then(|c| shown.iter().position(|&i| i == c)),
         selected: shown.iter().position(|&i| i == p.selected).unwrap_or(0),
         esc_is_last,
@@ -1441,6 +1522,28 @@ mod tests {
             0,
         );
         type_str(&mut s, "qw");
+        s.key(Key::Enter { shift: false, alt: false }, 0);
+        assert_eq!(s.take_outbound()[0].payload, json!({"id": "m", "value": "q"}));
+    }
+
+    #[test]
+    fn rich_select_lists_search_labels_and_descriptions() {
+        let mut s = session();
+        s.apply(
+            &ev(EventType::ShowSelectList, json!({"id": "m", "prompt": "Select model", "default": "kimi", "options": [
+                {"value": "kimi", "label": "kimi-k2.6", "section": "Best & latest", "columns": ["256k", "$0.60"]},
+                {"value": "ds", "label": "deepseek-v3.2", "description": "DeepSeek V3.2", "section": "Best & latest"},
+                {"value": "q", "label": "qwen3-coder", "description": "Qwen3 Coder 480B", "section": "Other"}
+            ]})),
+            0,
+        );
+        let live = live_text(&s, 0);
+        assert!(live.iter().any(|l| l.contains("Best & latest")), "{live:?}");
+        assert!(live.iter().any(|l| l.contains("✓ current")), "{live:?}");
+        // Fuzzy, and the description counts: "480" only appears there.
+        type_str(&mut s, "480");
+        let live = live_text(&s, 0);
+        assert!(!live.iter().any(|l| l.contains("Best & latest")), "headers hide while searching");
         s.key(Key::Enter { shift: false, alt: false }, 0);
         assert_eq!(s.take_outbound()[0].payload, json!({"id": "m", "value": "q"}));
     }

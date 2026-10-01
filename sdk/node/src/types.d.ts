@@ -205,11 +205,22 @@ export type MentionCandidatesRegistered = {
 export type SelectListOption = {
   value: string;
   label: string;
+  /** Dim text after the label; also searched. */
   description?: string;
+  /** Group header shown above the first option of each group (hidden while searching). */
+  section?: string;
+  /** Values drawn in aligned columns after the label, e.g. ["256k", "$0.60 / $2.50"]. */
+  columns?: string[];
+  /** Draws an on/off badge, e.g. for enabled skills. */
+  state?: "on" | "off";
+  /** Extra text the search matches against. */
+  keywords?: string;
 };
 export type ShowSelectList = {
   id: string;
   prompt: string;
+  /** A dim line under the prompt. */
+  subtitle?: string;
   options: SelectListOption[];
   default?: string;
   allow_filter?: boolean;
