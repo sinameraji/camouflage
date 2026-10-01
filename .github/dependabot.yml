@@ -7,10 +7,16 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+  # Patch releases only: most of our crates are 0.x, where a minor bump
+  # breaks the API (ratatui, rusqlite, tokio-tungstenite). Upgrade those
+  # deliberately, one at a time.
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       cargo:
         patterns: ["*"]
