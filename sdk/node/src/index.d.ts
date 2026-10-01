@@ -78,6 +78,8 @@ export {
   mount,
   selectList,
   confirm,
+  suspendTerminal,
+  resumeTerminal,
   permission,
   tasksSet,
   table,

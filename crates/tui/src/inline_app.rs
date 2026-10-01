@@ -14,7 +14,7 @@ use camouflage_protocol::{Event, EventType, SCHEMA_VERSION};
 use camouflage_store::{EventStore, SqliteStore};
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use std::collections::HashSet;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -60,7 +60,7 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     if stdin_events {
         spawn_host_reader(session_id, tx.clone(), writer.0.clone(), seq.clone());
     }
-    spawn_key_reader(tx.clone());
+    let keys = spawn_key_reader(tx.clone());
     spawn_signal_handler(tx.clone());
     drop(tx);
 
@@ -81,6 +81,8 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     // UNFOCUSED_FRAME_MS; `deferred` means there's an undrawn change.
     let mut last_draw: i64 = 0;
     let mut deferred = false;
+    // A child process owns the terminal (TerminalSuspend): no drawing.
+    let mut suspended = false;
     // Loop statistics, written on exit when CAMOUFLAGE_STATS_PATH is set
     // (the idle soak test uses these to prove idle means no wakeups).
     let mut wakeups: u64 = 0;
@@ -89,7 +91,7 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     let result: Result<()> = async {
         loop {
             let now = now_ms();
-            let mut deadline = session.next_wakeup(now);
+            let mut deadline = if suspended { None } else { session.next_wakeup(now) };
             if deferred {
                 let at = last_draw + UNFOCUSED_FRAME_MS;
                 deadline = Some(deadline.map_or(at, |d| d.min(at)));
@@ -128,6 +130,32 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
                     urgent = true;
                 }
                 match inp {
+                    Input::Host(ev) if ev.event_type == EventType::TerminalSuspend => {
+                        let id = ev.payload.get("id").cloned().unwrap_or(serde_json::Value::Null);
+                        let supported = KeyGate::supported();
+                        if supported && !suspended {
+                            keys.set_paused(true);
+                            term.suspend()?;
+                            leave_terminal_modes();
+                            suspended = true;
+                            last_frame = None;
+                        }
+                        session.push_outbound(EventType::TerminalSuspended, serde_json::json!({ "id": id, "supported": supported }));
+                    }
+                    Input::Host(ev) if ev.event_type == EventType::TerminalResume => {
+                        if suspended {
+                            enter_terminal_modes()?;
+                            keys.set_paused(false);
+                            suspended = false;
+                            // The window may have changed while the child ran.
+                            if let Ok((w, h)) = crossterm::terminal::size() {
+                                session.resize((w as usize).saturating_sub(1), h as usize);
+                                term.resize(w, h, &Default::default())?;
+                            }
+                            last_frame = None;
+                            urgent = true;
+                        }
+                    }
                     Input::Host(ev) => session.apply(&ev, now),
                     Input::HostClosed => host_closed = true,
                     Input::Term(TermEvent::FocusLost) => session.focused = false,
@@ -168,6 +196,9 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
             }
 
             let now = now_ms();
+            if suspended {
+                continue;
+            }
             if !session.focused && !urgent && !session.clear_screen && !session.exit && !host_closed && now - last_draw < UNFOCUSED_FRAME_MS {
                 deferred = true;
                 continue;
@@ -348,22 +379,148 @@ fn warning(session_id: Uuid, message: String) -> Event {
     }
 }
 
-/// Blocking key reader on its own thread. With crossterm's `use-dev-tty`
-/// it reads /dev/tty even when stdin is the host's pipe, and it blocks in
-/// poll() with no timeout, so an idle renderer never wakes.
-fn spawn_key_reader(tx: mpsc::Sender<Input>) {
-    std::thread::spawn(move || {
-        while let Ok(ev) = crossterm::event::read() {
-            if tx.blocking_send(Input::Term(ev)).is_err() {
-                break;
-            }
+/// Lets the loop stop the key reader while a child process owns the
+/// terminal (TerminalSuspend), without the reader consuming its keys.
+#[derive(Clone)]
+struct KeyGate {
+    paused: Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(unix)]
+    wake: Arc<std::fs::File>,
+}
+
+impl KeyGate {
+    fn supported() -> bool {
+        cfg!(unix)
+    }
+
+    fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::SeqCst);
+        #[cfg(unix)]
+        {
+            let _ = (&*self.wake).write_all(b"x");
         }
-    });
+    }
+}
+
+/// Key reader on its own thread. With crossterm's `use-dev-tty` it reads
+/// /dev/tty even when stdin is the host's pipe. On Unix it waits in poll()
+/// on the tty and a wake pipe with no timeout, so an idle renderer never
+/// wakes, and while paused it doesn't touch the tty at all.
+fn spawn_key_reader(tx: mpsc::Sender<Input>) -> KeyGate {
+    let paused = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    #[cfg(unix)]
+    {
+        use std::os::fd::{AsRawFd, FromRawFd};
+        let mut fds = [0i32; 2];
+        // SAFETY: plain pipe(2); both ends are owned by Files below.
+        let ok = unsafe { libc::pipe(fds.as_mut_ptr()) } == 0;
+        let (wake_r, wake_w) = if ok {
+            unsafe { (std::fs::File::from_raw_fd(fds[0]), std::fs::File::from_raw_fd(fds[1])) }
+        } else {
+            (std::fs::File::open("/dev/null").expect("/dev/null"), std::fs::OpenOptions::new().write(true).open("/dev/null").expect("/dev/null"))
+        };
+        let gate = KeyGate { paused: paused.clone(), wake: Arc::new(wake_w) };
+        std::thread::spawn(move || {
+            let tty = std::fs::File::open("/dev/tty").ok();
+            let mut drain = [0u8; 64];
+            loop {
+                if !paused.load(Ordering::SeqCst) {
+                    // Events crossterm already buffered never show up as
+                    // tty readiness, so hand those over first. poll(ZERO)
+                    // skips crossterm's parser buffer (the rest of a burst
+                    // of keys); a 1 ms poll checks it. Only runs after
+                    // input, never while idle.
+                    while !paused.load(Ordering::SeqCst) && crossterm::event::poll(std::time::Duration::from_millis(1)).unwrap_or(false) {
+                        match crossterm::event::read() {
+                            Ok(ev) => {
+                                if tx.blocking_send(Input::Term(ev)).is_err() {
+                                    return;
+                                }
+                            }
+                            Err(_) => return,
+                        }
+                    }
+                }
+                // select(), not poll(): macOS poll() reports POLLNVAL for
+                // /dev/tty (crossterm uses select for the same reason).
+                let watch_tty = !paused.load(Ordering::SeqCst);
+                let wake_fd = wake_r.as_raw_fd();
+                let tty_fd = tty.as_ref().filter(|_| watch_tty).map(|t| t.as_raw_fd());
+                // SAFETY: fd_set is plain data; both fds are open and below
+                // FD_SETSIZE (they're among the first few we open).
+                let n = unsafe {
+                    let mut set: libc::fd_set = std::mem::zeroed();
+                    libc::FD_ZERO(&mut set);
+                    libc::FD_SET(wake_fd, &mut set);
+                    let mut max = wake_fd;
+                    if let Some(t) = tty_fd {
+                        libc::FD_SET(t, &mut set);
+                        max = max.max(t);
+                    }
+                    let n = libc::select(max + 1, &mut set, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut());
+                    if n > 0 && libc::FD_ISSET(wake_fd, &set) {
+                        let _ = (&wake_r).read(&mut drain);
+                    }
+                    (n, tty_fd.is_some_and(|t| n > 0 && libc::FD_ISSET(t, &set)))
+                };
+                let (n, keys_ready) = n;
+                if n < 0 {
+                    if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                        continue;
+                    }
+                    return;
+                }
+                // Keys are waiting (or there's no /dev/tty to watch): read
+                // them. crossterm's poll(ZERO) only returns events it has
+                // already buffered, so the read has to happen here.
+                if !paused.load(Ordering::SeqCst) && (tty_fd.is_none() || keys_ready) {
+                    let r = crossterm::event::read();
+                    match r {
+                        Ok(ev) => {
+                            if tx.blocking_send(Input::Term(ev)).is_err() {
+                                return;
+                            }
+                        }
+                        Err(_) => return,
+                    }
+                }
+            }
+        });
+        gate
+    }
+    #[cfg(not(unix))]
+    {
+        std::thread::spawn(move || {
+            while let Ok(ev) = crossterm::event::read() {
+                if tx.blocking_send(Input::Term(ev)).is_err() {
+                    break;
+                }
+            }
+        });
+        KeyGate { paused }
+    }
 }
 
 /// SIGTERM/SIGHUP (e.g. the SDK's kill()) exit cleanly so the terminal is
 /// restored instead of being left in raw mode.
 fn spawn_signal_handler(tx: mpsc::Sender<Input>) {
+    // Window resizes: the key reader waits in its own select(), not inside
+    // crossterm, so crossterm's SIGWINCH handling doesn't run while idle.
+    #[cfg(unix)]
+    {
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            use tokio::signal::unix::{signal, SignalKind};
+            let Ok(mut winch) = signal(SignalKind::window_change()) else { return };
+            while winch.recv().await.is_some() {
+                if let Ok((w, h)) = crossterm::terminal::size() {
+                    if tx.send(Input::Term(TermEvent::Resize(w, h))).await.is_err() {
+                        return;
+                    }
+                }
+            }
+        });
+    }
     #[cfg(unix)]
     tokio::spawn(async move {
         use tokio::signal::unix::{signal, SignalKind};
@@ -376,6 +533,7 @@ fn spawn_signal_handler(tx: mpsc::Sender<Input>) {
         }
         let _ = tx.send(Input::HostClosed).await;
     });
+
     // Windows: closing the console window ends the process; the host
     // closing stdin is handled by the reader.
     #[cfg(not(unix))]

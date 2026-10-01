@@ -53,7 +53,10 @@ export type EventType =
   | "Splash"
   | "ShowToast"
   | "MentionQuery"
-  | "AssistantReasoningDelta";
+  | "AssistantReasoningDelta"
+  | "TerminalSuspend"
+  | "TerminalResume"
+  | "TerminalSuspended";
 
 export type Direction = "inbound" | "outbound";
 
@@ -370,6 +373,10 @@ export type Event = EnvelopeMeta &
     | { event_type: "AssistantTokenDelta"; payload: AssistantTokenDelta }
     /** v2.4+: the model's reasoning, shown when the user presses Ctrl+R (inline UI). */
     | { event_type: "AssistantReasoningDelta"; payload: AssistantTokenDelta }
+    /** v2.4+: hand the terminal to a child process; see `suspendTerminal()`. */
+    | { event_type: "TerminalSuspend"; payload: { id: string } }
+    | { event_type: "TerminalResume"; payload: { id: string } }
+    | { event_type: "TerminalSuspended"; payload: { id: string; supported: boolean } }
     | { event_type: "AssistantMessageCompleted"; payload: AssistantMessageCompleted }
     | { event_type: "ToolExecutionStarted"; payload: ToolStarted }
     | { event_type: "ToolExecutionStdout"; payload: ToolOutput }

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { mount, selectList, confirm, permission } from "./index.js";
+import { mount, selectList, confirm, permission, suspendTerminal, resumeTerminal } from "./index.js";
 
 const FAKE = join(dirname(fileURLToPath(import.meta.url)), "__fake-renderer.js");
 
@@ -180,4 +180,12 @@ test("a renderer that exits at startup doesn't crash the host", async () => {
   }
   await exited;
   assert.equal(cam.send("SessionEnded", {}), false);
+});
+
+test("suspendTerminal() falls back to unsupported when the renderer doesn't answer", async () => {
+  const cam = await mountFake(); // echoes TerminalSuspend back; never sends TerminalSuspended
+  const r = await suspendTerminal(cam, { timeoutMs: 50 });
+  assert.deepEqual(r, { supported: false });
+  resumeTerminal(cam);
+  await cam.close();
 });

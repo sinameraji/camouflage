@@ -344,6 +344,8 @@ export async function mount(opts = {}) {
       handle.emit("cancelRequested", {});
     } else if (ev.event_type === "MentionQuery") {
       handle.emit("mentionQuery", { query: ev.payload?.query ?? "" });
+    } else if (ev.event_type === "TerminalSuspended") {
+      handle.emit("terminalSuspended", { id: ev.payload?.id, supported: ev.payload?.supported === true });
     }
     // Always also emit the raw Event for advanced consumers.
     handle.emit("event", ev);
@@ -419,6 +421,41 @@ export function confirm(cam, spec) {
   const done = awaitResponse(cam, "confirmResponse", (r) => r.id === spec.id, { id: spec.id, cancelled: true });
   cam.send("ShowConfirm", spec);
   return done;
+}
+
+/**
+ * Hand the terminal to a child process (a `!` shell command, an editor, a
+ * login prompt). The inline renderer clears its live area, leaves raw mode
+ * and stops reading keys before this resolves. Run the child with
+ * `stdio: "inherit"`, then call `resumeTerminal(cam)`.
+ *
+ * Resolves `{ supported: false }` when the renderer can't hand the terminal
+ * over (Windows, full-screen mode, renderers older than 2.4.0-beta.7, or no
+ * answer within `timeoutMs`); run the child without a terminal then.
+ *
+ * @param {CamouflageHandle} cam
+ * @param {{timeoutMs?: number}} [opts]
+ * @returns {Promise<{supported: boolean}>}
+ */
+export function suspendTerminal(cam, opts = {}) {
+  const id = `suspend-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const answer = awaitResponse(cam, "terminalSuspended", (r) => r.id === id, { id, supported: false });
+  const timeout = new Promise((resolve) => {
+    const t = setTimeout(() => resolve({ id, supported: false }), opts.timeoutMs ?? 1000);
+    t.unref?.();
+  });
+  cam.send("TerminalSuspend", { id });
+  return Promise.race([answer, timeout]).then((r) => ({ supported: r.supported === true }));
+}
+
+/**
+ * Take the terminal back after `suspendTerminal`: the renderer re-enters
+ * raw mode and redraws below whatever the child printed.
+ *
+ * @param {CamouflageHandle} cam
+ */
+export function resumeTerminal(cam) {
+  cam.send("TerminalResume", { id: "resume" });
 }
 
 /**

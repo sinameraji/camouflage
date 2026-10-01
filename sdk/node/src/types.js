@@ -24,6 +24,7 @@ const KNOWN_TYPES = new Set([
   "ModeChangeRequested", "CancelRequested",
   "TranscriptCleared", "Splash", "ShowToast", "MentionQuery",
   "AssistantReasoningDelta",
+  "TerminalSuspend", "TerminalResume", "TerminalSuspended",
 ]);
 
 /**

@@ -223,6 +223,11 @@ impl Session {
     }
 
     /// Events for the host produced since the last call.
+    /// Queue an outbound event the app produced (not the session itself).
+    pub fn push_outbound(&mut self, event_type: EventType, payload: Value) {
+        self.outbound.push(Outbound { event_type, payload });
+    }
+
     pub fn take_outbound(&mut self) -> Vec<Outbound> {
         std::mem::take(&mut self.outbound)
     }

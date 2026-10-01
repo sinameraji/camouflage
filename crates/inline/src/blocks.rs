@@ -555,9 +555,7 @@ fn render_reasoning(text: &str, width: usize, theme: &Theme) -> Vec<Line> {
 
 fn render_notice(kind: NoticeKind, text: &str, width: usize, theme: &Theme) -> Vec<Line> {
     let (glyph, gstyle, tstyle) = match kind {
-        // Harness chatter (policy notes, "saved", status) is a hint, not
-        // part of the reply: dim, so it never reads like the model talking.
-        NoticeKind::Info => ("· ", theme.dim(), theme.dim()),
+        NoticeKind::Info => ("· ", theme.dim(), Style::new()),
         NoticeKind::Success => ("✓ ", theme.ok(), Style::new()),
         NoticeKind::Warn => ("! ", theme.warn(), theme.warn()),
         NoticeKind::Error => ("✗ ", theme.err(), theme.err()),
@@ -672,12 +670,6 @@ mod tests {
         assert_eq!(collapsed, vec!["✓ Search \"issueSession\""]);
         let expanded = text(&render_block(&Block::Tool(t), 60, &Theme::default(), RenderCtx { expanded: true, ..ctx() }));
         assert_eq!(expanded.len(), 2 + 4);
-    }
-
-    #[test]
-    fn info_notices_are_dim_hints() {
-        let lines = render_block(&Block::Notice { kind: NoticeKind::Info, text: "Subagent policy: auto".into() }, 60, &Theme::default(), ctx());
-        assert!(lines[0].spans.iter().all(|s| s.text.trim().is_empty() || s.style == Theme::default().dim()), "{:?}", lines[0]);
     }
 
     #[test]
