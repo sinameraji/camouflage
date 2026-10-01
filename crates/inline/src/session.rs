@@ -1129,10 +1129,12 @@ impl Session {
             if q.contains(char::is_whitespace) || self.commands.is_empty() {
                 return None;
             }
-            let items: Vec<PickItem> = self
-                .commands
-                .iter()
-                .filter(|(n, _, _)| n.starts_with(q))
+            // An exact name goes first, so `/mode` Enter runs /mode even
+            // when /model was registered before it.
+            let mut matches: Vec<_> = self.commands.iter().filter(|(n, _, _)| n.starts_with(q)).collect();
+            matches.sort_by_key(|(n, _, _)| n != q);
+            let items: Vec<PickItem> = matches
+                .into_iter()
                 .map(|(n, d, h)| PickItem {
                     label: format!("/{n}{}", h.as_ref().map(|h| format!(" {h}")).unwrap_or_default()),
                     hint: (!d.is_empty()).then(|| d.clone()),
@@ -1181,8 +1183,12 @@ impl Session {
         let item = &items[self.pick_sel.min(items.len() - 1)];
         if self.editor.text().starts_with('/') {
             let name = item.label.split_whitespace().next().unwrap_or("").to_string();
-            let takes_args = self.commands.iter().any(|(n, _, h)| format!("/{n}") == name && h.is_some());
-            if submit && !takes_args {
+            // A hint in brackets (`[list|<id>]`) means the arguments are
+            // optional: Enter runs the command bare, as Ink does.
+            let needs_args = self.commands.iter().any(|(n, _, h)| {
+                format!("/{n}") == name && h.as_deref().is_some_and(|h| !h.trim().is_empty() && !h.trim_start().starts_with('['))
+            });
+            if submit && !needs_args {
                 self.editor.clear();
                 self.submit(name.clone(), name);
             } else {
@@ -1872,6 +1878,27 @@ mod tests {
         assert!(live_text(&s, 0).iter().any(|l| l.contains("/compact")));
         s.key(Key::Enter { shift: false, alt: false }, 0);
         assert_eq!(s.take_outbound()[0].payload, json!({"text": "/compact"}));
+    }
+
+    #[test]
+    fn slash_picker_runs_optional_args_and_fills_required_ones() {
+        let mut s = session();
+        s.apply(&ev(EventType::SlashCommandsRegistered, json!({"commands": [
+            {"name": "hooks", "args_hint": "[list|enable <id>]"},
+            {"name": "remote", "args_hint": "<prompt>"},
+            {"name": "model", "args_hint": "[<id>]"},
+            {"name": "mode"},
+        ]})), 0);
+        type_str(&mut s, "/mode");
+        s.key(Key::Enter { shift: false, alt: false }, 0);
+        assert_eq!(s.take_outbound()[0].payload, json!({"text": "/mode"}));
+        type_str(&mut s, "/hoo");
+        s.key(Key::Enter { shift: false, alt: false }, 0);
+        assert_eq!(s.take_outbound()[0].payload, json!({"text": "/hooks"}));
+        type_str(&mut s, "/rem");
+        s.key(Key::Enter { shift: false, alt: false }, 0);
+        assert!(s.take_outbound().is_empty());
+        assert_eq!(s.editor.text(), "/remote ");
     }
 
     #[test]
