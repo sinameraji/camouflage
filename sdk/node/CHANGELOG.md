@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.4.0-beta.7](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.0-beta.6...camouflage-tui-v2.4.0-beta.7) (2026-10-01)
+
+
+### Features
+
+* **inline:** hand the terminal to a child process (TerminalSuspend/Resume) ([8aa2c99](https://github.com/sinameraji/camouflage/commit/8aa2c99b11e5fbb848983fc25f1243b378f25f2b))
+* **inline:** hand the terminal to a child process (TerminalSuspend/Resume) ([7c2a83c](https://github.com/sinameraji/camouflage/commit/7c2a83ceb92fb9311865cdd1b36cb7a70cb5e369))
+
+
+### Bug Fixes
+
+* **sdk:** release camouflage-tui 2.4.0-beta.7 ([e0cd9de](https://github.com/sinameraji/camouflage/commit/e0cd9de9888171fe50d404da68ca1591c34c291d))
+
 ## [2.4.0-beta.6](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.0-beta.5...camouflage-tui-v2.4.0-beta.6) (2026-10-01)
 
 
