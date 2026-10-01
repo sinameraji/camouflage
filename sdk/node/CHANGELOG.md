@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.5.0-beta.4](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.0-beta.4...camouflage-tui-v2.5.0-beta.4) (2026-10-01)
+
+
+### Features
+
+* Windows and Intel Mac binaries ([c576e8d](https://github.com/sinameraji/camouflage/commit/c576e8d44a24e24fdbf96ef50c2dc5a1c16c0987))
+* Windows and Intel Mac binaries ([a8b4b20](https://github.com/sinameraji/camouflage/commit/a8b4b20356913684976997b13c718be85e300664))
+
 ## [2.4.0-beta.4](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.0-beta.3...camouflage-tui-v2.4.0-beta.4) (2026-10-01)
 
 
