@@ -1697,7 +1697,7 @@ impl RenderModel {
                 install_wizard_step(self);
                 self.dirty = true;
             }
-            EventType::ModeChangeRequested | EventType::CancelRequested => {
+            EventType::ModeChangeRequested | EventType::CancelRequested | EventType::MentionQuery => {
                 // Outbound-only event; ignored on apply.
             }
             EventType::WizardCompleted | EventType::WizardCancelled => {

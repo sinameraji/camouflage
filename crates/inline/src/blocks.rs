@@ -352,7 +352,14 @@ fn render_notice(kind: NoticeKind, text: &str, width: usize, theme: &Theme) -> V
         NoticeKind::Interrupted => ("  └ ", theme.err(), theme.err()),
     };
     let indent = " ".repeat(str_width(glyph));
-    wrap(&Line::styled(glyph, gstyle).with(text, tstyle), width, &Line::raw(indent))
+    // Keep the host's line breaks (reports, lists); wrap each line under
+    // the glyph.
+    let mut out = Vec::new();
+    for (i, line) in text.split('\n').enumerate() {
+        let head = if i == 0 { Line::styled(glyph, gstyle) } else { Line::raw(indent.clone()) };
+        out.extend(wrap(&head.with(line, tstyle), width, &Line::raw(indent.clone())));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -433,6 +440,12 @@ mod tests {
         ];
         let lines = render_block(&Block::Plan { items, live: true }, 60, &Theme::default(), ctx());
         assert_eq!(text(&lines), vec!["◆ Plan · 1 of 3 done", "  ✓ Trace", "  › Rotate", "  ○ Test"]);
+    }
+
+    #[test]
+    fn notices_keep_line_breaks() {
+        let lines = render_block(&Block::Notice { kind: NoticeKind::Info, text: "Session  $0.01\nToday    $0.48".into() }, 60, &Theme::default(), ctx());
+        assert_eq!(text(&lines), vec!["· Session  $0.01", "  Today    $0.48"]);
     }
 
     #[test]

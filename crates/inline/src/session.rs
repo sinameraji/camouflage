@@ -63,9 +63,6 @@ struct Entry {
     id: u64,
     block: Block,
     done: bool,
-    /// Set on user blocks we echoed ourselves, so a host that also sends
-    /// UserMessageCreated for the same text doesn't print it twice.
-    echoed: bool,
 }
 
 enum PromptKind {
@@ -106,6 +103,15 @@ pub struct Session {
     mode: InputMode,
     commands: Vec<(String, String, Option<String>)>,
     mentions: Vec<String>,
+    /// Entries for a path mention (`@../`), as (directory, tokens) from the
+    /// host's answer to a MentionQuery.
+    path_mentions: Option<(String, Vec<String>)>,
+    /// The directory last asked for, so each one is queried once.
+    mention_query_sent: Option<String>,
+    /// Prompts this renderer printed on submit. A host that also sends
+    /// UserMessageCreated for them is not printed twice, even after the
+    /// echo itself has been printed and dropped.
+    echoes: std::collections::VecDeque<String>,
     pick_sel: usize,
     pick_dismissed: Option<String>,
     prompt: Option<Prompt>,
@@ -142,6 +148,9 @@ impl Session {
             mode: InputMode::Default,
             commands: Vec::new(),
             mentions: Vec::new(),
+            path_mentions: None,
+            mention_query_sent: None,
+            echoes: std::collections::VecDeque::new(),
             pick_sel: 0,
             pick_dismissed: None,
             prompt: None,
@@ -223,11 +232,9 @@ impl Session {
             }
             EventType::UserMessageCreated => {
                 let text = s("text");
-                if let Some(e) = self.entries.iter_mut().rev().find(|e| matches!(e.block, Block::User { .. })) {
-                    if e.echoed && matches!(&e.block, Block::User { text: t } if *t == text) {
-                        e.echoed = false;
-                        return;
-                    }
+                if let Some(i) = self.echoes.iter().position(|e| e.trim() == text.trim()) {
+                    self.echoes.drain(..=i);
+                    return;
                 }
                 self.push_done(Block::User { text });
             }
@@ -524,11 +531,16 @@ impl Session {
                     .unwrap_or_default();
             }
             EventType::MentionCandidatesRegistered => {
-                self.mentions = p
+                let tokens: Vec<String> = p
                     .get("candidates")
                     .and_then(Value::as_array)
                     .map(|a| a.iter().filter_map(|c| c.get("token").and_then(Value::as_str).map(str::to_string)).collect())
                     .unwrap_or_default();
+                match p.get("for_query").and_then(Value::as_str) {
+                    Some(dir) => self.path_mentions = Some((dir.to_string(), tokens)),
+                    None => self.mentions = tokens,
+                }
+                self.pick_sel = 0;
             }
             EventType::TranscriptCleared => {
                 self.entries.retain(|e| !e.done);
@@ -637,16 +649,18 @@ impl Session {
             EditOutcome::Changed => {
                 self.pick_sel = 0;
                 self.pick_dismissed = None;
+                self.refresh_mention_query();
             }
             EditOutcome::None => {}
         }
     }
 
     fn submit(&mut self, text: String, display: String) {
-        let id = self.push(Block::User { text: display }, true);
-        if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
-            e.echoed = true;
+        self.echoes.push_back(display.clone());
+        if self.echoes.len() > 32 {
+            self.echoes.pop_front();
         }
+        self.push(Block::User { text: display }, true);
         self.outbound.push(Outbound { event_type: EventType::UserInputSubmitted, payload: json!({ "text": text }) });
     }
 
@@ -894,7 +908,7 @@ impl Session {
     fn push(&mut self, block: Block, done: bool) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
-        self.entries.push(Entry { id, block, done, echoed: false });
+        self.entries.push(Entry { id, block, done });
         id
     }
 
@@ -942,7 +956,7 @@ impl Session {
         }
         let id = self.next_id;
         self.next_id += 1;
-        self.entries.insert(0, Entry { id, block: Block::Assistant { markdown: head }, done: true, echoed: false });
+        self.entries.insert(0, Entry { id, block: Block::Assistant { markdown: head }, done: true });
     }
 
     fn verb(&self) -> String {
@@ -1017,16 +1031,35 @@ impl Session {
                 .collect();
             return (!items.is_empty()).then_some(items);
         }
-        let before = &text[..self.editor.cursor()];
-        let at = before.rfind('@')?;
-        let q = &before[at + 1..];
-        if q.contains(char::is_whitespace) || (at > 0 && !before[..at].ends_with(char::is_whitespace)) || self.mentions.is_empty() {
+        let q = self.mention_partial()?;
+        if let Some(dir) = path_dir(&q) {
+            let (for_dir, tokens) = self.path_mentions.as_ref()?;
+            if *for_dir != dir {
+                return None;
+            }
+            let rest = &q[dir.len().min(q.len())..];
+            let items: Vec<PickItem> = tokens
+                .iter()
+                .filter_map(|t| {
+                    let name = t.strip_prefix(dir.as_str()).unwrap_or(t);
+                    fuzzy(name, rest).map(|(score, hits)| {
+                        let offset = t.len() - name.len();
+                        (score, PickItem { label: t.clone(), hint: None, hits: hits.into_iter().map(|h| h + offset).collect() })
+                    })
+                })
+                .take(200)
+                .map(|(_, i)| i)
+                .take(8)
+                .collect();
+            return (!items.is_empty()).then_some(items);
+        }
+        if self.mentions.is_empty() {
             return None;
         }
         let mut scored: Vec<(usize, PickItem)> = self
             .mentions
             .iter()
-            .filter_map(|m| fuzzy(m, q).map(|(score, hits)| (score, PickItem { label: m.clone(), hint: None, hits })))
+            .filter_map(|m| fuzzy(m, &q).map(|(score, hits)| (score, PickItem { label: m.clone(), hint: None, hits })))
             .collect();
         scored.sort_by_key(|(s, i)| (*s, i.label.len()));
         let items: Vec<PickItem> = scored.into_iter().take(8).map(|(_, i)| i).collect();
@@ -1048,11 +1081,52 @@ impl Session {
         } else {
             let text = self.editor.text();
             let at = text[..self.editor.cursor()].rfind('@').unwrap_or(0);
-            let insert = format!("@{} ", item.label);
+            // Picking a folder steps into it: no trailing space, and the
+            // picker stays open on that folder's entries.
+            let insert = if item.label.ends_with('/') { format!("@{}", item.label) } else { format!("@{} ", item.label) };
             self.editor.replace_before_cursor(at, &insert);
+            self.refresh_mention_query();
         }
         self.pick_sel = 0;
     }
+
+    /// The text after `@` at the cursor, if the cursor is in a mention.
+    fn mention_partial(&self) -> Option<String> {
+        let text = self.editor.text();
+        let before = &text[..self.editor.cursor()];
+        let at = before.rfind('@')?;
+        let q = &before[at + 1..];
+        if q.contains(char::is_whitespace) || (at > 0 && !before[..at].ends_with(char::is_whitespace)) {
+            return None;
+        }
+        Some(q.to_string())
+    }
+
+    /// Ask the host for a directory's entries when a path mention enters a
+    /// directory we haven't listed yet.
+    fn refresh_mention_query(&mut self) {
+        let Some(q) = self.mention_partial() else { return };
+        let Some(dir) = path_dir(&q) else { return };
+        if self.mention_query_sent.as_deref() == Some(dir.as_str()) {
+            return;
+        }
+        self.mention_query_sent = Some(dir);
+        self.outbound.push(Outbound { event_type: EventType::MentionQuery, payload: json!({ "query": q }) });
+    }
+}
+
+/// For a path mention (`./`, `../`, `~`, `/`), the directory part whose
+/// entries should be listed, e.g. "../src/" for "../src/ma". Bare `~`, `.`
+/// and `..` (and a trailing `/..`) mean that directory itself.
+fn path_dir(q: &str) -> Option<String> {
+    let is_path = q.starts_with('/') || q.starts_with('~') || q.starts_with("./") || q.starts_with("../") || q == "." || q == "..";
+    if !is_path {
+        return None;
+    }
+    if q == "~" || q == "." || q == ".." || q.ends_with("/..") {
+        return Some(format!("{q}/"));
+    }
+    Some(q[..=q.rfind('/')?].to_string())
 }
 
 fn visible_options(p: &Prompt) -> Vec<usize> {
@@ -1425,6 +1499,48 @@ mod tests {
         s.apply(&ev(EventType::AssistantMessageCompleted, json!({"stream_id": "s"})), 0);
         s.apply(&ev(EventType::RuntimeError, json!({"message": "network error"})), 0);
         assert_eq!(history_text(&mut s, 0), vec!["› hi", "", "✗ network error"]);
+    }
+
+    #[test]
+    fn echoed_prompts_print_once_even_after_they_scroll_out() {
+        let mut s = session();
+        type_str(&mut s, "hello there");
+        s.key(Key::Enter { shift: false, alt: false }, 0);
+        assert_eq!(history_text(&mut s, 0), vec!["› hello there"]);
+        s.apply(&ev(EventType::UserMessageCreated, json!({"text": "hello there"})), 0);
+        assert!(history_text(&mut s, 0).is_empty(), "the host's copy is not printed again");
+        s.apply(&ev(EventType::UserMessageCreated, json!({"text": "a resumed message"})), 0);
+        assert_eq!(history_text(&mut s, 0), vec!["", "› a resumed message"]);
+    }
+
+    #[test]
+    fn path_mentions_ask_the_host_and_step_into_folders() {
+        let mut s = session();
+        s.apply(&ev(EventType::MentionCandidatesRegistered, json!({"candidates": [{"token": "src/a.ts"}]})), 0);
+        type_str(&mut s, "look at @../");
+        // Typed one key at a time: "." lists ./, ".." lists ../, and "../"
+        // reuses that listing instead of asking again.
+        let dirs: Vec<String> = s.take_outbound().iter().map(|o| path_dir(o.payload["query"].as_str().unwrap()).unwrap()).collect();
+        assert_eq!(dirs, vec!["./", "../"]);
+        s.apply(&ev(EventType::MentionCandidatesRegistered, json!({"for_query": "../", "candidates": [
+            {"token": "../camouflage/", "kind": "dir"}, {"token": "../notes.md"}
+        ]})), 0);
+        type_str(&mut s, "cam");
+        assert!(live_text(&s, 0).iter().any(|l| l.contains("../camouflage/")));
+        s.key(Key::Tab, 0);
+        // Stepped into the folder: no trailing space, and the host is asked again.
+        assert!(live_text(&s, 0).iter().any(|l| l.contains("@../camouflage/")));
+        assert_eq!(s.take_outbound(), vec![Outbound { event_type: EventType::MentionQuery, payload: json!({"query": "../camouflage/"}) }]);
+    }
+
+    #[test]
+    fn path_dir_parses_mentions() {
+        assert_eq!(path_dir("../sr").as_deref(), Some("../"));
+        assert_eq!(path_dir("~").as_deref(), Some("~/"));
+        assert_eq!(path_dir("..").as_deref(), Some("../"));
+        assert_eq!(path_dir("/usr/lo").as_deref(), Some("/usr/"));
+        assert_eq!(path_dir("src/a"), None);
+        assert_eq!(path_dir(".gitignore"), None);
     }
 
     #[test]

@@ -274,16 +274,22 @@ fn piped_stdout_carries_only_clean_events() {
     let mut child = cmd.spawn().unwrap();
     unsafe { libc::close(slave) };
     let mut tty = unsafe { std::fs::File::from_raw_fd(master) };
-    // Drain the tty so the renderer never blocks drawing.
+    // Drain the tty so the renderer never blocks drawing, keeping what it
+    // drew so we know when it's ready for keys.
+    let drawn = Arc::new(Mutex::new(Vec::new()));
     let mut drain = tty.try_clone().unwrap();
-    std::thread::spawn(move || {
-        let mut buf = [0u8; 65536];
-        while let Ok(n) = drain.read(&mut buf) {
-            if n == 0 {
-                break;
+    {
+        let drawn = drawn.clone();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 65536];
+            while let Ok(n) = drain.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                drawn.lock().unwrap().extend_from_slice(&buf[..n]);
             }
-        }
-    });
+        });
+    }
     let mut events = child.stdout.take().unwrap();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -297,7 +303,12 @@ fn piped_stdout_carries_only_clean_events() {
             let _ = tx.send(all.clone());
         }
     });
-    std::thread::sleep(Duration::from_millis(400));
+    // Type only once the input box is on screen: keys sent before the
+    // renderer switches the tty to raw mode can be discarded.
+    let ready = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < ready && !String::from_utf8_lossy(&drawn.lock().unwrap()).contains('╭') {
+        std::thread::sleep(Duration::from_millis(20));
+    }
     tty.write_all(b"/help\r").unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut got = Vec::new();

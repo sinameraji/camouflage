@@ -212,6 +212,8 @@ export interface CamouflageHandle extends EventEmitter {
   on(event: "wizardCancelled", listener: (resp: WizardCancelledEvent) => void): this;
   on(event: "modeChangeRequested", listener: (resp: { direction: "next" | "prev" }) => void): this;
   on(event: "cancelRequested", listener: () => void): this;
+  /** The user is typing a path after `@`; answer with MentionCandidatesRegistered { for_query, candidates }. */
+  on(event: "mentionQuery", listener: (q: { query: string }) => void): this;
   on(event: "event", listener: (ev: Event) => void): this;
   on(event: "invalid", listener: (info: InvalidEvent) => void): this;
   on(event: "stderr", listener: (chunk: string) => void): this;
