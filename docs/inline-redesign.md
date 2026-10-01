@@ -222,6 +222,7 @@ Known limits of the Ink hotfix (the Camouflage rewrite removes them):
   - Release gotcha: release-please only tracks `sdk/node`, and has no option to add `crates/` (checked 17.11.2). Crate-only fixes need `scripts/trigger-binary-release.sh` (a `Release-As:` commit) to ship.
 - **Next:** /compact and the MCP/LSP/memory managers in autopilot's Camouflage mode; daily-drive it; then make `--ui inline` the Camouflage default and `camouflage` the autopilot default.
 - **2026-10-01** — cf#49–#51 released as 2.3.0-beta.1; ap#688 merged. ap#691 (draft) ports every remaining Ink dialog (command editor, changelog image, inbox, multi-agent, remote dashboard, LSP wizard, hooks dashboard + wizard) to the Camouflage view. It needs cf#53 (multi-line fields) released, because 2.3.0's renderer rejects the `multiline` kind. Left after that: Ctrl+R reasoning, the Ctrl+O transcript view.
+- **2026-10-01 (later)** — cf#53 and cf#54 released as 2.4.0-beta.1. ap#691 bumps `camouflage-tui` to it. Left: the Ctrl+O full transcript view (beyond Ink, which only toggles verbose), `/reasoning` driving the renderer toggle, live `/theme` accent, and pausing while the terminal is unfocused.
 
 ## 8. Roadmap: Ink parity, then defaults (2026-10-01)
 
@@ -262,16 +263,16 @@ Updated as PRs land. "✅" means checked against the Ink implementation, not ass
 | /memory | Toggle, stats, search, clear with confirm | Same (ap#688, cf#50 for the search form) | ✅ |
 | /skills | Menu; add/edit/… print "type /skills x <name>" | Menu; actions ask for the name in a form (ap#688) | ✅ |
 | /command list, /command delete | List; picker + confirm | Same (ap#688) | ✅ |
-| /command create, /command edit | Multi-step wizard with preview | Form with multi-line template, advanced selects, preview, confirm (ap#691, cf#53) | ⏳ cf#53 release |
+| /command create, /command edit | Multi-step wizard with preview | Form with multi-line template, advanced selects, preview, confirm (ap#691, cf#53) | ⏳ ap#691 |
 | /lsp config | LSP setup wizard | Presets, install with output, custom server, scope, toggle/delete (ap#691) | ⏳ merge |
 | /multi-agent | Multi-step settings | Toggles, endpoint/secret forms, Set up / Tear down streaming progress (ap#691) | ⏳ merge |
-| /hooks | Dashboard + custom hook wizard | Sections with on/off states, install recommended, wizard with examples (ap#691, cf#53) | ⏳ cf#53 release |
+| /hooks | Dashboard + custom hook wizard | Sections with on/off states, install recommended, wizard with examples (ap#691, cf#53) | ⏳ ap#691 |
 | /inbox, /remote (dashboard), /changelog-image | Modals with steps/forms | Forms + pickers; remote detail with open PR / cancel (ap#691) | ⏳ merge |
 | /ui | Ink only | ink or camouflage, saved (ap#688) | ✅ |
 | Custom commands in `/` picker | Yes | Yes (ap#688) | ✅ |
 | `@` mentions incl. `../`, `~/`, `/` | Yes (#650) | Yes (cf#47, ap#685) | ✅ |
 | `!` shell commands, queued follow-ups | Yes | Same App code (ap#685) | ✅ |
 | MCP / LSP / memory / hooks / skills managers | Yes | Same App code (ap#685) | ✅ |
-| Ctrl+R reasoning display | Yes | — (needs renderer support) | ❌ |
+| Ctrl+R reasoning display | Yes | `AssistantReasoningDelta`, toggled in the renderer (cf#54, ap#691) | ⏳ ap#691 |
 | Color in model text | No | Inline HTML + ANSI (cf#51) | ✅ |
 | Ctrl+O full transcript | Verbose toggle | Expands collapsed output in the live area | ⚠️ |
