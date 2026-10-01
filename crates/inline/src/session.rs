@@ -17,6 +17,7 @@ use crate::blocks::{
 use crate::chrome::{self, InputMode, PickItem, PromptView};
 use crate::diff::{count_changes, diff_texts, parse_unified};
 use crate::editor::{EditKey, EditOutcome, Editor};
+use crate::form::{FormOutcome, FormState};
 use crate::style::{Color, Line, Span, Style};
 use crate::term::LiveFrame;
 use crate::theme::Theme;
@@ -121,6 +122,8 @@ pub struct Session {
     pick_sel: usize,
     pick_dismissed: Option<String>,
     prompt: Option<Prompt>,
+    form: Option<FormState>,
+    wizard: Option<Wizard>,
     foot: Option<(String, Style, i64)>,
     ctrl_c_at: Option<i64>,
     phase_busy: bool,
@@ -160,6 +163,8 @@ impl Session {
             pick_sel: 0,
             pick_dismissed: None,
             prompt: None,
+            form: None,
+            wizard: None,
             foot: None,
             ctrl_c_at: None,
             phase_busy: false,
@@ -439,17 +444,24 @@ impl Session {
             }
             EventType::ShowTable => self.push_done(Block::Assistant { markdown: table_markdown(p) }),
             EventType::ShowKeyValueView => self.push_done(Block::Assistant { markdown: kv_markdown(p) }),
-            EventType::ShowForm | EventType::ShowWizard => {
-                self.push_done(Block::Notice {
-                    kind: NoticeKind::Warn,
-                    text: "This prompt uses a form, which inline mode doesn't support yet.".into(),
+            EventType::ShowForm => {
+                self.form = Some(FormState::from_payload(p));
+            }
+            EventType::ShowWizard => {
+                let steps = p.get("steps").and_then(Value::as_array).cloned().unwrap_or_default();
+                if steps.is_empty() {
+                    self.outbound.push(Outbound { event_type: EventType::WizardCompleted, payload: json!({ "id": s("id"), "results": {} }) });
+                    return;
+                }
+                self.wizard = Some(Wizard {
+                    id: s("id"),
+                    title: p.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
+                    allow_cancel: p.get("allow_cancel").and_then(Value::as_bool).unwrap_or(true),
+                    steps,
+                    at: 0,
+                    results: serde_json::Map::new(),
                 });
-                let (ty, payload) = if ev.event_type == EventType::ShowForm {
-                    (EventType::FormResponse, json!({ "id": s("id"), "cancelled": true }))
-                } else {
-                    (EventType::WizardCancelled, json!({ "id": s("id"), "at_step": 0 }))
-                };
-                self.outbound.push(Outbound { event_type: ty, payload });
+                self.show_wizard_step(now);
             }
             EventType::RuntimeError => {
                 let mut text = s("message");
@@ -581,6 +593,27 @@ impl Session {
     // ----- keys from the user -------------------------------------------
 
     pub fn key(&mut self, key: Key, now: i64) {
+        self.handle_key(key, now);
+        self.absorb_wizard_answers(now);
+    }
+
+    fn handle_key(&mut self, key: Key, now: i64) {
+        if let Some(form) = self.form.as_mut() {
+            match form.key(key) {
+                FormOutcome::Pending => {}
+                FormOutcome::Submitted(values) => {
+                    let id = form.id.clone();
+                    self.form = None;
+                    self.outbound.push(Outbound { event_type: EventType::FormResponse, payload: json!({ "id": id, "values": values }) });
+                }
+                FormOutcome::Cancelled => {
+                    let id = form.id.clone();
+                    self.form = None;
+                    self.outbound.push(Outbound { event_type: EventType::FormResponse, payload: json!({ "id": id, "cancelled": true }) });
+                }
+            }
+            return;
+        }
         if self.prompt.is_some() {
             self.prompt_key(key, now);
             return;
@@ -869,7 +902,11 @@ impl Session {
         lines.push(Line::new());
 
         let mut cursor = None;
-        if let Some(p) = &self.prompt {
+        if let Some(form) = &self.form {
+            let (boxed, (cr, cc)) = form.render(t, self.width);
+            cursor = Some((lines.len() + cr, cc));
+            lines.extend(boxed);
+        } else if let Some(p) = &self.prompt {
             let view = prompt_view(p, self.height);
             lines.extend(chrome::prompt_box(t, &view, self.width, self.height.saturating_sub(2)));
         } else {
@@ -1137,6 +1174,98 @@ impl Session {
         }
         self.mention_query_sent = Some(dir);
         self.outbound.push(Outbound { event_type: EventType::MentionQuery, payload: json!({ "query": q }) });
+    }
+}
+
+/// A multi-step `ShowWizard`, run as one prompt or form per step.
+struct Wizard {
+    id: String,
+    title: String,
+    allow_cancel: bool,
+    steps: Vec<Value>,
+    at: usize,
+    results: serde_json::Map<String, Value>,
+}
+
+impl Session {
+    /// Show the current wizard step through the ordinary prompt and form
+    /// paths, using the step's id so its answer can be recognized.
+    fn show_wizard_step(&mut self, now: i64) {
+        let Some(w) = &self.wizard else { return };
+        let step = w.steps[w.at].clone();
+        let progress = format!("{}Step {} of {}", if w.title.is_empty() { String::new() } else { format!("{} · ", w.title) }, w.at + 1, w.steps.len());
+        let allow_cancel = w.allow_cancel;
+        let mut payload = step.clone();
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("allow_cancel".into(), json!(allow_cancel));
+        }
+        let event_type = match step.get("kind").and_then(Value::as_str) {
+            Some("select") | Some("confirm") => {
+                let prompt = step.get("prompt").and_then(Value::as_str).unwrap_or("");
+                if let Some(obj) = payload.as_object_mut() {
+                    obj.insert("prompt".into(), json!(format!("{prompt}  ({progress})")));
+                }
+                if step.get("kind").and_then(Value::as_str) == Some("select") {
+                    EventType::ShowSelectList
+                } else {
+                    EventType::ShowConfirm
+                }
+            }
+            _ => {
+                let title = step.get("title").and_then(Value::as_str).unwrap_or("");
+                if let Some(obj) = payload.as_object_mut() {
+                    obj.insert("title".into(), json!(if title.is_empty() { progress } else { format!("{title}  ({progress})") }));
+                }
+                EventType::ShowForm
+            }
+        };
+        let ev = Event {
+            id: Default::default(),
+            session_id: Default::default(),
+            seq: 0,
+            timestamp_ms: now,
+            schema_version: camouflage_protocol::SCHEMA_VERSION,
+            event_type,
+            payload,
+        };
+        self.apply(&ev, now);
+    }
+
+    /// Answers to wizard steps are collected here instead of going to the
+    /// host; the host gets one WizardCompleted (or WizardCancelled).
+    fn absorb_wizard_answers(&mut self, now: i64) {
+        if self.wizard.is_none() {
+            return;
+        }
+        let mut i = 0;
+        while i < self.outbound.len() {
+            let Some(w) = self.wizard.as_mut() else { return };
+            let step_id = w.steps[w.at].get("id").and_then(Value::as_str).unwrap_or("").to_string();
+            let o = &self.outbound[i];
+            let is_answer = matches!(o.event_type, EventType::SelectListResponse | EventType::ConfirmResponse | EventType::FormResponse)
+                && o.payload.get("id").and_then(Value::as_str) == Some(step_id.as_str());
+            if !is_answer {
+                i += 1;
+                continue;
+            }
+            let o = self.outbound.remove(i);
+            if o.payload.get("cancelled").and_then(Value::as_bool) == Some(true) {
+                let (id, at) = (w.id.clone(), w.at);
+                self.wizard = None;
+                self.outbound.push(Outbound { event_type: EventType::WizardCancelled, payload: json!({ "id": id, "at_step": at }) });
+                return;
+            }
+            let value = o.payload.get("value").or_else(|| o.payload.get("values")).cloned().unwrap_or(Value::Null);
+            w.results.insert(step_id, value);
+            w.at += 1;
+            if w.at >= w.steps.len() {
+                let (id, results) = (w.id.clone(), std::mem::take(&mut w.results));
+                self.wizard = None;
+                self.outbound.push(Outbound { event_type: EventType::WizardCompleted, payload: json!({ "id": id, "results": results }) });
+                return;
+            }
+            self.show_wizard_step(now);
+        }
     }
 }
 
@@ -1546,6 +1675,79 @@ mod tests {
         assert!(!live.iter().any(|l| l.contains("Best & latest")), "headers hide while searching");
         s.key(Key::Enter { shift: false, alt: false }, 0);
         assert_eq!(s.take_outbound()[0].payload, json!({"id": "m", "value": "q"}));
+    }
+
+    #[test]
+    fn forms_collect_fields_and_check_required_ones() {
+        let mut s = session();
+        s.apply(
+            &ev(EventType::ShowForm, json!({"id": "f", "title": "New skill", "fields": [
+                {"name": "name", "label": "Name", "required": true},
+                {"name": "key", "label": "API key", "kind": "password"}
+            ]})),
+            0,
+        );
+        // Enter on the first field moves on; submitting with Name empty refuses.
+        s.key(Key::Enter { shift: false, alt: false }, 0);
+        type_str(&mut s, "sk-123");
+        let live = live_text(&s, 0).join("\n");
+        assert!(live.contains("••••••") && !live.contains("sk-123"), "password is masked");
+        s.key(Key::Enter { shift: false, alt: false }, 0);
+        assert!(s.take_outbound().is_empty());
+        assert!(live_text(&s, 0).iter().any(|l| l.contains("Name is required")));
+        type_str(&mut s, "deploy-checks");
+        s.key(Key::Tab, 0);
+        s.key(Key::Enter { shift: false, alt: false }, 0);
+        assert_eq!(
+            s.take_outbound()[0].payload,
+            json!({"id": "f", "values": {"name": "deploy-checks", "key": "sk-123"}})
+        );
+        assert!(live_text(&s, 0).iter().any(|l| l.contains("›") && l.contains("Ask")), "the input box is back");
+    }
+
+    #[test]
+    fn wizards_run_each_step_and_report_once() {
+        let mut s = session();
+        s.apply(
+            &ev(EventType::ShowWizard, json!({"id": "w", "title": "New command", "steps": [
+                {"kind": "form", "id": "basics", "fields": [{"name": "name", "label": "Name"}]},
+                {"kind": "select", "id": "scope", "prompt": "Where?", "options": [{"value": "project", "label": "Project"}, {"value": "global", "label": "Global"}]},
+                {"kind": "confirm", "id": "ok", "prompt": "Create it?"}
+            ]})),
+            0,
+        );
+        assert!(live_text(&s, 0).iter().any(|l| l.contains("Step 1 of 3")));
+        type_str(&mut s, "deploy");
+        s.key(Key::Enter { shift: false, alt: false }, 0);
+        assert!(s.take_outbound().is_empty(), "step answers stay inside the wizard");
+        assert!(live_text(&s, 0).iter().any(|l| l.contains("Step 2 of 3")));
+        s.key(Key::Down, 0);
+        s.key(Key::Enter { shift: false, alt: false }, 0);
+        s.key(Key::Text("y".into()), 0);
+        assert_eq!(
+            s.take_outbound(),
+            vec![Outbound { event_type: EventType::WizardCompleted, payload: json!({"id": "w", "results": {"basics": {"name": "deploy"}, "scope": "global", "ok": true}}) }]
+        );
+    }
+
+    #[test]
+    fn cancelling_a_wizard_reports_the_step() {
+        let mut s = session();
+        s.apply(&ev(EventType::ShowWizard, json!({"id": "w", "steps": [
+            {"kind": "confirm", "id": "a", "prompt": "First?"},
+            {"kind": "confirm", "id": "b", "prompt": "Second?"}
+        ]})), 0);
+        s.key(Key::Text("y".into()), 0);
+        s.key(Key::Esc, 0);
+        assert_eq!(s.take_outbound(), vec![Outbound { event_type: EventType::WizardCancelled, payload: json!({"id": "w", "at_step": 1}) }]);
+    }
+
+    #[test]
+    fn esc_cancels_a_form() {
+        let mut s = session();
+        s.apply(&ev(EventType::ShowForm, json!({"id": "f", "fields": [{"name": "q", "label": "Search"}]})), 0);
+        s.key(Key::Esc, 0);
+        assert_eq!(s.take_outbound()[0].payload, json!({"id": "f", "cancelled": true}));
     }
 
     #[test]

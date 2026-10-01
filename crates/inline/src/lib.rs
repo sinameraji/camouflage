@@ -9,6 +9,7 @@ pub mod blocks;
 pub mod chrome;
 pub mod diff;
 pub mod editor;
+pub mod form;
 pub mod highlight;
 pub mod markdown;
 pub mod session;
