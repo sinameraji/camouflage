@@ -221,6 +221,7 @@ Known limits of the Ink hotfix (the Camouflage rewrite removes them):
   - autopilot #672 brings back `--ui camouflage` on `^2.2.2-beta.1`, verified with the published package in a pseudo-terminal (real model turn, `/help`, modes, cost, 0 bytes while idle, clean exit).
   - Release gotcha: release-please only tracks `sdk/node`, and has no option to add `crates/` (checked 17.11.2). Crate-only fixes need `scripts/trigger-binary-release.sh` (a `Release-As:` commit) to ship.
 - **Next:** /compact and the MCP/LSP/memory managers in autopilot's Camouflage mode; daily-drive it; then make `--ui inline` the Camouflage default and `camouflage` the autopilot default.
+- **2026-10-01** — cf#49–#51 released as 2.3.0-beta.1; ap#688 merged. ap#691 (draft) ports every remaining Ink dialog (command editor, changelog image, inbox, multi-agent, remote dashboard, LSP wizard, hooks dashboard + wizard) to the Camouflage view. It needs cf#53 (multi-line fields) released, because 2.3.0's renderer rejects the `multiline` kind. Left after that: Ctrl+R reasoning, the Ctrl+O transcript view.
 
 ## 8. Roadmap: Ink parity, then defaults (2026-10-01)
 
@@ -253,23 +254,24 @@ Updated as PRs land. "✅" means checked against the Ink implementation, not ass
 | Command / feature | Ink | Camouflage | Status |
 |---|---|---|---|
 | Output-only commands: /exit /clear /fresh /reasoning /cost /jev /subagents /key /settings /plan /auto /edit /checkpoint /compact /init /update /mcp /hello /logout /remote <prompt>, and every command's argument forms | Ink handlers | Same handlers via the App bridge (ap#685) | ✅ |
-| /model | Featured "Best & latest" + current, context/price columns, tools-only, fuzzy search | Same data and layout (ap#688), rich select (cf#49) | ⏳ merge |
-| /resume | Fuzzy search over title and id, pages | Title/age/count columns, fuzzy search incl. first prompt (ap#688, cf#49) | ⏳ merge |
+| /model | Featured "Best & latest" + current, context/price columns, tools-only, fuzzy search | Same data and layout (ap#688), rich select (cf#49) | ✅ |
+| /resume | Fuzzy search over title and id, pages | Title/age/count columns, fuzzy search incl. first prompt (ap#688, cf#49) | ✅ |
 | /mode, /checkpoints, plan options, plan complete | Pickers | Pickers (ap#685) | ✅ |
-| /help | Paged menu that runs commands | All pages as sections + custom commands; argument entries ask via a form (ap#688, cf#50) | ⏳ merge |
-| /theme, /shell | Pickers | Pickers with current marked (ap#688) | ⏳ merge |
-| /memory | Toggle, stats, search, clear with confirm | Same (ap#688, cf#50 for the search form) | ⏳ merge |
-| /skills | Menu; add/edit/… print "type /skills x <name>" | Menu; actions ask for the name in a form (ap#688) | ⏳ merge |
-| /command list, /command delete | List; picker + confirm | Same (ap#688) | ⏳ merge |
-| /command create, /command edit | Multi-step wizard with preview | — | ❌ next |
-| /lsp config | LSP setup wizard | — | ❌ next |
-| /multi-agent | Multi-step settings | — | ❌ next |
-| /inbox, /remote (dashboard), /changelog-image | Modals with steps/forms | — | ❌ next |
-| /ui | Ink only | ink or camouflage, saved (ap#688) | ⏳ merge |
-| Custom commands in `/` picker | Yes | Yes (ap#688) | ⏳ merge |
-| `@` mentions incl. `../`, `~/`, `/` | Yes (#650) | Yes (cf#47, ap#685) | ⏳ release |
+| /help | Paged menu that runs commands | All pages as sections + custom commands; argument entries ask via a form (ap#688, cf#50) | ✅ |
+| /theme, /shell | Pickers | Pickers with current marked (ap#688) | ✅ |
+| /memory | Toggle, stats, search, clear with confirm | Same (ap#688, cf#50 for the search form) | ✅ |
+| /skills | Menu; add/edit/… print "type /skills x <name>" | Menu; actions ask for the name in a form (ap#688) | ✅ |
+| /command list, /command delete | List; picker + confirm | Same (ap#688) | ✅ |
+| /command create, /command edit | Multi-step wizard with preview | Form with multi-line template, advanced selects, preview, confirm (ap#691, cf#53) | ⏳ cf#53 release |
+| /lsp config | LSP setup wizard | Presets, install with output, custom server, scope, toggle/delete (ap#691) | ⏳ merge |
+| /multi-agent | Multi-step settings | Toggles, endpoint/secret forms, Set up / Tear down streaming progress (ap#691) | ⏳ merge |
+| /hooks | Dashboard + custom hook wizard | Sections with on/off states, install recommended, wizard with examples (ap#691, cf#53) | ⏳ cf#53 release |
+| /inbox, /remote (dashboard), /changelog-image | Modals with steps/forms | Forms + pickers; remote detail with open PR / cancel (ap#691) | ⏳ merge |
+| /ui | Ink only | ink or camouflage, saved (ap#688) | ✅ |
+| Custom commands in `/` picker | Yes | Yes (ap#688) | ✅ |
+| `@` mentions incl. `../`, `~/`, `/` | Yes (#650) | Yes (cf#47, ap#685) | ✅ |
 | `!` shell commands, queued follow-ups | Yes | Same App code (ap#685) | ✅ |
 | MCP / LSP / memory / hooks / skills managers | Yes | Same App code (ap#685) | ✅ |
 | Ctrl+R reasoning display | Yes | — (needs renderer support) | ❌ |
-| Color in model text | No | Inline HTML + ANSI (cf#51) | ⏳ merge |
+| Color in model text | No | Inline HTML + ANSI (cf#51) | ✅ |
 | Ctrl+O full transcript | Verbose toggle | Expands collapsed output in the live area | ⚠️ |
