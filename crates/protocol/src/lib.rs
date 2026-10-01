@@ -648,6 +648,8 @@ pub mod payloads {
     pub enum FormFieldKind {
         Text,
         Password,
+        /// v2.4+ — multi-line text: Enter adds a line, Tab moves on.
+        Multiline,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

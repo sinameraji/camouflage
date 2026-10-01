@@ -12,6 +12,8 @@ pub struct Field {
     pub name: String,
     pub label: String,
     pub password: bool,
+    /// Multi-line: Enter adds a line, Tab moves on.
+    pub multiline: bool,
     pub placeholder: String,
     pub required: bool,
     pub editor: Editor,
@@ -51,6 +53,7 @@ impl FormState {
                             name: s(f, "name"),
                             label: s(f, "label"),
                             password: f.get("kind").and_then(Value::as_str) == Some("password"),
+                            multiline: f.get("kind").and_then(Value::as_str) == Some("multiline"),
                             placeholder: s(f, "placeholder"),
                             required: f.get("required").and_then(Value::as_bool).unwrap_or(false),
                             editor,
@@ -71,6 +74,38 @@ impl FormState {
 
     pub fn key(&mut self, key: Key) -> FormOutcome {
         let n = self.fields.len().max(1);
+        let multiline = self.fields.get(self.focused).map(|f| f.multiline).unwrap_or(false);
+        if multiline {
+            // Enter writes a newline; arrows move within the text first;
+            // Tab moves on (and submits from the last field).
+            match &key {
+                Key::Enter { .. } | Key::Ctrl('j') => {
+                    if let Some(f) = self.fields.get_mut(self.focused) {
+                        f.editor.handle(EditKey::Enter { newline: true }, 1000);
+                    }
+                    return FormOutcome::Pending;
+                }
+                Key::Up | Key::Down => {
+                    let up = key == Key::Up;
+                    let moved = self.fields.get_mut(self.focused).map(|f| {
+                        let before = f.editor.cursor();
+                        f.editor.handle(if up { EditKey::Up } else { EditKey::Down }, 1000);
+                        f.editor.cursor() != before
+                    });
+                    if moved == Some(true) {
+                        return FormOutcome::Pending;
+                    }
+                }
+                Key::Tab if self.focused + 1 >= self.fields.len() => return self.submit(),
+                Key::Paste(t) => {
+                    if let Some(f) = self.fields.get_mut(self.focused) {
+                        f.editor.handle(EditKey::Paste(t.clone()), 100_000);
+                    }
+                    return FormOutcome::Pending;
+                }
+                _ => {}
+            }
+        }
         match key {
             Key::Esc | Key::Ctrl('c') if self.allow_cancel => return FormOutcome::Cancelled,
             Key::Tab | Key::Down => self.focused = (self.focused + 1) % n,
@@ -139,6 +174,33 @@ impl FormState {
                 label.push(" *", theme.dim());
             }
             content.push(label);
+            if f.multiline {
+                let field_w = inner.saturating_sub(2).max(4);
+                let text = f.editor.text();
+                let rows = f.editor.rows(field_w);
+                let (cr, cc) = f.editor.cursor_pos(field_w);
+                // Show at most 8 rows, following the cursor.
+                let first = if cr >= 8 { cr - 7 } else { 0 };
+                if text.is_empty() {
+                    let mut line = Line::styled(if focused { "› " } else { "  " }, theme.accent());
+                    line.push(truncate(&f.placeholder, field_w), theme.dim());
+                    if focused {
+                        cursor = (content.len(), 2);
+                    }
+                    content.push(line);
+                } else {
+                    for (ri, r) in rows.iter().enumerate().skip(first).take(8) {
+                        let mut line = Line::styled(if focused && ri == first { "› " } else { "  " }, theme.accent());
+                        line.push(text[r.start..r.end].to_string(), Style::new());
+                        if focused && ri == cr {
+                            cursor = (content.len(), 2 + cc);
+                        }
+                        content.push(line);
+                    }
+                }
+                content.push(Line::new());
+                continue;
+            }
             let text = f.editor.text();
             let shown = if f.password { "•".repeat(text.chars().count()) } else { text.to_string() };
             let field_w = inner.saturating_sub(2);
@@ -172,7 +234,13 @@ impl FormState {
             out.push(l);
         }
         out.push(Line::styled(format!("╰{}╯", "─".repeat(width.saturating_sub(2))), border));
-        let hint = if self.allow_cancel { "tab to move · enter to continue · esc to cancel" } else { "tab to move · enter to continue" };
+        let on_multiline = self.fields.get(self.focused).map(|f| f.multiline).unwrap_or(false);
+        let hint = match (on_multiline, self.allow_cancel) {
+            (true, true) => "enter for a new line · tab to continue · esc to cancel",
+            (true, false) => "enter for a new line · tab to continue",
+            (false, true) => "tab to move · enter to continue · esc to cancel",
+            (false, false) => "tab to move · enter to continue",
+        };
         out.push(Line::styled(format!("  {hint}"), theme.dim()));
         // +1 for the top border, +2 for "│ ".
         (out, (cursor.0 + 1, cursor.1 + 2))

@@ -1743,6 +1743,28 @@ mod tests {
     }
 
     #[test]
+    fn multiline_fields_take_newlines_and_tab_submits() {
+        let mut s = session();
+        s.apply(&ev(EventType::ShowForm, json!({"id": "f", "fields": [
+            {"name": "name", "label": "Name"},
+            {"name": "template", "label": "Template", "kind": "multiline"}
+        ]})), 0);
+        type_str(&mut s, "review");
+        s.key(Key::Enter { shift: false, alt: false }, 0);
+        type_str(&mut s, "Review $ARGUMENTS");
+        s.key(Key::Enter { shift: false, alt: false }, 0);
+        type_str(&mut s, "Be strict.");
+        assert!(s.take_outbound().is_empty(), "Enter adds a line in a multi-line field");
+        let live = live_text(&s, 0).join("\n");
+        assert!(live.contains("Review $ARGUMENTS") && live.contains("Be strict."), "{live}");
+        s.key(Key::Tab, 0);
+        assert_eq!(
+            s.take_outbound()[0].payload,
+            json!({"id": "f", "values": {"name": "review", "template": "Review $ARGUMENTS\nBe strict."}})
+        );
+    }
+
+    #[test]
     fn esc_cancels_a_form() {
         let mut s = session();
         s.apply(&ev(EventType::ShowForm, json!({"id": "f", "fields": [{"name": "q", "label": "Search"}]})), 0);
