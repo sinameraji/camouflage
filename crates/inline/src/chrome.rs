@@ -206,8 +206,16 @@ pub struct PromptView {
     /// redraw doesn't re-highlight it.
     pub diff_lines: Option<Vec<Line>>,
     pub question: Option<String>,
+    /// Prefix options with 1., 2., … (short lists and permission prompts).
+    pub numbered: bool,
     pub options: Vec<String>,
     pub hints: Vec<Option<String>>,
+    /// A group header to draw above this option, if one starts here.
+    pub sections: Vec<Option<String>>,
+    /// Extra values drawn in aligned columns after the label.
+    pub columns: Vec<Vec<String>>,
+    /// An on/off badge (e.g. enabled skills).
+    pub states: Vec<Option<bool>>,
     /// Index of the currently active option, marked with ✓.
     pub current: Option<usize>,
     pub selected: usize,
@@ -243,21 +251,48 @@ pub fn prompt_box(theme: &Theme, p: &PromptView, width: usize, max_rows: usize) 
     if let Some(q) = &p.question {
         content.extend(wrap(&Line::raw(q.clone()), inner, &Line::new()));
     }
+    // Column layout shared by every row: label, then aligned columns.
+    let label_w = p.options.iter().map(|o| str_width(o)).max().unwrap_or(0);
+    let ncols = p.columns.iter().map(Vec::len).max().unwrap_or(0);
+    let col_w: Vec<usize> = (0..ncols)
+        .map(|c| p.columns.iter().filter_map(|r| r.get(c)).map(|v| str_width(v)).max().unwrap_or(0))
+        .collect();
+    let num_w = if p.numbered { format!("{}. ", p.options.len()).len() } else { 0 };
     for (i, o) in p.options.iter().enumerate() {
+        if let Some(Some(header)) = p.sections.get(i) {
+            if i > 0 {
+                content.push(Line::new());
+            }
+            content.push(Line::styled(truncate(header, inner), theme.dim().bold()));
+        }
         let sel = i == p.selected;
         let mut l = Line::new();
         l.push(if sel { "› " } else { "  " }, theme.accent());
-        l.push(format!("{}. ", i + 1), if sel { theme.accent() } else { theme.dim() });
-        l.push(o.clone(), if sel { theme.accent().bold() } else { Style::new() });
+        if p.numbered {
+            l.push(format!("{:<num_w$}", format!("{}. ", i + 1)), if sel { theme.accent() } else { theme.dim() });
+        }
+        if let Some(Some(on)) = p.states.get(i) {
+            l.push(if *on { "● " } else { "○ " }, if *on { theme.ok() } else { theme.dim() });
+        }
+        let label_style = if sel { theme.accent().bold() } else { Style::new() };
+        if ncols > 0 {
+            l.push(format!("{}{}", o, " ".repeat(label_w.saturating_sub(str_width(o)))), label_style);
+            for (c, w) in col_w.iter().enumerate() {
+                let v = p.columns.get(i).and_then(|r| r.get(c)).cloned().unwrap_or_default();
+                l.push(format!("  {}{}", " ".repeat(w.saturating_sub(str_width(&v))), v), theme.dim());
+            }
+        } else {
+            l.push(o.clone(), label_style);
+        }
         if p.current == Some(i) {
-            l.push(" ✓", theme.ok());
+            l.push(" ✓ current", theme.ok());
         }
         if p.esc_is_last && i + 1 == p.options.len() {
             l.push("  esc", theme.dim());
         }
         if let Some(Some(h)) = p.hints.get(i) {
             let used = l.width();
-            let col = used.max(40.min(inner / 2)) + 2;
+            let col = if ncols > 0 { used + 2 } else { used.max(40.min(inner / 2)) + 2 };
             if col + 4 < inner {
                 l.push(" ".repeat(col - used), Style::new());
                 l.push(truncate(h, inner - col), theme.dim());
@@ -402,8 +437,12 @@ mod tests {
             subtitle: Some("src/auth/session.ts".into()),
             diff_lines: None,
             question: Some("Make this edit?".into()),
+            numbered: true,
             options: vec!["Yes".into(), "Yes, for this session".into(), "No".into()],
             hints: vec![],
+            sections: vec![],
+            columns: vec![],
+            states: vec![],
             current: None,
             selected: 1,
             esc_is_last: true,
@@ -414,6 +453,31 @@ mod tests {
         assert!(t.iter().any(|l| l.contains("› 2. Yes, for this session")));
         assert!(t.iter().any(|l| l.contains("3. No  esc")));
         assert!(lines[..lines.len() - 1].iter().all(|l| l.width() == 40), "{t:?}");
+    }
+
+    #[test]
+    fn rich_lists_draw_sections_columns_and_states() {
+        let p = PromptView {
+            title: "Select model".into(),
+            subtitle: None,
+            diff_lines: None,
+            question: None,
+            numbered: false,
+            options: vec!["kimi-k2.6".into(), "qwen3-coder".into(), "glm-4.6".into()],
+            hints: vec![None, None, None],
+            sections: vec![Some("Best & latest".into()), None, Some("Other".into())],
+            columns: vec![vec!["256k".into(), "$0.60 / $2.50".into()], vec!["1M".into(), "free".into()], vec!["200k".into(), "$0.40 / $1.75".into()]],
+            states: vec![None, None, Some(false)],
+            current: Some(0),
+            selected: 1,
+            esc_is_last: false,
+            footer: String::new(),
+        };
+        let t = text(&prompt_box(&Theme::default(), &p, 70, 30));
+        assert!(t.iter().any(|l| l.contains("Best & latest")));
+        assert!(t.iter().any(|l| l.contains("› qwen3-coder    1M           free")), "{t:?}");
+        assert!(t.iter().any(|l| l.contains("kimi-k2.6    256k  $0.60 / $2.50 ✓ current")), "{t:?}");
+        assert!(t.iter().any(|l| l.contains("○ glm-4.6")), "{t:?}");
     }
 
     #[test]
