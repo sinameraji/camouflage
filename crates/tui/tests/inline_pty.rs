@@ -188,6 +188,10 @@ fn a_turn_renders_inline_and_stays_after_exit() {
     t.keys("The café build fails 👍".as_bytes());
     t.wait_for("The café build fails 👍");
     t.keys(b"\r");
+    // The input box also shows "› The café…" while typing; wait for it to
+    // empty (placeholder back), which means the prompt was submitted and
+    // echoed before any host event below can arrive.
+    t.wait_for("Ask autopilot anything");
     t.wait_for("› The café build fails 👍");
 
     t.host("StatusUpdate", serde_json::json!({ "segments": { "phase": "thinking" } }));
