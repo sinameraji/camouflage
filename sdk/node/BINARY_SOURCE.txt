@@ -1,2 +1,2 @@
 The camouflage-tui native binary is built from the camouflage workspace.
-Released from commit: 9694172f273c0578126d0f884cd0722719658a2a
+Released from commit: 11c33d5b4a10a36c42f963cfcbb9adb970885d1f
