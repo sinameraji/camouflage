@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { encode, validate } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const LOCAL_BIN = join(__dirname, "..", "bin", "camouflage-tui");
+const LOCAL_BIN = join(__dirname, "..", "bin", process.platform === "win32" ? "camouflage-tui.exe" : "camouflage-tui");
 const DEFAULT_BIN = existsSync(LOCAL_BIN) ? LOCAL_BIN : "camouflage-tui";
 
 /**

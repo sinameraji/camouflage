@@ -49,7 +49,7 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     let screen: Box<dyn Write + Send> = if stdout_is_tty {
         Box::new(std::io::stdout())
     } else {
-        Box::new(std::fs::OpenOptions::new().write(true).open("/dev/tty").context("opening /dev/tty for drawing")?)
+        Box::new(crate::platform::open_console_writer().context("opening the terminal for drawing")?)
     };
 
     std::thread::spawn(camouflage_inline::highlight::warm);
@@ -364,6 +364,7 @@ fn spawn_key_reader(tx: mpsc::Sender<Input>) {
 /// SIGTERM/SIGHUP (e.g. the SDK's kill()) exit cleanly so the terminal is
 /// restored instead of being left in raw mode.
 fn spawn_signal_handler(tx: mpsc::Sender<Input>) {
+    #[cfg(unix)]
     tokio::spawn(async move {
         use tokio::signal::unix::{signal, SignalKind};
         let (Ok(mut term), Ok(mut hup)) = (signal(SignalKind::terminate()), signal(SignalKind::hangup())) else {
@@ -375,15 +376,17 @@ fn spawn_signal_handler(tx: mpsc::Sender<Input>) {
         }
         let _ = tx.send(Input::HostClosed).await;
     });
+    // Windows: closing the console window ends the process; the host
+    // closing stdin is handled by the reader.
+    #[cfg(not(unix))]
+    drop(tx);
 }
 
 /// Outbound NDJSON on a blocking thread: write and flush each event as it
 /// arrives, no flush timer.
 fn spawn_outbound(responses_fd: Option<i32>, emit_responses: bool, stdout_is_tty: bool) -> Result<Option<std::sync::mpsc::Sender<Event>>> {
     let sink: Box<dyn Write + Send> = if let Some(fd) = responses_fd {
-        use std::os::unix::io::FromRawFd;
-        // SAFETY: the host opened this fd for us before spawning.
-        Box::new(unsafe { std::fs::File::from_raw_fd(fd) })
+        Box::new(crate::platform::file_from_fd(fd)?)
     } else if emit_responses {
         if stdout_is_tty {
             anyhow::bail!("--ui inline draws on stdout when it's a terminal; pass --responses-fd for outbound events");
@@ -461,7 +464,7 @@ fn leave_terminal_modes() {
 }
 
 fn tty_writer() -> Box<dyn Write> {
-    match std::fs::OpenOptions::new().write(true).open("/dev/tty") {
+    match crate::platform::open_console_writer() {
         Ok(f) => Box::new(f),
         Err(_) => Box::new(std::io::stdout()),
     }
@@ -473,8 +476,8 @@ fn install_panic_hook() {
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         leave_terminal_modes();
-        if let Some(home) = std::env::var_os("HOME") {
-            let dir = std::path::PathBuf::from(home).join(".camouflage");
+        if let Some(home) = crate::platform::home_dir() {
+            let dir = home.join(".camouflage");
             let _ = std::fs::create_dir_all(&dir);
             let path = dir.join(format!("crash-{}.txt", now_ms()));
             if std::fs::write(&path, format!("{info}\n")).is_ok() {
