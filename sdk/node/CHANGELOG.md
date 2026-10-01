@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.3.0-beta.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.2.2-beta.1...camouflage-tui-v2.3.0-beta.1) (2026-10-01)
+
+
+### Features
+
+* **inline:** browse folders in @ mentions, and fix two rendering bugs ([b0fde99](https://github.com/sinameraji/camouflage/commit/b0fde99f2f6b2852d3a1590279530c030a402e2e))
+* **inline:** browse folders in @ mentions, and fix two rendering bugs ([88169d2](https://github.com/sinameraji/camouflage/commit/88169d2e7a3196b28f62496b178425b2b96bd054))
+* **inline:** searchable select lists with sections, columns and toggles ([b1784ba](https://github.com/sinameraji/camouflage/commit/b1784bac8f811855a0d4d0e27112af5d2a0fc623))
+* **inline:** searchable select lists with sections, columns and toggles ([ac0578f](https://github.com/sinameraji/camouflage/commit/ac0578f2c1ff4a9ce1adff950f47dcbd51accb55))
+
 ## [2.2.2-beta.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.2.1-beta.1...camouflage-tui-v2.2.2-beta.1) (2026-09-30)
 
 
