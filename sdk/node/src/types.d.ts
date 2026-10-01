@@ -267,7 +267,7 @@ export type ShowKeyValueView = {
   items: KeyValueItem[];
 };
 
-export type FormFieldKind = "text" | "password";
+export type FormFieldKind = "text" | "password" | "multiline";
 export type FormField = {
   name: string;
   label: string;
