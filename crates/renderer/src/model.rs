@@ -1703,6 +1703,9 @@ impl RenderModel {
             EventType::AssistantReasoningDelta => {
                 // Reasoning is shown by the inline renderer only.
             }
+            EventType::TerminalSuspend | EventType::TerminalResume | EventType::TerminalSuspended => {
+                // Terminal handoff is an inline-renderer feature.
+            }
             EventType::WizardCompleted | EventType::WizardCancelled => {
                 self.active_wizard = None;
                 self.dirty = true;

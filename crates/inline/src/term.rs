@@ -157,6 +157,15 @@ impl<W: Write> InlineTerminal<W> {
         self.flush(buf)
     }
 
+    /// Give the terminal away (to a child process): erase the live region,
+    /// reset colors, show the cursor at the start of a clean line. The next
+    /// draw starts fresh wherever the cursor is then.
+    pub fn suspend(&mut self) -> io::Result<()> {
+        self.clear_live()?;
+        self.cursor_visible = true;
+        self.flush("\x1b[0m\x1b[?25h".to_string())
+    }
+
     /// Erase the live region entirely (e.g. before handing the terminal to a
     /// full-screen view) and leave the cursor where it started.
     pub fn clear_live(&mut self) -> io::Result<()> {

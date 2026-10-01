@@ -28,7 +28,7 @@ jobs:
       # the top-level key just in case.
       tag_name: ${{ steps.release.outputs['sdk/node--tag_name'] || steps.release.outputs.tag_name }}
     steps:
-      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -41,7 +41,7 @@ jobs:
       # release on its own — and that silent skip is exactly what bit the
       # Esc-abort fix. When no release is cut, surface any unreleased crate
       # changes loudly so they aren't lost. Non-blocking: warning only.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: ${{ !steps.release.outputs.releases_created }}
         with:
           fetch-depth: 0
@@ -113,10 +113,10 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.release-please.outputs.tag_name }}
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           registry-url: "https://registry.npmjs.org"

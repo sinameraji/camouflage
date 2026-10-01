@@ -163,6 +163,20 @@ pub enum EventType {
     /// is the same as `AssistantTokenDelta`. Hidden until the user presses
     /// Ctrl+R; renderers that don't show reasoning ignore it.
     AssistantReasoningDelta,
+    /// v2.4+ — Host → renderer: give the terminal to a child process (e.g.
+    /// a `!` shell command). The inline renderer clears its live area,
+    /// leaves raw mode, stops reading keys, then answers
+    /// `TerminalSuspended`. Payload `{ "id": "<any>" }`.
+    TerminalSuspend,
+    /// v2.4+ — Host → renderer: take the terminal back after a
+    /// `TerminalSuspend`; the renderer re-enters raw mode and redraws below
+    /// whatever the child printed. Payload `{ "id": "<any>" }`.
+    TerminalResume,
+    /// v2.4+ — Renderer → host: the terminal is free. Payload
+    /// `{ "id": "<same id>", "supported": bool }`; `supported: false` means
+    /// this renderer can't hand the terminal over (Windows, full-screen
+    /// mode), so the host should run the child without a terminal.
+    TerminalSuspended,
 }
 
 impl EventType {
@@ -211,6 +225,9 @@ impl EventType {
             EventType::ShowToast => "ShowToast",
             EventType::MentionQuery => "MentionQuery",
             EventType::AssistantReasoningDelta => "AssistantReasoningDelta",
+            EventType::TerminalSuspend => "TerminalSuspend",
+            EventType::TerminalResume => "TerminalResume",
+            EventType::TerminalSuspended => "TerminalSuspended",
         }
     }
 
@@ -263,6 +280,9 @@ impl EventType {
             "ShowToast" => Self::ShowToast,
             "MentionQuery" => Self::MentionQuery,
             "AssistantReasoningDelta" => Self::AssistantReasoningDelta,
+            "TerminalSuspend" => Self::TerminalSuspend,
+            "TerminalResume" => Self::TerminalResume,
+            "TerminalSuspended" => Self::TerminalSuspended,
             _ => return None,
         })
     }
@@ -279,7 +299,8 @@ impl EventType {
             | EventType::WizardCancelled
             | EventType::ModeChangeRequested
             | EventType::CancelRequested
-            | EventType::MentionQuery => Direction::Outbound,
+            | EventType::MentionQuery
+            | EventType::TerminalSuspended => Direction::Outbound,
             _ => Direction::Inbound,
         }
     }
@@ -880,8 +901,11 @@ mod tests {
             EventType::ShowToast,
             EventType::MentionQuery,
             EventType::AssistantReasoningDelta,
+            EventType::TerminalSuspend,
+            EventType::TerminalResume,
+            EventType::TerminalSuspended,
         ];
-        assert_eq!(types.len(), 43);
+        assert_eq!(types.len(), 46);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();
@@ -912,6 +936,7 @@ mod tests {
             EventType::WizardCancelled, EventType::ModeChangeRequested, EventType::CancelRequested,
             EventType::TranscriptCleared, EventType::Splash, EventType::ShowToast,
             EventType::MentionQuery, EventType::AssistantReasoningDelta,
+            EventType::TerminalSuspend, EventType::TerminalResume, EventType::TerminalSuspended,
         ];
         for t in all {
             let quoted = format!("\"{}\"", t.as_str());

@@ -69,6 +69,16 @@ export function confirm(
   },
 ): Promise<ConfirmResponseEvent>;
 
+/**
+ * Hand the terminal to a child process; resolves once the renderer has let
+ * go of it. `supported: false` means run the child without a terminal
+ * (Windows, full-screen mode, older renderers, or no answer in time).
+ */
+export function suspendTerminal(cam: CamouflageHandle, opts?: { timeoutMs?: number }): Promise<{ supported: boolean }>;
+
+/** Take the terminal back after `suspendTerminal`. */
+export function resumeTerminal(cam: CamouflageHandle): void;
+
 /** Convenience helper: show a tabular data view. Display-only. */
 export function table(
   cam: CamouflageHandle,
