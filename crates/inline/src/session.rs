@@ -1705,6 +1705,15 @@ mod tests {
     }
 
     #[test]
+    fn unfocused_busy_ticks_once_a_second() {
+        let mut s = session();
+        s.apply(&ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})), 0);
+        assert_eq!(s.next_wakeup(10), Some(FRAME_MS));
+        s.focused = false;
+        assert_eq!(s.next_wakeup(10), Some(UNFOCUSED_FRAME_MS));
+    }
+
+    #[test]
     fn idle_needs_no_wakeups_and_busy_ticks() {
         let mut s = session();
         assert_eq!(s.next_wakeup(1000), None);
