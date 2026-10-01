@@ -23,6 +23,7 @@ const KNOWN_TYPES = new Set([
   "ShowWizard", "WizardCompleted", "WizardCancelled",
   "ModeChangeRequested", "CancelRequested",
   "TranscriptCleared", "Splash", "ShowToast", "MentionQuery",
+  "AssistantReasoningDelta",
 ]);
 
 /**

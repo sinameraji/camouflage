@@ -132,6 +132,10 @@ pub struct Session {
     streamed_at_busy: u64,
     tasks: BTreeMap<String, String>,
     expanded: bool,
+    /// Ctrl+R: draw the model's reasoning above replies.
+    show_reasoning: bool,
+    /// Open reasoning block per stream id.
+    reasoning: HashMap<String, u64>,
     outbound: Vec<Outbound>,
     /// The host asked to clear the transcript; the app clears the screen.
     pub clear_screen: bool,
@@ -173,6 +177,8 @@ impl Session {
             streamed_at_busy: 0,
             tasks: BTreeMap::new(),
             expanded: false,
+            show_reasoning: false,
+            reasoning: HashMap::new(),
             outbound: Vec::new(),
             clear_screen: false,
             exit: false,
@@ -254,8 +260,36 @@ impl Session {
                 self.streams.insert(s("stream_id"), id);
                 self.became_busy(now);
             }
+            EventType::AssistantReasoningDelta => {
+                let token = s("token");
+                let sid = s("stream_id");
+                if let Some(id) = self.reasoning.get(&sid).copied() {
+                    if let Some(Block::Reasoning { text }) = self.block_mut(id) {
+                        text.push_str(&token);
+                    }
+                    return;
+                }
+                // Reasoning goes above its reply. Once the reply has text
+                // (and may be partly printed) it's too late to show more.
+                let reply = self.streams.get(&sid).copied();
+                let pos = match reply {
+                    Some(rid) => match self.entries.iter().position(|e| e.id == rid) {
+                        Some(i) if matches!(&self.entries[i].block, Block::Assistant { markdown } if markdown.is_empty()) => i,
+                        _ => return,
+                    },
+                    None => self.entries.len(),
+                };
+                let id = self.next_id;
+                self.next_id += 1;
+                self.entries.insert(pos, Entry { id, block: Block::Reasoning { text: token }, done: false });
+                self.reasoning.insert(sid, id);
+                self.became_busy(now);
+            }
             EventType::AssistantTokenDelta => {
                 let token = s("token");
+                if let Some(rid) = self.reasoning.remove(&s("stream_id")) {
+                    self.finish(rid);
+                }
                 self.streamed_chars += token.chars().count() as u64;
                 let sid = s("stream_id");
                 let id = match self.streams.get(&sid) {
@@ -272,6 +306,9 @@ impl Session {
                 }
             }
             EventType::AssistantMessageCompleted => {
+                if let Some(rid) = self.reasoning.remove(&s("stream_id")) {
+                    self.finish(rid);
+                }
                 if let Some(id) = self.streams.remove(&s("stream_id")) {
                     if let Some(text) = p.get("text").and_then(Value::as_str) {
                         if let Some(Block::Assistant { markdown }) = self.block_mut(id) {
@@ -656,6 +693,11 @@ impl Session {
                 self.flash(if self.expanded { "Showing full tool output" } else { "Tool output collapsed" }, now);
                 return;
             }
+            Key::Ctrl('r') => {
+                self.show_reasoning = !self.show_reasoning;
+                self.flash(if self.show_reasoning { "Showing reasoning" } else { "Reasoning hidden" }, now);
+                return;
+            }
             Key::Ctrl('l') => return,
             _ => {}
         }
@@ -853,6 +895,9 @@ impl Session {
             if matches!(&e.block, Block::Assistant { markdown } if markdown.trim().is_empty()) {
                 continue;
             }
+            if matches!(e.block, Block::Reasoning { .. }) && !self.show_reasoning {
+                continue;
+            }
             if let Some(prev) = &self.last_printed {
                 if gap_between(prev, &e.block) {
                     out.push(Line::new());
@@ -870,6 +915,9 @@ impl Session {
         let mut lines: Vec<Line> = Vec::new();
         let mut prev = self.last_printed.clone();
         for e in &self.entries {
+            if matches!(e.block, Block::Reasoning { .. }) && !self.show_reasoning {
+                continue;
+            }
             if prev.as_ref().map(|p| gap_between(p, &e.block)).unwrap_or(false) {
                 lines.push(Line::new());
             }
@@ -1567,6 +1615,50 @@ mod tests {
         assert_eq!(history_text(&mut s, 500), vec!["", "✓ Read src/a.ts", "  └ 142 lines"]);
         assert_eq!(s.held_blocks(), 0);
         assert!(history_text(&mut s, 600).is_empty());
+    }
+
+    fn reasoning_turn(s: &mut Session) {
+        s.apply(&ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})), 0);
+        s.apply(&ev(EventType::AssistantReasoningDelta, json!({"stream_id": "s", "token": "Check the "})), 0);
+        s.apply(&ev(EventType::AssistantReasoningDelta, json!({"stream_id": "s", "token": "config first."})), 0);
+    }
+
+    #[test]
+    fn reasoning_is_hidden_by_default() {
+        let mut s = session();
+        reasoning_turn(&mut s);
+        assert!(!live_text(&s, 0).iter().any(|l| l.contains("thinking…")));
+        s.apply(&ev(EventType::AssistantTokenDelta, json!({"stream_id": "s", "token": "Done."})), 0);
+        s.apply(&ev(EventType::AssistantMessageCompleted, json!({"stream_id": "s"})), 0);
+        assert_eq!(history_text(&mut s, 0), vec!["  Done."]);
+        assert_eq!(s.held_blocks(), 0);
+    }
+
+    #[test]
+    fn ctrl_r_shows_reasoning_above_the_reply() {
+        let mut s = session();
+        s.key(Key::Ctrl('r'), 0);
+        reasoning_turn(&mut s);
+        assert!(live_text(&s, 0).iter().any(|l| l == "  thinking… Check the config first."));
+        s.apply(&ev(EventType::AssistantTokenDelta, json!({"stream_id": "s", "token": "Done."})), 0);
+        // Reasoning after the reply started is dropped, not shown mid-reply.
+        s.apply(&ev(EventType::AssistantReasoningDelta, json!({"stream_id": "s", "token": "late"})), 0);
+        s.apply(&ev(EventType::AssistantMessageCompleted, json!({"stream_id": "s"})), 0);
+        let mut out = history_text(&mut s, 0);
+        out.extend(history_text(&mut s, 0));
+        assert_eq!(out, vec!["  thinking… Check the config first.", "", "  Done."]);
+        assert_eq!(s.held_blocks(), 0);
+    }
+
+    #[test]
+    fn long_reasoning_is_cut_like_ink() {
+        let mut s = session();
+        s.key(Key::Ctrl('r'), 0);
+        s.apply(&ev(EventType::AssistantReasoningDelta, json!({"stream_id": "s", "token": "x".repeat(1000)})), 0);
+        s.apply(&ev(EventType::AssistantMessageCompleted, json!({"stream_id": "s"})), 0);
+        let shown: String = history_text(&mut s, 0).concat();
+        assert_eq!(shown.matches('x').count(), 400);
+        assert!(shown.ends_with('…'));
     }
 
     #[test]

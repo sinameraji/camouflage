@@ -1700,6 +1700,9 @@ impl RenderModel {
             EventType::ModeChangeRequested | EventType::CancelRequested | EventType::MentionQuery => {
                 // Outbound-only event; ignored on apply.
             }
+            EventType::AssistantReasoningDelta => {
+                // Reasoning is shown by the inline renderer only.
+            }
             EventType::WizardCompleted | EventType::WizardCancelled => {
                 self.active_wizard = None;
                 self.dirty = true;
