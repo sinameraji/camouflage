@@ -32,3 +32,6 @@ unicode-width = { workspace = true }
 
 [dev-dependencies]
 vt100 = "0.16"
+
+[target.'cfg(windows)'.dependencies]
+crossterm_winapi = "0.9"

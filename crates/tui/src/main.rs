@@ -5,6 +5,7 @@ mod input;
 pub(crate) mod scrolllog;
 pub(crate) mod settings;
 mod tty;
+mod platform;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -111,8 +112,8 @@ fn resolve_app_title(flag: Option<String>) -> String {
 }
 
 fn default_db_path() -> PathBuf {
-    if let Some(home) = std::env::var_os("HOME") {
-        PathBuf::from(home).join(".camouflage").join("sessions.db")
+    if let Some(home) = platform::home_dir() {
+        home.join(".camouflage").join("sessions.db")
     } else {
         PathBuf::from("camouflage.db")
     }

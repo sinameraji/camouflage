@@ -41,6 +41,10 @@ jobs:
         include:
           - target: aarch64-apple-darwin
             os: macos-14
+          - target: x86_64-apple-darwin
+            os: macos-14
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
@@ -73,6 +77,7 @@ jobs:
         run: cross build --release --target ${{ matrix.target }} -p camouflage-tui
 
       - name: Strip binary
+        if: runner.os != 'Windows'
         run: |
           BINARY=target/${{ matrix.target }}/release/camouflage-tui
           if command -v strip &>/dev/null; then
@@ -80,8 +85,11 @@ jobs:
           fi
 
       - name: Package
+        shell: bash
         run: |
-          BINARY=target/${{ matrix.target }}/release/camouflage-tui
+          EXE=""
+          if [ "${{ runner.os }}" = "Windows" ]; then EXE=".exe"; fi
+          BINARY=target/${{ matrix.target }}/release/camouflage-tui$EXE
           ARCHIVE=camouflage-tui-${{ matrix.target }}.tar.gz
           tar czf "$ARCHIVE" -C "$(dirname "$BINARY")" "$(basename "$BINARY")"
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"

@@ -16,13 +16,15 @@ import { get as httpsGet } from "node:https";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BIN_DIR = join(__dirname, "..", "bin");
-const BIN_PATH = join(BIN_DIR, "camouflage-tui");
+const EXE = process.platform === "win32" ? ".exe" : "";
+const BIN_PATH = join(BIN_DIR, `camouflage-tui${EXE}`);
 
 const PLATFORM_MAP = {
   "darwin-x64": "x86_64-apple-darwin",
   "darwin-arm64": "aarch64-apple-darwin",
   "linux-x64": "x86_64-unknown-linux-gnu",
   "linux-arm64": "aarch64-unknown-linux-gnu",
+  "win32-x64": "x86_64-pc-windows-msvc",
 };
 
 const REPO = "sinameraji/camouflage";
@@ -61,7 +63,7 @@ async function main() {
       process.stdout.write(`camouflage-tui: downloading ${target} binary (${tag})...\n`);
       await download(url, tmpPath);
 
-      // Extract the binary from the tarball
+      // Extract the binary from the tarball (Windows 10+ ships tar.exe).
       execSync(`tar xzf "${tmpPath}" -C "${BIN_DIR}"`, { stdio: "pipe" });
       unlinkSync(tmpPath);
 

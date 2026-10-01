@@ -245,8 +245,7 @@ pub async fn run(cfg: Config) -> Result<()> {
         // desired behaviour at process exit (host sees EOF on its
         // pipe-read side). spawn_writer owns the File through the
         // BufWriter wrapper for the task's lifetime.
-        use std::os::unix::io::FromRawFd;
-        let file = unsafe { std::fs::File::from_raw_fd(fd) };
+        let file = crate::platform::file_from_fd(fd)?;
         spawn_writer(file, rx);
         Some(tx)
     } else if cfg.emit_responses {

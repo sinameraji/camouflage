@@ -13,7 +13,11 @@
 //! (which works fine — it uses tcsetattr, not kqueue) and drawing.
 
 use std::io;
+#[cfg(unix)]
 use std::os::fd::RawFd;
+/// Full-screen mode reads keys from /dev/tty, which Windows doesn't have.
+#[cfg(not(unix))]
+pub type RawFd = i32;
 use std::sync::mpsc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,7 +72,19 @@ pub enum Key {
     Paste(String),
 }
 
+/// Full-screen mode isn't available on Windows; inline mode is.
+#[cfg(not(unix))]
+pub fn open_tty_for_read() -> io::Result<RawFd> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "full-screen mode isn't supported on Windows; use --ui inline"))
+}
+
+#[cfg(not(unix))]
+pub fn spawn_key_reader(_tty_fd: RawFd) -> mpsc::Receiver<Key> {
+    mpsc::channel::<Key>().1
+}
+
 /// Open /dev/tty for reading and return its raw fd.
+#[cfg(unix)]
 pub fn open_tty_for_read() -> io::Result<RawFd> {
     let path = b"/dev/tty\0";
     let fd = unsafe { libc::open(path.as_ptr() as *const _, libc::O_RDONLY | libc::O_NOCTTY) };
@@ -82,6 +98,7 @@ pub fn open_tty_for_read() -> io::Result<RawFd> {
 /// Spawn a blocking thread that reads keys from `tty_fd` and forwards them
 /// through the returned receiver. The thread terminates when the fd hits
 /// EOF or an error.
+#[cfg(unix)]
 pub fn spawn_key_reader(tty_fd: RawFd) -> mpsc::Receiver<Key> {
     let (tx, rx) = mpsc::channel::<Key>();
     std::thread::spawn(move || {
