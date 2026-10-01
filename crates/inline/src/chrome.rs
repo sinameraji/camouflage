@@ -377,7 +377,7 @@ pub fn shortcuts(theme: &Theme, width: usize) -> Vec<Line> {
     let cols = [
         ["/ for commands", "@ to mention files", "↑ for history"],
         ["shift+tab to switch modes", "\\ + enter for a newline", "ctrl+c twice to exit"],
-        ["esc to interrupt", "ctrl+o to expand output", "ctrl+l to redraw"],
+        ["esc to interrupt", "ctrl+o to expand output", "ctrl+r for reasoning"],
     ];
     let col_w = (width.saturating_sub(2)) / 3;
     (0..3)

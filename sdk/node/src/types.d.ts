@@ -52,7 +52,8 @@ export type EventType =
   | "TranscriptCleared"
   | "Splash"
   | "ShowToast"
-  | "MentionQuery";
+  | "MentionQuery"
+  | "AssistantReasoningDelta";
 
 export type Direction = "inbound" | "outbound";
 
@@ -367,6 +368,8 @@ export type Event = EnvelopeMeta &
     | { event_type: "UserMessageCreated"; payload: UserMessage }
     | { event_type: "AssistantStreamStarted"; payload: AssistantStreamStarted }
     | { event_type: "AssistantTokenDelta"; payload: AssistantTokenDelta }
+    /** v2.4+: the model's reasoning, shown when the user presses Ctrl+R (inline UI). */
+    | { event_type: "AssistantReasoningDelta"; payload: AssistantTokenDelta }
     | { event_type: "AssistantMessageCompleted"; payload: AssistantMessageCompleted }
     | { event_type: "ToolExecutionStarted"; payload: ToolStarted }
     | { event_type: "ToolExecutionStdout"; payload: ToolOutput }

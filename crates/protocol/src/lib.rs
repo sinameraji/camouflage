@@ -158,6 +158,11 @@ pub enum EventType {
     /// `for_query` (the directory part it listed) and that directory's
     /// entries; folder tokens end in `/`. Sent once per directory.
     MentionQuery,
+    /// v2.4+ — Host → renderer: a chunk of the model's reasoning for a
+    /// stream, sent before (or between) its `AssistantTokenDelta`s. Payload
+    /// is the same as `AssistantTokenDelta`. Hidden until the user presses
+    /// Ctrl+R; renderers that don't show reasoning ignore it.
+    AssistantReasoningDelta,
 }
 
 impl EventType {
@@ -205,6 +210,7 @@ impl EventType {
             EventType::Splash => "Splash",
             EventType::ShowToast => "ShowToast",
             EventType::MentionQuery => "MentionQuery",
+            EventType::AssistantReasoningDelta => "AssistantReasoningDelta",
         }
     }
 
@@ -256,6 +262,7 @@ impl EventType {
             "Splash" => Self::Splash,
             "ShowToast" => Self::ShowToast,
             "MentionQuery" => Self::MentionQuery,
+            "AssistantReasoningDelta" => Self::AssistantReasoningDelta,
             _ => return None,
         })
     }
@@ -872,8 +879,9 @@ mod tests {
             EventType::Splash,
             EventType::ShowToast,
             EventType::MentionQuery,
+            EventType::AssistantReasoningDelta,
         ];
-        assert_eq!(types.len(), 42);
+        assert_eq!(types.len(), 43);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();
@@ -903,7 +911,7 @@ mod tests {
             EventType::ShowForm, EventType::FormResponse, EventType::ShowWizard, EventType::WizardCompleted,
             EventType::WizardCancelled, EventType::ModeChangeRequested, EventType::CancelRequested,
             EventType::TranscriptCleared, EventType::Splash, EventType::ShowToast,
-            EventType::MentionQuery,
+            EventType::MentionQuery, EventType::AssistantReasoningDelta,
         ];
         for t in all {
             let quoted = format!("\"{}\"", t.as_str());

@@ -74,7 +74,7 @@ fn validate_payload(event_type: EventType, payload: serde_json::Value) -> Result
         AssistantStreamStarted => {
             serde_json::from_value::<payloads::AssistantStreamStarted>(payload)?;
         }
-        AssistantTokenDelta => {
+        AssistantTokenDelta | AssistantReasoningDelta => {
             serde_json::from_value::<payloads::AssistantTokenDelta>(payload)?;
         }
         AssistantMessageCompleted => {

@@ -102,6 +102,9 @@ pub enum Block {
     Welcome { title: String, detail: Vec<String> },
     User { text: String },
     Assistant { markdown: String },
+    /// The model's reasoning before a reply. Drawn only when the user has
+    /// turned reasoning on (Ctrl+R); the session skips it otherwise.
+    Reasoning { text: String },
     Tool(ToolBlock),
     Plan { items: Vec<PlanItem>, live: bool },
     Notice { kind: NoticeKind, text: String },
@@ -135,6 +138,7 @@ pub fn render_block(block: &Block, width: usize, theme: &Theme, ctx: RenderCtx) 
         }
         Block::User { text } => render_user(text, width, theme),
         Block::Assistant { markdown } => indent_lines(render_markdown(markdown, width.saturating_sub(2), theme), 2),
+        Block::Reasoning { text } => render_reasoning(text, width, theme),
         Block::Tool(t) => render_tool(t, width, theme, ctx),
         Block::Plan { items, live } => render_plan(items, *live, width, theme),
         Block::Notice { kind, text } => render_notice(*kind, text, width, theme),
@@ -339,6 +343,25 @@ fn render_plan(items: &[PlanItem], live: bool, width: usize, theme: &Theme) -> V
         };
         let line = Line::raw("  ").with(glyph, gstyle).with(it.title.clone(), tstyle);
         out.extend(wrap(&line, width, &Line::raw("    ")));
+    }
+    out
+}
+
+/// Longest reasoning shown, like the Ink UI.
+const REASONING_MAX: usize = 400;
+
+fn render_reasoning(text: &str, width: usize, theme: &Theme) -> Vec<Line> {
+    let text = text.trim();
+    let shown: String = if text.chars().count() > REASONING_MAX {
+        text.chars().take(REASONING_MAX).collect::<String>() + "…"
+    } else {
+        text.to_string()
+    };
+    let style = theme.dim().italic();
+    let mut out = Vec::new();
+    for (i, line) in shown.split('\n').enumerate() {
+        let head = if i == 0 { Line::raw("  ").with("thinking… ", theme.dim()) } else { Line::raw("  ") };
+        out.extend(wrap(&head.with(line, style), width, &Line::raw("  ")));
     }
     out
 }
