@@ -103,6 +103,10 @@ pub struct Session {
     /// Whether the last printed block was a tool/notice row (for spacing).
     last_printed: Option<Block>,
     streams: HashMap<String, u64>,
+    /// Text of a streaming reply already printed (split off paragraph by
+    /// paragraph), by entry id. A final `text` on completion replaces only
+    /// what comes after it, so those paragraphs aren't printed twice.
+    printed_prefix: HashMap<u64, String>,
     tools: HashMap<String, u64>,
     plan: Option<Vec<PlanItem>>,
     segments: BTreeMap<String, String>,
@@ -154,6 +158,7 @@ impl Session {
             next_id: 1,
             last_printed: None,
             streams: HashMap::new(),
+            printed_prefix: HashMap::new(),
             tools: HashMap::new(),
             plan: None,
             segments: BTreeMap::new(),
@@ -310,9 +315,15 @@ impl Session {
                     self.finish(rid);
                 }
                 if let Some(id) = self.streams.remove(&s("stream_id")) {
+                    let printed = self.printed_prefix.remove(&id).unwrap_or_default();
                     if let Some(text) = p.get("text").and_then(Value::as_str) {
-                        if let Some(Block::Assistant { markdown }) = self.block_mut(id) {
-                            *markdown = text.to_string();
+                        // Paragraphs already in scrollback can't change; if the
+                        // final text rewrote them, keep what was streamed.
+                        if let Some(rest) = text.strip_prefix(printed.as_str()) {
+                            let rest = rest.trim_start_matches('\n').to_string();
+                            if let Some(Block::Assistant { markdown }) = self.block_mut(id) {
+                                *markdown = rest;
+                            }
                         }
                     }
                     self.finish(id);
@@ -1061,6 +1072,9 @@ impl Session {
         if head.is_empty() {
             return;
         }
+        let consumed = markdown[..markdown.len() - tail.len()].to_string();
+        let stream_id = first.id;
+        self.printed_prefix.entry(stream_id).or_default().push_str(&consumed);
         if let Some(Entry { block: Block::Assistant { markdown }, .. }) = self.entries.first_mut() {
             *markdown = tail;
         }
@@ -1665,6 +1679,20 @@ mod tests {
         let shown: String = history_text(&mut s, 0).concat();
         assert_eq!(shown.matches('x').count(), 400);
         assert!(shown.ends_with('…'));
+    }
+
+    #[test]
+    fn final_text_does_not_reprint_streamed_paragraphs() {
+        let mut s = session();
+        s.apply(&ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})), 0);
+        s.apply(&ev(EventType::AssistantTokenDelta, json!({"stream_id": "s", "token": "One.\n\nTwo.\n\nThr"})), 0);
+        let mut out = history_text(&mut s, 0);
+        s.apply(&ev(EventType::AssistantTokenDelta, json!({"stream_id": "s", "token": "ee."})), 0);
+        s.apply(&ev(EventType::AssistantMessageCompleted, json!({"stream_id": "s", "text": "One.\n\nTwo.\n\nThree."})), 0);
+        out.extend(history_text(&mut s, 0));
+        let text: Vec<_> = out.into_iter().filter(|l| !l.is_empty()).collect();
+        assert_eq!(text, vec!["  One.", "  Two.", "  Three."]);
+        assert_eq!(s.held_blocks(), 0);
     }
 
     #[test]
