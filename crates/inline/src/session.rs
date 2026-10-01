@@ -11,7 +11,7 @@
 //! or `None` when idle, so an idle renderer does no work at all.
 
 use crate::ansi::parse_ansi;
-use crate::blocks::{
+use crate::blocks::{explore_kind, GroupBlock, 
     gap_between, render_block, Block, NoticeKind, PlanItem, PlanStatus, RenderCtx, ToolBlock, ToolStatus,
 };
 use crate::chrome::{self, InputMode, PickItem, PromptView};
@@ -30,6 +30,8 @@ pub const FRAME_MS: i64 = 80;
 /// Frame interval while the terminal is in the background: the spinner
 /// steps once a second and output is batched (docs/inline-redesign.md B2).
 pub const UNFOCUSED_FRAME_MS: i64 = 1000;
+/// How long the footer's model · tokens · cost stay up after they change.
+pub const FOOTER_SHOW_MS: i64 = 4000;
 const CTRL_C_WINDOW_MS: i64 = 1600;
 const TOOL_TAIL_LINES: usize = 400;
 
@@ -110,7 +112,13 @@ pub struct Session {
     /// paragraph), by entry id. A final `text` on completion replaces only
     /// what comes after it, so those paragraphs aren't printed twice.
     printed_prefix: HashMap<u64, String>,
-    tools: HashMap<String, u64>,
+    /// Running tools by tool id: (entry id, index when inside a group).
+    tools: HashMap<String, (u64, Option<usize>)>,
+    /// The group of exploring tools that new reads/searches join.
+    open_group: Option<u64>,
+    /// The footer's status (model · tokens · cost) shows until then after
+    /// a change, and otherwise only on `?`.
+    status_until: Option<i64>,
     plan: Option<Vec<PlanItem>>,
     segments: BTreeMap<String, String>,
     editor: Editor,
@@ -167,6 +175,8 @@ impl Session {
             streams: HashMap::new(),
             printed_prefix: HashMap::new(),
             tools: HashMap::new(),
+            open_group: None,
+            status_until: None,
             plan: None,
             segments: BTreeMap::new(),
             editor: Editor::new(),
@@ -300,6 +310,9 @@ impl Session {
             }
             EventType::AssistantTokenDelta => {
                 let token = s("token");
+                if !token.trim().is_empty() {
+                    self.close_group();
+                }
                 if let Some(rid) = self.reasoning.remove(&s("stream_id")) {
                     self.finish(rid);
                 }
@@ -340,20 +353,35 @@ impl Session {
             EventType::ToolExecutionStarted => {
                 let mut t = ToolBlock::new(s("tool"), s("command"));
                 t.started_at_ms = p.get("started_at_ms").and_then(Value::as_i64).or(Some(now));
-                let id = self.push(Block::Tool(t), false);
-                self.tools.insert(s("tool_id"), id);
+                let tid = s("tool_id");
                 self.became_busy(now);
+                if explore_kind(&t.name).is_none() {
+                    let id = self.push(Block::Tool(t), false);
+                    self.tools.insert(tid, (id, None));
+                    return;
+                }
+                if let Some(gid) = self.open_group {
+                    if let Some(Block::Group(g)) = self.block_mut(gid) {
+                        g.tools.push(t);
+                        let i = g.tools.len() - 1;
+                        self.tools.insert(tid, (gid, Some(i)));
+                        return;
+                    }
+                }
+                let gid = self.push(Block::Group(GroupBlock { tools: vec![t], closed: false }), false);
+                self.open_group = Some(gid);
+                self.tools.insert(tid, (gid, Some(0)));
             }
             EventType::ToolExecutionStdout | EventType::ToolExecutionStderr => {
                 let chunk = s("chunk");
-                if let Some(id) = self.tools.get(&s("tool_id")).copied() {
-                    if let Some(Block::Tool(t)) = self.block_mut(id) {
+                if let Some((id, idx)) = self.tools.get(&s("tool_id")).copied() {
+                    if let Some(t) = self.tool_mut(id, idx) {
                         append_output(&mut t.output, &chunk);
                     }
                 }
             }
             EventType::ToolExecutionFinished => {
-                let Some(id) = self.tools.remove(&s("tool_id")) else { return };
+                let Some((id, idx)) = self.tools.remove(&s("tool_id")) else { return };
                 let exit = p.get("exit_code").and_then(Value::as_i64);
                 let status = match p.get("status").and_then(Value::as_str) {
                     Some("error" | "err") => ToolStatus::Error,
@@ -363,7 +391,7 @@ impl Session {
                     None if exit.unwrap_or(0) != 0 => ToolStatus::Error,
                     None => ToolStatus::Ok,
                 };
-                if let Some(Block::Tool(t)) = self.block_mut(id) {
+                if let Some(t) = self.tool_mut(id, idx) {
                     t.status = status;
                     t.elapsed_ms = t.started_at_ms.map(|st| (now - st).max(0) as u64);
                     if let Some(sum) = p.get("summary").and_then(Value::as_str) {
@@ -390,7 +418,10 @@ impl Session {
                         }
                     }
                 }
-                self.finish(id);
+                match idx {
+                    None => self.finish(id),
+                    Some(_) => self.finish_group_if_done(id),
+                }
             }
             EventType::PatchProposed => {
                 let path = s("path");
@@ -545,6 +576,7 @@ impl Session {
                 self.foot = Some((s("text"), style, now + ttl));
             }
             EventType::StatusUpdate => {
+                let before = self.footer_right();
                 if let Some(segs) = p.get("segments").and_then(Value::as_object) {
                     for (k, v) in segs {
                         let v = v.as_str().unwrap_or("").to_string();
@@ -554,6 +586,9 @@ impl Session {
                             self.segments.insert(k.clone(), v);
                         }
                     }
+                }
+                if self.footer_right() != before {
+                    self.status_until = Some(now + FOOTER_SHOW_MS);
                 }
                 self.mode = match self.segments.get("mode").map(String::as_str) {
                     Some("plan") => InputMode::Plan,
@@ -883,6 +918,16 @@ impl Session {
             }
             e.done = true;
         }
+        for e in self.entries.iter_mut() {
+            if let Block::Group(g) = &mut e.block {
+                g.closed = true;
+                for t in g.tools.iter_mut().filter(|t| t.status == ToolStatus::Running) {
+                    t.status = ToolStatus::Stopped;
+                    t.elapsed_ms = t.started_at_ms.map(|st| (now - st).max(0) as u64);
+                }
+            }
+        }
+        self.open_group = None;
         self.streams.clear();
         self.tools.clear();
         self.phase_busy = false;
@@ -937,6 +982,10 @@ impl Session {
             if matches!(e.block, Block::Reasoning { .. }) && !self.show_reasoning {
                 continue;
             }
+            // A model step that ended without text (between tool calls).
+            if e.done && matches!(&e.block, Block::Assistant { markdown } if markdown.trim().is_empty()) {
+                continue;
+            }
             if prev.as_ref().map(|p| gap_between(p, &e.block)).unwrap_or(false) {
                 lines.push(Line::new());
             }
@@ -984,8 +1033,10 @@ impl Session {
                 lines.extend(chrome::picker(t, &items, self.pick_sel.min(items.len() - 1), self.width, 8));
             } else if self.editor.text() == "?" {
                 lines.extend(chrome::shortcuts(t, self.width));
+                lines.push(chrome::footer(t, Vec::new(), &self.footer_right(), self.width));
             } else {
-                lines.push(chrome::footer(t, self.footer_left(now), &self.footer_right(), self.width));
+                let right = if self.status_until.is_some_and(|u| u > now) && !self.is_busy() { self.footer_right() } else { String::new() };
+                lines.push(chrome::footer(t, self.footer_left(now), &right, self.width));
             }
         }
         // The terminal keeps the bottom of an oversized frame; shift the
@@ -1007,6 +1058,9 @@ impl Session {
         if (self.is_busy() && self.prompt.is_none()) || !self.tasks.is_empty() {
             let step = if self.focused { FRAME_MS } else { UNFOCUSED_FRAME_MS };
             want(now + step - now.rem_euclid(step));
+        }
+        if let Some(until) = self.status_until.filter(|u| *u > now && !self.is_busy()) {
+            want(until);
         }
         if let Some((_, _, until)) = &self.foot {
             if *until > now {
@@ -1036,6 +1090,10 @@ impl Session {
     }
 
     fn push(&mut self, block: Block, done: bool) -> u64 {
+        // Anything but (possibly empty) reply text ends a run of reads.
+        if !matches!(block, Block::Assistant { .. } | Block::Reasoning { .. } | Block::Group(_)) {
+            self.close_group();
+        }
         let id = self.next_id;
         self.next_id += 1;
         self.entries.push(Entry { id, block, done });
@@ -1048,6 +1106,32 @@ impl Session {
 
     fn block_mut(&mut self, id: u64) -> Option<&mut Block> {
         self.entries.iter_mut().rev().find(|e| e.id == id).map(|e| &mut e.block)
+    }
+
+    fn tool_mut(&mut self, id: u64, idx: Option<usize>) -> Option<&mut ToolBlock> {
+        match (self.block_mut(id)?, idx) {
+            (Block::Tool(t), None) => Some(t),
+            (Block::Group(g), Some(i)) => g.tools.get_mut(i),
+            _ => None,
+        }
+    }
+
+    /// Stop new reads from joining the open group; it's done once its
+    /// running tools finish.
+    fn close_group(&mut self) {
+        if let Some(gid) = self.open_group.take() {
+            if let Some(Block::Group(g)) = self.block_mut(gid) {
+                g.closed = true;
+            }
+            self.finish_group_if_done(gid);
+        }
+    }
+
+    fn finish_group_if_done(&mut self, gid: u64) {
+        let done = matches!(self.block_mut(gid), Some(Block::Group(g)) if g.closed && g.tools.iter().all(|t| t.status != ToolStatus::Running));
+        if done {
+            self.finish(gid);
+        }
     }
 
     fn finish(&mut self, id: u64) {
@@ -1101,6 +1185,9 @@ impl Session {
         }
         if let Some(Block::Tool(t)) = self.entries.iter().rev().find(|e| !e.done && matches!(e.block, Block::Tool(_))).map(|e| &e.block) {
             return format!("Running {}", t.name);
+        }
+        if self.entries.iter().any(|e| matches!(&e.block, Block::Group(g) if g.tools.iter().any(|t| t.status == ToolStatus::Running))) {
+            return "Exploring".into();
         }
         if self.entries.iter().any(|e| !e.done && matches!(e.block, Block::Assistant { .. })) {
             return "Writing".into();
@@ -1637,13 +1724,56 @@ mod tests {
     fn a_turn_prints_blocks_once_and_drops_them() {
         let mut s = session();
         s.apply(&ev(EventType::UserMessageCreated, json!({"text": "fix it"})), 0);
-        s.apply(&ev(EventType::ToolExecutionStarted, json!({"tool_id": "t1", "tool": "Read", "command": "src/a.ts"})), 0);
+        s.apply(&ev(EventType::ToolExecutionStarted, json!({"tool_id": "t1", "tool": "Bash", "command": "make"})), 0);
         assert_eq!(history_text(&mut s, 0), vec!["› fix it"]);
-        assert!(live_text(&s, 0).iter().any(|l| l.contains("Read src/a.ts")));
+        assert!(live_text(&s, 0).iter().any(|l| l.contains("Bash make")));
         s.apply(&ev(EventType::ToolExecutionFinished, json!({"tool_id": "t1", "exit_code": 0, "summary": "142 lines"})), 500);
-        assert_eq!(history_text(&mut s, 500), vec!["", "✓ Read src/a.ts", "  └ 142 lines"]);
+        assert_eq!(history_text(&mut s, 500), vec!["", "✓ Bash make"]);
         assert_eq!(s.held_blocks(), 0);
         assert!(history_text(&mut s, 600).is_empty());
+    }
+
+    #[test]
+    fn reads_fold_until_something_else_happens() {
+        let mut s = session();
+        let start = |s: &mut Session, id: &str, tool: &str, cmd: &str| {
+            s.apply(&ev(EventType::ToolExecutionStarted, json!({"tool_id": id, "tool": tool, "command": cmd})), 0);
+            s.apply(&ev(EventType::ToolExecutionFinished, json!({"tool_id": id, "exit_code": 0})), 0);
+        };
+        start(&mut s, "1", "Read", "a.ts");
+        // An empty model step between reads doesn't split the group.
+        s.apply(&ev(EventType::AssistantStreamStarted, json!({"stream_id": "x"})), 0);
+        s.apply(&ev(EventType::AssistantMessageCompleted, json!({"stream_id": "x"})), 0);
+        start(&mut s, "2", "Grep", "foo");
+        start(&mut s, "3", "Read", "b.ts");
+        assert!(history_text(&mut s, 0).is_empty(), "the group stays open for more reads");
+        assert!(live_text(&s, 0).iter().any(|l| l.starts_with("⠋ Exploring 2 files · 1 search")));
+        s.apply(&ev(EventType::ToolExecutionStarted, json!({"tool_id": "4", "tool": "Bash", "command": "make"})), 0);
+        assert_eq!(history_text(&mut s, 0), vec!["✓ Explored 2 files · 1 search"]);
+    }
+
+    #[test]
+    fn turn_end_closes_an_open_group() {
+        let mut s = session();
+        s.apply(&ev(EventType::StatusUpdate, json!({"segments": {"phase": "thinking"}})), 0);
+        s.apply(&ev(EventType::ToolExecutionStarted, json!({"tool_id": "1", "tool": "Read", "command": "a.ts"})), 0);
+        s.apply(&ev(EventType::ToolExecutionFinished, json!({"tool_id": "1", "exit_code": 0})), 0);
+        s.apply(&ev(EventType::StatusUpdate, json!({"segments": {"phase": "idle"}})), 0);
+        assert_eq!(history_text(&mut s, 0), vec!["✓ Read a.ts"]);
+        assert!(!s.is_busy());
+    }
+
+    #[test]
+    fn footer_status_fades_after_a_change() {
+        let mut s = session();
+        s.apply(&ev(EventType::StatusUpdate, json!({"segments": {"model": "kimi-k2.6", "cost": "$0.04"}})), 0);
+        let footer = |s: &Session, now| live_text(s, now).last().cloned().unwrap();
+        assert!(footer(&s, 100).contains("kimi-k2.6"));
+        assert_eq!(s.next_wakeup(100), Some(FOOTER_SHOW_MS));
+        assert!(!footer(&s, FOOTER_SHOW_MS + 1).contains("kimi-k2.6"));
+        assert_eq!(s.next_wakeup(FOOTER_SHOW_MS + 1), None);
+        type_str(&mut s, "?");
+        assert!(footer(&s, FOOTER_SHOW_MS + 1).contains("kimi-k2.6"));
     }
 
     fn reasoning_turn(s: &mut Session) {

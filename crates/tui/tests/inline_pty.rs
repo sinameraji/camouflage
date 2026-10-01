@@ -201,8 +201,8 @@ fn a_turn_renders_inline_and_stays_after_exit() {
     let screen = t.wait_for("• two");
     let text = nonempty(&screen);
     let pos = |needle: &str| text.iter().position(|l| l.contains(needle)).unwrap_or_else(|| panic!("{needle:?} missing:\n{}", text.join("\n")));
-    assert!(pos("› The café build fails") < pos("✗ Bash npm run build"));
-    assert!(pos("✗ Bash npm run build") < pos("└ Exit code 2"));
+    assert!(pos("› The café build fails") < pos("✗ Bash npm run build · Exit code 2"));
+    assert!(pos("✗ Bash npm run build") < pos("error TS2345"));
     assert!(pos("Fixed it.") < pos("• one"));
     assert!(text.iter().any(|l| l.contains("error TS2345")), "failed output is shown");
 
