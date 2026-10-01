@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.4.0-beta.2](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.0-beta.1...camouflage-tui-v2.4.0-beta.2) (2026-10-01)
+
+
+### Bug Fixes
+
+* **sdk:** release camouflage-tui 2.4.0-beta.2 ([cc257e7](https://github.com/sinameraji/camouflage/commit/cc257e7f289e0d37571c6d9b7e5a721749b9af64))
+* **sdk:** release camouflage-tui 2.4.0-beta.2 (rebuild binary from 9694172f273c) ([ea3515c](https://github.com/sinameraji/camouflage/commit/ea3515c47555cdaaa44dce5412e3ab84f072f7e5))
+
 ## [2.4.0-beta.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.3.0-beta.1...camouflage-tui-v2.4.0-beta.1) (2026-10-01)
 
 
