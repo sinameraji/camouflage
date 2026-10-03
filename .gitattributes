@@ -1,0 +1,2 @@
+fixtures/**/*.txt text eol=lf
+fixtures/**/*.ndjson text eol=lf

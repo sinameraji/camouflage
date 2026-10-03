@@ -11,7 +11,7 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, appendFileSync } from "node:fs";
 import { join, dirname, basename, parse as parsePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { encode, validate } from "./types.js";
@@ -115,6 +115,7 @@ class CamouflageHandle extends EventEmitter {
   }
 
   _writeLine(line) {
+    if (this._record) this._record("in", line);
     if (!this._stdin.writable) {
       // Stream closed mid-flight (child exited between our last check
       // and now). Same forgiving policy as send(): no-op and return.
@@ -267,6 +268,20 @@ export async function mount(opts = {}) {
   });
 
   const handle = new CamouflageHandle(child, child.stdin);
+  // CAMOUFLAGE_RECORD=<file>: append every event to and from the renderer
+  // as `{"t": ms since mount, "in" | "out": event}` lines, for replay tests
+  // and bug reports. Off unless set.
+  const recordPath = opts.record ?? process.env.CAMOUFLAGE_RECORD;
+  if (recordPath) {
+    const t0 = Date.now();
+    handle._record = (dir, line) => {
+      try {
+        appendFileSync(recordPath, `{"t":${Date.now() - t0},"${dir}":${line}}\n`);
+      } catch {
+        // Recording is best-effort; never break the host over it.
+      }
+    };
+  }
 
   // If the renderer exits, writes to its stdin fail with EPIPE. Unhandled,
   // that 'error' event would crash the host process; treat it as closed.
@@ -286,6 +301,7 @@ export async function mount(opts = {}) {
   rl.on("line", (line) => {
     const trimmed = line.trim();
     if (!trimmed) return;
+    if (handle._record) handle._record("out", trimmed);
     const err = validate(trimmed);
     if (err) {
       // Renderer should only emit well-formed NDJSON. Surface but don't
