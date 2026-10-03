@@ -151,6 +151,29 @@ impl Pty {
 
     /// Close stdin (the host going away) and return the child's CPU time
     /// and how many times its event loop woke up on a timer.
+    /// CPU the renderer has used so far (user + system), read while it runs.
+    fn cpu_now(&self) -> Duration {
+        let pid = self.child.id();
+        #[cfg(target_os = "linux")]
+        {
+            // /proc/<pid>/stat fields 14 and 15: utime and stime in clock ticks.
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+            let after = &stat[stat.rfind(')').unwrap() + 2..];
+            let f: Vec<&str> = after.split_whitespace().collect();
+            let ticks: u64 = f[11].parse::<u64>().unwrap() + f[12].parse::<u64>().unwrap();
+            let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as u64;
+            Duration::from_millis(ticks * 1000 / hz)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            // `ps -o time=` prints [[hh:]mm:]ss.cc
+            let out = Command::new("ps").args(["-o", "time=", "-p", &pid.to_string()]).output().unwrap();
+            let t = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            let secs = t.split(':').fold(0.0f64, |acc, part| acc * 60.0 + part.parse::<f64>().unwrap_or(0.0));
+            Duration::from_secs_f64(secs)
+        }
+    }
+
     fn finish(mut self) -> (Duration, u64) {
         drop(self.child.stdin.take());
         let pid = self.child.id() as libc::pid_t;
@@ -231,20 +254,25 @@ fn idle_costs_nothing() {
         t.wait_for("message 299");
         std::thread::sleep(Duration::from_millis(200));
         let before = t.len();
+        // CPU is measured inside this one process across the idle stretch,
+        // so start-up and the burst above (which vary run to run on shared
+        // CI machines) don't count.
+        let cpu_before = t.cpu_now();
         std::thread::sleep(idle);
+        let idle_cpu = t.cpu_now().saturating_sub(cpu_before);
         let written = t.len() - before;
-        let (cpu, wakeups) = t.finish();
-        (cpu, wakeups, written)
+        let (_, wakeups) = t.finish();
+        (idle_cpu, wakeups, written)
     };
-    let (short_cpu, short_wakeups, _) = run(Duration::from_millis(300));
-    let (long_cpu, long_wakeups, written) = run(Duration::from_millis(2500));
+    let (_, short_wakeups, _) = run(Duration::from_millis(300));
+    let (idle_cpu, long_wakeups, written) = run(Duration::from_millis(2500));
     assert_eq!(written, 0, "an idle renderer must not write to the terminal");
     // At most one timer wakeup: the batched draw after the burst of host
     // events (frames are capped at 20 fps). Idling longer must add none.
     assert!(short_wakeups <= 1, "nothing animates here ({short_wakeups} timer wakeups)");
     assert_eq!(long_wakeups, short_wakeups, "an idle renderer must not wake on a timer ({long_wakeups} vs {short_wakeups} timer wakeups after 2.5s vs 0.3s idle)");
-    let extra = long_cpu.saturating_sub(short_cpu);
-    assert!(extra < Duration::from_millis(60), "2.2s more idle cost {extra:?} of CPU (short {short_cpu:?}, long {long_cpu:?})");
+    // Clock-tick granularity is 10 ms; a truly idle process stays at 0–1 ticks.
+    assert!(idle_cpu <= Duration::from_millis(30), "2.5s of idle cost {idle_cpu:?} of CPU");
 }
 
 /// The SDK's default mode: stdout is a pipe carrying outbound events and the
