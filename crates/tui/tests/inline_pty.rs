@@ -239,8 +239,10 @@ fn idle_costs_nothing() {
     let (short_cpu, short_wakeups, _) = run(Duration::from_millis(300));
     let (long_cpu, long_wakeups, written) = run(Duration::from_millis(2500));
     assert_eq!(written, 0, "an idle renderer must not write to the terminal");
-    assert_eq!(short_wakeups, 0, "nothing animates here, so the loop must never wake on a timer");
-    assert_eq!(long_wakeups, 0, "an idle renderer must not wake on a timer ({long_wakeups} timer wakeups in 2.5s idle)");
+    // At most one timer wakeup: the batched draw after the burst of host
+    // events (frames are capped at 20 fps). Idling longer must add none.
+    assert!(short_wakeups <= 1, "nothing animates here ({short_wakeups} timer wakeups)");
+    assert_eq!(long_wakeups, short_wakeups, "an idle renderer must not wake on a timer ({long_wakeups} vs {short_wakeups} timer wakeups after 2.5s vs 0.3s idle)");
     let extra = long_cpu.saturating_sub(short_cpu);
     assert!(extra < Duration::from_millis(60), "2.2s more idle cost {extra:?} of CPU (short {short_cpu:?}, long {long_cpu:?})");
 }

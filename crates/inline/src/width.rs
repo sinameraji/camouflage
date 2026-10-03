@@ -18,6 +18,11 @@ pub fn grapheme_width(g: &str) -> usize {
 }
 
 pub fn str_width(s: &str) -> usize {
+    // Printable ASCII is one cell per byte. Most rows are plain ASCII, and
+    // this runs for every row of every frame, so skip grapheme splitting.
+    if s.bytes().all(|b| (0x20..=0x7e).contains(&b)) {
+        return s.len();
+    }
     s.graphemes(true).map(grapheme_width).sum()
 }
 
@@ -233,5 +238,13 @@ mod tests {
     fn truncates_with_ellipsis() {
         assert_eq!(truncate("hello world", 6), "hello…");
         assert_eq!(truncate("hi", 6), "hi");
+    }
+
+    #[test]
+    fn ascii_fast_path_matches_grapheme_widths() {
+        for s in ["", "plain text", "a\tb", "esc\x1b[0m", "café", "日本", "👍🏽", "~ !\x7f"] {
+            let slow: usize = s.graphemes(true).map(grapheme_width).sum();
+            assert_eq!(str_width(s), slow, "{s:?}");
+        }
     }
 }
