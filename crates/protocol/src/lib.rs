@@ -319,46 +319,200 @@ pub mod payloads {
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct UserMessage {
         pub text: String,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct AssistantStreamStarted {
         pub stream_id: String,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct AssistantTokenDelta {
         pub stream_id: String,
         pub token: String,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct AssistantMessageCompleted {
         pub stream_id: String,
+        /// Final text; replaces what was streamed (e.g. after cleanup).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub text: Option<String>,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct ToolStarted {
         pub tool_id: String,
+        /// Tool name, e.g. `Read` or `Bash`.
         pub tool: String,
+        /// Arguments shown after the name, e.g. a path or a command line.
         pub command: String,
+        /// When the tool started (epoch ms). Defaults to when the event arrives.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub started_at_ms: Option<i64>,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct ToolOutput {
         pub tool_id: String,
         pub chunk: String,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct ToolFinished {
         pub tool_id: String,
         pub exit_code: i32,
+        /// Overrides the status derived from `exit_code`: `done`, `error`,
+        /// `cancelled` or `rejected`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub status: Option<String>,
+        /// One-line result, e.g. `142 lines` (shown with Ctrl+O, and for errors).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub summary: Option<String>,
+        /// Full output; replaces anything streamed via ToolExecutionStdout.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub output: Option<String>,
+        /// Output lines shown collapsed. Default 0 (12 on error).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub preview: Option<u32>,
+        /// Highlight the output as this language (e.g. `ts`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub output_lang: Option<String>,
+        /// A diff to show under the tool row.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub diff: Option<DiffPayload>,
+    }
+
+    /// A diff to show inline: full before/after text, or a unified diff.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct DiffPayload {
+        pub path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub before: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub after: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub unified: Option<String>,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct PatchProposed {
+        pub path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub added: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub removed: Option<u32>,
+        /// Unified-diff text.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub diff: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct PatchApplied {
+        pub path: String,
+    }
+
+    /// Host asks the user to allow a tool call.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct PermissionRequested {
+        pub request_id: String,
+        pub tool: String,
+        /// Prompt title, e.g. `edit src/auth/session.ts`.
+        pub action: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub detail: Option<String>,
+        /// Diff preview for edits.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub diff: Option<DiffPayload>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct PermissionGranted {
+        pub request_id: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct PermissionDenied {
+        pub request_id: String,
+    }
+
+    /// Optional welcome and branding for the inline renderer.
+    #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct SessionStarted {
+        /// First welcome line, in the accent color. Defaults to the app title.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub title: Option<String>,
+        /// Dim lines under the title (model, directory, hints).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub detail: Option<Vec<String>>,
+        /// A terminal color name (`orange`, `blue`, …) or `#rrggbb`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub accent: Option<String>,
+        /// The agent's name, used in prompts like "tell <name> what to do".
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub assistant_label: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub user_label: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct SessionCompacted {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub old_seq: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub new_seq: Option<i64>,
+    }
+
+    #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct ViewportMarker {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub label: Option<String>,
+    }
+
+    /// Multi-line text (may contain ANSI colors) printed as-is, e.g. a logo.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct Splash {
+        pub text: String,
+    }
+
+    /// v2.4+ — `TerminalSuspend` / `TerminalResume` payload.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct TerminalHandoff {
+        pub id: String,
+    }
+
+    /// v2.4+ — renderer → host answer to `TerminalSuspend`.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct TerminalSuspended {
+        pub id: String,
+        /// False when this renderer can't lend the terminal (Windows,
+        /// full-screen mode); the host runs the child without one.
+        pub supported: bool,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct RuntimeError {
         pub message: String,
         #[serde(default)]
@@ -375,6 +529,7 @@ pub mod payloads {
     }
 
     #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     #[serde(rename_all = "snake_case")]
     pub enum RuntimeErrorKind {
         Generic,
@@ -384,6 +539,7 @@ pub mod payloads {
     }
 
     #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     #[serde(rename_all = "snake_case")]
     pub enum Severity {
         Info,
@@ -393,6 +549,7 @@ pub mod payloads {
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct Cta {
         pub label: String,
         pub action_id: String,
@@ -415,11 +572,13 @@ pub mod payloads {
     /// Unknown keys are still displayed (in registration order) so hosts can
     /// freely extend the bar.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct StatusUpdate {
         pub segments: std::collections::BTreeMap<String, String>,
     }
 
     #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     #[serde(rename_all = "snake_case")]
     pub enum BackgroundTaskState {
         Running,
@@ -429,6 +588,7 @@ pub mod payloads {
 
     /// v0.1.5+ — background task lifecycle (skill indexing, memory load…).
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct BackgroundTaskUpdate {
         pub task_id: String,
         pub label: String,
@@ -439,6 +599,7 @@ pub mod payloads {
     }
 
     #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     #[serde(rename_all = "snake_case")]
     pub enum TodoStatus {
         Pending,
@@ -448,6 +609,7 @@ pub mod payloads {
 
     /// One item in a `TodoListUpdate`.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct TodoItem {
         pub id: String,
         pub title: String,
@@ -466,17 +628,20 @@ pub mod payloads {
     /// v0.5+ — the agent's todo/plan checklist. The host sends the FULL list
     /// on every update (last-write-wins); an empty `todos` clears the panel.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct TodoListUpdate {
         pub todos: Vec<TodoItem>,
     }
 
     /// v0.1.5+ — renderer → host: user submitted text from the input box.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct UserInputSubmitted {
         pub text: String,
     }
 
     #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     #[serde(rename_all = "snake_case")]
     pub enum PermissionChoice {
         AllowOnce,
@@ -486,6 +651,7 @@ pub mod payloads {
 
     /// v0.1.5+ — renderer → host: response to a PermissionRequested event.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct PermissionResponse {
         /// Matches `request_id` from the original PermissionRequested payload.
         pub request_id: String,
@@ -496,6 +662,7 @@ pub mod payloads {
 
     /// v0.4.5+ — one entry in a SlashCommandsRegistered payload.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct SlashCommand {
         /// The literal command name *without* the leading slash, e.g. `compact`.
         pub name: String,
@@ -508,12 +675,14 @@ pub mod payloads {
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct SlashCommandsRegistered {
         pub commands: Vec<SlashCommand>,
     }
 
     /// v0.4.5+ — one entry in a MentionCandidatesRegistered payload.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct MentionCandidate {
         /// What gets inserted into the input (e.g. `src/auth/login.ts`).
         pub token: String,
@@ -526,6 +695,7 @@ pub mod payloads {
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct MentionCandidatesRegistered {
         pub candidates: Vec<MentionCandidate>,
         /// v2.3+ — set when answering a `MentionQuery`: the directory part
@@ -538,12 +708,14 @@ pub mod payloads {
     /// v2.3+ — renderer → host: the text after `@` while the user types a
     /// path mention.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct MentionQuery {
         pub query: String,
     }
 
     /// v0.4.6+ (CC-1) — one option in a `ShowSelectList`.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct SelectListOption {
         /// Stable opaque token returned to the host in `SelectListResponse`.
         /// Hosts typically use a session id, file path, command name, etc.
@@ -553,11 +725,24 @@ pub mod payloads {
         /// Optional one-line description shown dimmed to the right of `label`.
         #[serde(default)]
         pub description: Option<String>,
+        /// v2.3+ — group header shown above the first option of each group.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub section: Option<String>,
+        /// v2.3+ — values drawn in aligned columns after the label.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub columns: Option<Vec<String>>,
+        /// v2.3+ — `on` / `off` badge, e.g. for enabled skills.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub state: Option<String>,
+        /// v2.3+ — extra text the search matches against.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub keywords: Option<String>,
     }
 
     /// v0.4.6+ (CC-1) — host asks the renderer to show a modal select list.
     /// See `docs/historical/components-catalog.md` for the full design.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct ShowSelectList {
         /// Host-chosen unique id. Reported back in `SelectListResponse` so
         /// the host can correlate the response with the request. Multiple
@@ -565,6 +750,9 @@ pub mod payloads {
         pub id: String,
         /// Prompt shown above the option list (e.g. "Resume which session?").
         pub prompt: String,
+        /// v2.3+ — a dim line under the prompt.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub subtitle: Option<String>,
         pub options: Vec<SelectListOption>,
         /// Initial selection (must match an option `value`). Defaults to
         /// the first option when omitted or unmatched.
@@ -585,6 +773,7 @@ pub mod payloads {
     /// v0.4.6+ (CC-1) — outbound result of `ShowSelectList`. Exactly one
     /// of `value` or `cancelled` is set per response.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct SelectListResponse {
         pub id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -595,6 +784,7 @@ pub mod payloads {
 
     /// v0.4.6+ (CC-2) — host asks the renderer to show a Yes/No modal.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct ShowConfirm {
         pub id: String,
         pub prompt: String,
@@ -616,6 +806,7 @@ pub mod payloads {
     /// v0.4.6+ (CC-2) — outbound result of `ShowConfirm`. Exactly one of
     /// `value` (bool) or `cancelled` is set.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct ConfirmResponse {
         pub id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -625,6 +816,7 @@ pub mod payloads {
     }
 
     #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     #[serde(rename_all = "snake_case")]
     pub enum TableAlign {
         Left,
@@ -633,6 +825,7 @@ pub mod payloads {
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct TableColumn {
         /// Key into each row object.
         pub name: String,
@@ -648,6 +841,7 @@ pub mod payloads {
     /// this version. Rows are arbitrary JSON objects; each column reads
     /// `row[name]` and stringifies it.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct ShowTable {
         pub id: String,
         #[serde(default)]
@@ -657,6 +851,7 @@ pub mod payloads {
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct KeyValueItem {
         pub label: String,
         pub value: String,
@@ -664,6 +859,7 @@ pub mod payloads {
 
     /// v0.4.6+ (CC-7) — show a label/value list as a modal. Display-only.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct ShowKeyValueView {
         pub id: String,
         #[serde(default)]
@@ -672,6 +868,7 @@ pub mod payloads {
     }
 
     #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     #[serde(rename_all = "snake_case")]
     pub enum FormFieldKind {
         Text,
@@ -681,6 +878,7 @@ pub mod payloads {
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct FormField {
         pub name: String,
         pub label: String,
@@ -696,6 +894,7 @@ pub mod payloads {
 
     /// v0.4.6+ (CC-5) — show a multi-field form modal.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct ShowForm {
         pub id: String,
         #[serde(default)]
@@ -707,6 +906,7 @@ pub mod payloads {
 
     /// v0.4.6+ (CC-5) — outbound result of `ShowForm`.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct FormResponse {
         pub id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -719,6 +919,7 @@ pub mod payloads {
     /// Each variant carries the per-step payload that the renderer uses
     /// to install the appropriate sub-modal (SelectList / Confirm / Form).
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     #[serde(tag = "kind", rename_all = "snake_case")]
     pub enum WizardStep {
         Select(WizardSelectStep),
@@ -727,6 +928,7 @@ pub mod payloads {
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct WizardSelectStep {
         pub id: String,
         pub prompt: String,
@@ -736,6 +938,7 @@ pub mod payloads {
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct WizardConfirmStep {
         pub id: String,
         pub prompt: String,
@@ -746,6 +949,7 @@ pub mod payloads {
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct WizardFormStep {
         pub id: String,
         #[serde(default)]
@@ -754,6 +958,7 @@ pub mod payloads {
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct ShowWizard {
         pub id: String,
         #[serde(default)]
@@ -767,6 +972,7 @@ pub mod payloads {
     /// `WizardCompleted.results`. String for select; bool for confirm;
     /// JSON object for form.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     #[serde(untagged)]
     pub enum WizardStepResult {
         Select(String),
@@ -775,6 +981,7 @@ pub mod payloads {
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct WizardCompleted {
         pub id: String,
         /// Step id → result for each completed step.
@@ -782,6 +989,7 @@ pub mod payloads {
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct WizardCancelled {
         pub id: String,
         /// 0-based index of the step the user was on when they cancelled.
@@ -793,11 +1001,13 @@ pub mod payloads {
     /// what that means and updates the `mode` status segment to reflect
     /// the new mode.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct ModeChangeRequested {
         pub direction: ModeChangeDirection,
     }
 
     #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     #[serde(rename_all = "snake_case")]
     pub enum ModeChangeDirection {
         Next,
@@ -808,6 +1018,7 @@ pub mod payloads {
     /// `Severity` (used by `RuntimeError`) because toasts add a `Success`
     /// affordance and omit `Fatal`.
     #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     #[serde(rename_all = "snake_case")]
     pub enum ToastKind {
         Info,
@@ -820,6 +1031,7 @@ pub mod payloads {
     /// auto-dismisses after `ttl_ms` (renderer applies a default when
     /// omitted) and never enters the transcript.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct ShowToast {
         pub text: String,
         /// Visual treatment. Defaults to `Info` when omitted.
@@ -944,6 +1156,128 @@ mod tests {
             assert!(types.contains(&format!("| {quoted}")), "sdk/node/src/types.d.ts EventType is missing {quoted}");
             assert!(types.contains(&format!("event_type: {quoted}")), "sdk/node/src/types.d.ts Event union is missing {quoted}");
         }
+    }
+
+    /// Fields of a Rust payload as the wire sees them: name → optional
+    /// (serde `default` / `Option`), from its JSON schema.
+    fn rust_fields<T: schemars::JsonSchema>() -> std::collections::BTreeMap<String, bool> {
+        let schema = serde_json::to_value(schemars::schema_for!(T)).unwrap();
+        let required: Vec<String> = schema["required"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+        schema["properties"]
+            .as_object()
+            .map(|props| props.keys().map(|k| (k.clone(), !required.contains(k))).collect())
+            .unwrap_or_default()
+    }
+
+    /// Object types in types.d.ts (`export type X = { ... }`): name →
+    /// (field → optional). Comments are ignored; nested braces are skipped.
+    fn ts_object_types(src: &str) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, bool>> {
+        let mut no_comments = String::new();
+        let mut rest = src;
+        while let Some(i) = rest.find("/*") {
+            no_comments.push_str(&rest[..i]);
+            rest = rest[i..].find("*/").map(|j| &rest[i + j + 2..]).unwrap_or("");
+        }
+        no_comments.push_str(rest);
+        let src: String = no_comments.lines().map(|l| l.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n");
+        let mut out = std::collections::BTreeMap::new();
+        let mut at = 0;
+        while let Some(i) = src[at..].find("export type ") {
+            let start = at + i + "export type ".len();
+            at = start;
+            let Some(eq) = src[start..].find('=') else { break };
+            let name = src[start..start + eq].trim().to_string();
+            let after = src[start + eq + 1..].trim_start();
+            if !after.starts_with('{') || name.contains('<') {
+                continue;
+            }
+            let open = src.len() - after.len();
+            let (mut depth, mut end) = (0i32, open);
+            for (k, ch) in src[open..].char_indices() {
+                match ch {
+                    '{' | '(' | '[' | '<' => depth += 1,
+                    '}' | ')' | ']' | '>' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = open + k;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let body = &src[open + 1..end];
+            let mut fields = std::collections::BTreeMap::new();
+            let (mut depth, mut piece) = (0i32, String::new());
+            for ch in body.chars().chain(std::iter::once(';')) {
+                match ch {
+                    '{' | '(' | '[' | '<' => depth += 1,
+                    '}' | ')' | ']' | '>' => depth -= 1,
+                    _ => {}
+                }
+                if (ch == ';' || ch == '\n') && depth == 0 {
+                    let p = piece.trim();
+                    if let Some(colon) = p.find(':') {
+                        let key = p[..colon].trim();
+                        let (key, optional) = match key.strip_suffix('?') {
+                            Some(k) => (k.trim(), true),
+                            None => (key, false),
+                        };
+                        if !key.is_empty() && key.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                            fields.insert(key.to_string(), optional);
+                        }
+                    }
+                    piece.clear();
+                } else {
+                    piece.push(ch);
+                }
+            }
+            out.insert(name, fields);
+            at = end;
+        }
+        out
+    }
+
+    /// The SDK's payload types are hand-written for their docs; Rust is the
+    /// source of truth. Every object type in types.d.ts must match its Rust
+    /// payload field for field, including which fields are optional.
+    #[test]
+    fn node_sdk_payload_types_match_rust() {
+        use payloads::*;
+        let ts = ts_object_types(include_str!("../../../sdk/node/src/types.d.ts"));
+        let mut rust: std::collections::BTreeMap<&str, std::collections::BTreeMap<String, bool>> = std::collections::BTreeMap::new();
+        macro_rules! payloads {
+            ($($t:ident),* $(,)?) => { $( rust.insert(stringify!($t), rust_fields::<$t>()); )* };
+        }
+        payloads!(
+            UserMessage, AssistantStreamStarted, AssistantTokenDelta, AssistantMessageCompleted,
+            ToolStarted, ToolOutput, ToolFinished, DiffPayload, PatchProposed, PatchApplied,
+            PermissionRequested, PermissionGranted, PermissionDenied, RuntimeError, Cta,
+            StatusUpdate, BackgroundTaskUpdate, TodoItem, TodoListUpdate, SessionStarted,
+            SessionCompacted, ViewportMarker, UserInputSubmitted, PermissionResponse,
+            SlashCommand, SlashCommandsRegistered, MentionCandidate, MentionCandidatesRegistered,
+            MentionQuery, SelectListOption, ShowSelectList, SelectListResponse, ShowConfirm,
+            ConfirmResponse, TableColumn, ShowTable, KeyValueItem, ShowKeyValueView, FormField,
+            ShowForm, FormResponse, ShowWizard, WizardCompleted, WizardCancelled,
+            ModeChangeRequested, ShowToast, Splash, TerminalHandoff, TerminalSuspended,
+        );
+        let mut problems = Vec::new();
+        for (name, fields) in &ts {
+            if name == "EnvelopeMeta" {
+                continue;
+            }
+            match rust.get(name.as_str()) {
+                None => problems.push(format!("types.d.ts has {name} but no Rust payload of that name")),
+                Some(r) if r != fields => problems.push(format!("{name}: Rust {r:?} vs types.d.ts {fields:?}")),
+                _ => {}
+            }
+        }
+        for name in rust.keys() {
+            if !ts.contains_key(*name) {
+                problems.push(format!("Rust payload {name} is missing from types.d.ts"));
+            }
+        }
+        assert!(problems.is_empty(), "SDK types drifted from the protocol:\n{}", problems.join("\n"));
     }
 
     #[test]

@@ -65,6 +65,14 @@ pub fn validate_line(line: usize, raw: &str) -> Result<EventType, ValidationErro
     Ok(env.event_type)
 }
 
+fn or_empty(v: serde_json::Value) -> serde_json::Value {
+    if v.is_null() {
+        serde_json::json!({})
+    } else {
+        v
+    }
+}
+
 fn validate_payload(event_type: EventType, payload: serde_json::Value) -> Result<(), serde_json::Error> {
     use EventType::*;
     match event_type {
@@ -74,7 +82,6 @@ fn validate_payload(event_type: EventType, payload: serde_json::Value) -> Result
         AssistantStreamStarted => {
             serde_json::from_value::<payloads::AssistantStreamStarted>(payload)?;
         }
-        TerminalSuspend | TerminalResume | TerminalSuspended => {}
         AssistantTokenDelta | AssistantReasoningDelta => {
             serde_json::from_value::<payloads::AssistantTokenDelta>(payload)?;
         }
@@ -159,18 +166,42 @@ fn validate_payload(event_type: EventType, payload: serde_json::Value) -> Result
         MentionQuery => {
             serde_json::from_value::<payloads::MentionQuery>(payload)?;
         }
-        // Events without typed payloads — any JSON value is accepted.
-        SessionStarted
-        | SessionEnded
-        | PatchProposed
-        | PatchApplied
-        | PermissionRequested
-        | PermissionGranted
-        | PermissionDenied
-        | SessionCompacted
-        | TranscriptCleared
-        | ViewportMarker
-        | Splash => {}
+        TerminalSuspend | TerminalResume => {
+            serde_json::from_value::<payloads::TerminalHandoff>(payload)?;
+        }
+        TerminalSuspended => {
+            serde_json::from_value::<payloads::TerminalSuspended>(payload)?;
+        }
+        PatchProposed => {
+            serde_json::from_value::<payloads::PatchProposed>(payload)?;
+        }
+        PatchApplied => {
+            serde_json::from_value::<payloads::PatchApplied>(payload)?;
+        }
+        PermissionRequested => {
+            serde_json::from_value::<payloads::PermissionRequested>(payload)?;
+        }
+        PermissionGranted => {
+            serde_json::from_value::<payloads::PermissionGranted>(payload)?;
+        }
+        PermissionDenied => {
+            serde_json::from_value::<payloads::PermissionDenied>(payload)?;
+        }
+        Splash => {
+            serde_json::from_value::<payloads::Splash>(payload)?;
+        }
+        // All-optional payloads: a missing payload is the same as `{}`.
+        SessionStarted => {
+            serde_json::from_value::<payloads::SessionStarted>(or_empty(payload))?;
+        }
+        SessionCompacted => {
+            serde_json::from_value::<payloads::SessionCompacted>(or_empty(payload))?;
+        }
+        ViewportMarker => {
+            serde_json::from_value::<payloads::ViewportMarker>(or_empty(payload))?;
+        }
+        // Bodyless events — any JSON value is accepted.
+        SessionEnded | TranscriptCleared => {}
     }
     Ok(())
 }
