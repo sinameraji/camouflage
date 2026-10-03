@@ -1,0 +1,85 @@
+autopilot 1.11.0
+gpt-6-luna · ~/autopilot-idle-cpu · HEAD
+/ for commands · @ to mention files
+
+· LSP ready — 1 server active
+
+› /help
+──── live area when the user sent SelectListResponse ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Help                                                                                            │
+│ Type to search  ·  54 of 54                                                                     │
+│                                                                                                 │
+│ Mode                                                                                            │
+│ › /settings modes on                      turn plan/edit/auto modes on (off by default: always… │
+│   /settings modes off                     turn modes off (always auto)                          │
+│   /mode edit                              switch to edit mode                                   │
+│   /mode plan                              switch to plan mode                                   │
+│   /mode auto                              switch to auto mode                                   │
+│   /subagents                              show delegation policy and backend setup              │
+│   /subagents auto                         let the coordinator assess substantial tasks (defaul… │
+│   /subagents suggest                      use conservative delegation suggestions               │
+│   /subagents off                          disable automatic delegation suggestions              │
+│                                                                                                 │
+│ Session                                                                                         │
+│   /resume                                 pick a past conversation                              │
+│   /compact                                summarize old turns to free context                   │
+│   /clear                                  clear current conversation                            │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ↑↓ to choose · type to search · enter to select · esc to cancel
+────
+
+› /model
+──── live area when the user sent SelectListResponse ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Select a model                                                                                  │
+│ Type to search  ·  325 of 325                                                                   │
+│                                                                                                 │
+│ Current                                                                                         │
+│ › openai/gpt-6-luna           1.1M     $0.1 / $0.5 / $0.01 ✓ current                            │
+│                                                                                                 │
+│ Best & latest — ranked by agentic + coding benchmarks                                           │
+│   anthropic/claude-fable-5.1  1.0M       $10 / $50 / $0.25                                      │
+│   anthropic/claude-opus-5     1.0M         $5 / $25 / $0.5                                      │
+│   qwen/qwen3.8-max-0902       1.0M         $2 / $6 / $0.25                                      │
+│   x-ai/grok-4.6               500k          $2 / $6 / $0.5                                      │
+│   openai/gpt-6-astra          1.1M          $10 / $50 / $1                                      │
+│   z-ai/glm-5.3                1.0M     $1.4 / $4.4 / $0.14                                      │
+│   openai/gpt-5.6-sol          1.1M         $2 / $10 / $0.2                                      │
+│   moonshotai/kimi-k3          1.0M    $2.7 / $13.5 / $0.27                                      │
+│   z-ai/glm-5.3-flash          1.0M    $0.15 / $0.5 / $0.03                                      │
+│   qwen/qwen3.8-2.4t-a95b      1.0M         $2 / $6 / $0.25                                      │
+│   google/gemini-3.8-flash     1.0M  $0.75 / $3.75 / $0.075                                      │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ↑↓ to choose · type to search · enter to select · esc to cancel
+────
+
+› /hooks
+──── live area when the user sent SelectListResponse ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Hooks                                                                                           │
+│ Enter toggles · recommended hooks install into this project                                     │
+│                                                                                                 │
+│ Recommended                                                                                     │
+│ › 1. stop-bell                       Stop  Terminal bell when the agent finishes a turn. Works… │
+│   2. stop-notify-macos               Stop  macOS desktop notification when the agent finishes.  │
+│   3. stop-glass-sound-macos          Stop  Play the Glass sound on macOS when the agent finish… │
+│   4. block-env-file-writes     PreToolUse  Block edit/write to .env, secrets, *.pem, and *.key… │
+│   5. block-git-internals       PreToolUse  Block edit/write to anything inside .git/. Use a re… │
+│   6. post-edit-prettier       PostToolUse  Auto-format JS/TS/JSON/MD/CSS/HTML files with prett… │
+│   7. audit-tool-calls         PostToolUse  Append every tool call (timestamp / session / tool … │
+│                                                                                                 │
+│ Custom                                                                                          │
+│   8. + Create a custom hook…                                                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ↑↓ to choose · type to search · enter to select · esc to cancel
+────
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts

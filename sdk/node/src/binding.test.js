@@ -189,3 +189,18 @@ test("suspendTerminal() falls back to unsupported when the renderer doesn't answ
   resumeTerminal(cam);
   await cam.close();
 });
+
+test("record: every event in and out is appended to the file", async () => {
+  const { mkdtempSync, readFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const file = join(mkdtempSync(join(tmpdir(), "camo-rec-")), "rec.ndjson");
+  const cam = await mount({ bin: process.execPath, args: [FAKE], skipDefaultArgs: true, record: file });
+  const got = new Promise((r) => cam.once("event", r));
+  cam.send("UserMessageCreated", { text: "hi" }); // the fake echoes it back
+  await got;
+  await cam.close();
+  const lines = readFileSync(file, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  assert.equal(lines[0].in.event_type, "UserMessageCreated");
+  assert.equal(lines[1].out.event_type, "UserMessageCreated");
+  assert.equal(typeof lines[0].t, "number");
+});

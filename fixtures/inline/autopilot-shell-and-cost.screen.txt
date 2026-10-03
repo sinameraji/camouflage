@@ -1,0 +1,21 @@
+autopilot 1.11.0
+gpt-6-luna · ~/autopilot-idle-cpu · HEAD
+/ for commands · @ to mention files
+
+· LSP ready — 1 server active
+
+› ! git status --short
+
+✓ Bash ! git status --short
+
+› /cost
+
+Session   $0.0000  (in: 0  out: 0)
+Today     $1.2345  (in: 1.00M (0.90M cached)  out: 10.0K)  12 req
+Month     $9.8765  (in: 10.00M (9.00M cached)  out: 100.0K)  120 req
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts
