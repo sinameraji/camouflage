@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.4.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.0...camouflage-tui-v2.4.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **build:** sync Cargo.lock with thiserror 2 ([7b6162f](https://github.com/sinameraji/camouflage/commit/7b6162f892540430bd1307b4df1bd25b260d3b72))
+* **build:** sync Cargo.lock with thiserror 2 (main CI is red) ([cdcb583](https://github.com/sinameraji/camouflage/commit/cdcb5832739fd585c2b8682d6afff6da80b9cf77))
+
 ## [2.4.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.0-beta.9...camouflage-tui-v2.4.0) (2026-10-03)
 
 
