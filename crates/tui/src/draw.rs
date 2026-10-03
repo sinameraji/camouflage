@@ -181,7 +181,10 @@ pub fn render<B: Backend>(
     todo_scroll_offset: &mut usize,
     now_ms: i64,
     paste_preview: Option<&str>,
-) -> Result<()> {
+) -> Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
     terminal.draw(|f| {
         let raw_area = f.area();
         // v0.5+: apply a small horizontal margin around the entire UI so
