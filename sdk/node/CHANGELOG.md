@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.4.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.0-beta.9...camouflage-tui-v2.4.0) (2026-10-03)
+
+
+### Features
+
+* **tui:** inline is the default mode ([2ab5ad1](https://github.com/sinameraji/camouflage/commit/2ab5ad13bd4b998734c009a1c64ae75af5ed00d6))
+* **tui:** inline is the default mode ([ae1a086](https://github.com/sinameraji/camouflage/commit/ae1a0866b755c141166b418489d9365a9030c4d9))
+
+
+### Miscellaneous Chores
+
+* **release:** go stable: 2.4.0 on npm `latest` ([21dd9cd](https://github.com/sinameraji/camouflage/commit/21dd9cd8400bd1d0b00f121b906b21214dcf5a36))
+
 ## [2.4.0-beta.9](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.0-beta.8...camouflage-tui-v2.4.0-beta.9) (2026-10-03)
 
 
