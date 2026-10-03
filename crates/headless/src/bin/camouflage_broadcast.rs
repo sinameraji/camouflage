@@ -120,7 +120,7 @@ async fn handle_client(
     {
         let snap: Vec<String> = replay.read().await.clone();
         for line in snap {
-            if sink_send(&mut sink, Message::Text(line)).await.is_err() {
+            if sink_send(&mut sink, Message::Text(line.into())).await.is_err() {
                 return Ok(());
             }
         }
@@ -141,7 +141,7 @@ async fn handle_client(
             },
             recv = rx.recv() => match recv {
                 Ok(line) => {
-                    if sink_send(&mut sink, Message::Text(line)).await.is_err() {
+                    if sink_send(&mut sink, Message::Text(line.into())).await.is_err() {
                         break;
                     }
                 }
