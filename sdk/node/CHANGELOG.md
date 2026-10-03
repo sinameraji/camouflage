@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.5.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.1...camouflage-tui-v2.5.0) (2026-10-03)
+
+
+### Features
+
+* **store:** keep conversations, not keystrokes; 30-day retention; opt-out ([0dae938](https://github.com/sinameraji/camouflage/commit/0dae9383bacf3871588cfbe7c782214bc6e07d0b))
+* **store:** keep conversations, not keystrokes; 30-day retention; opt-out ([f53e114](https://github.com/sinameraji/camouflage/commit/f53e1148a2b60711c20dfc07baf1a27a4c3a624d))
+
 ## [2.4.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.0...camouflage-tui-v2.4.1) (2026-10-03)
 
 
