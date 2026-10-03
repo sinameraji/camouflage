@@ -15,40 +15,24 @@ pre-built native binary built from the Rust crates in this workspace.
 - **postinstall** (`sdk/node/scripts/install.js`) downloads the binary for the
   tag matching the installed package version.
 
-## The gotcha: crate-only changes don't auto-release
+## What counts
 
-release-please is configured to track only the **`sdk/node`** package path
-(`.release-please-config.json`). The binary, however, is built from
-**`crates/**`**. So a user-facing change that lives only under `crates/**`
-(e.g. a TUI bug fix) does **not** trigger a release on its own — `sdk/node`
-saw no releasable commit — and the new binary never ships.
+release-please tracks the **whole repository** (package path `.` in
+`.release-please-config.json`), so a `fix:` or `feat:` anywhere, including
+the Rust crates the binary is built from, opens a release PR. `ci:`,
+`chore:`, `docs:`, `test:` never do. It bumps `sdk/node/package.json`
+(the npm package), `version.txt`, and `sdk/node/CHANGELOG.md`.
 
-This is easy to miss. Two safety nets are in place:
+Versioning is `prerelease`: while on a beta, both fixes and features bump
+the beta number (`2.4.0-beta.7` → `2.4.0-beta.8`), which keeps us inside
+downstream caret ranges like autopilot's `^2.4.0-beta.3`. A breaking change
+(`!` / `BREAKING CHANGE:`) moves to the next major.
 
-1. The release-please workflow prints a **`::warning::` and job-summary note**
-   whenever it cuts no release but there are unreleased `fix:`/`feat:` commits
-   under `crates/**` since the last tag.
-2. Conventional commit types matter: `ci:`, `chore:`, `docs:`, etc. never
-   trigger a release, even under `sdk/node`.
+To force a specific version, add a `Release-As: <version>` footer to any
+releasable commit.
 
-## Cutting a release for a crate-only change
+## Going stable
 
-Run, from a branch off an up-to-date `main`:
-
-```bash
-scripts/trigger-binary-release.sh 1.1.1-beta.1
-git push -u origin chore/trigger-release-1.1.1-beta.1
-gh pr create --base main --fill
-```
-
-This lands a tiny `fix(sdk):` provenance commit with a `Release-As:` footer so
-release-please opens the release PR. Merge the trigger PR, then merge the
-release-please PR it produces — that builds and publishes the binary from
-current `main`.
-
-## Picking the version
-
-- Bump the **patch** for fixes: `1.1.0-beta.1` → `1.1.1-beta.1`.
-- Keep the `-beta.N` suffix while on the beta channel (publishes to the `beta`
-  dist-tag, which downstream consumers like kimiflare track).
-- Drop the suffix for a stable cut: `1.1.1` (publishes to `latest`).
+Pre-releases publish to the `beta` dist-tag. For a stable cut (publishes to
+`latest`), land a commit with `Release-As: <x.y.z>` and set `"prerelease":
+false` / `"versioning": "default"` in `.release-please-config.json`.
