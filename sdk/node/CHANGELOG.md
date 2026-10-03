@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.4.0-beta.8](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.0-beta.7...camouflage-tui-v2.4.0-beta.8) (2026-10-03)
+
+
+### Bug Fixes
+
+* **inline:** no floating cursor bar for a reply with no text yet ([5c32dc1](https://github.com/sinameraji/camouflage/commit/5c32dc193c828ca55e7c7d9e3a03784f2de3f35c))
+* **inline:** no floating cursor bar for a reply with no text yet ([776ee38](https://github.com/sinameraji/camouflage/commit/776ee38897f75fefccb4d0a214da6420319dc74b))
+* **protocol:** Rust payloads are the source of truth; SDK types can't drift ([8dc4440](https://github.com/sinameraji/camouflage/commit/8dc44408cec7b46b7af941f507d1ae7654b7dd30))
+* **protocol:** Rust payloads are the source of truth; SDK types can't drift ([88eb43c](https://github.com/sinameraji/camouflage/commit/88eb43cbbd12a9bd2d197caa6320d2e7e0f8814b))
+* **sdk:** release camouflage-tui 2.4.0-beta.8 ([7765b1a](https://github.com/sinameraji/camouflage/commit/7765b1a685553c67569e9edf61e5962ddccf03b4))
+* **tui:** crash dumps go to ~/.camouflage, never the working directory ([f678c38](https://github.com/sinameraji/camouflage/commit/f678c38acab681d3a837773b0d0a2a09df199b18))
+* **tui:** crash dumps go to ~/.camouflage, never the working directory ([60e9b9d](https://github.com/sinameraji/camouflage/commit/60e9b9db916f2c109da7e881658af42e964fefac))
+
+
+### Performance Improvements
+
+* **inline:** half the CPU while streaming (ASCII width fast path, 20 fps cap) ([5f6b1d8](https://github.com/sinameraji/camouflage/commit/5f6b1d870d2b214bea671b163dc8e978876b8a68))
+* **inline:** half the CPU while streaming (ASCII width fast path, 20 fps cap) ([6ac03e3](https://github.com/sinameraji/camouflage/commit/6ac03e3bbaddac04f42fa89c6d78307fc038ef78))
+
 ## [2.4.0-beta.7](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.0-beta.6...camouflage-tui-v2.4.0-beta.7) (2026-10-01)
 
 
