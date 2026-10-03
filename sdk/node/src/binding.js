@@ -247,7 +247,16 @@ export async function mount(opts = {}) {
     }
   }
   const uiArgs = opts.ui && !opts.skipDefaultArgs && !userArgs.includes("--ui") ? ["--ui", opts.ui] : [];
-  const args = [...defaultArgs, ...uiArgs, ...titleArgs, ...userArgs];
+  // Session store: `store: false` saves nothing (hosts with their own
+  // history); `retentionDays` prunes old sessions at startup (default 30).
+  const storeArgs = [];
+  if (!opts.skipDefaultArgs) {
+    if (opts.store === false && !userArgs.includes("--no-store")) storeArgs.push("--no-store");
+    if (opts.retentionDays !== undefined && !userArgs.includes("--retention-days")) {
+      storeArgs.push("--retention-days", String(opts.retentionDays));
+    }
+  }
+  const args = [...defaultArgs, ...uiArgs, ...titleArgs, ...storeArgs, ...userArgs];
 
   const child = spawn(bin, args, {
     stdio,

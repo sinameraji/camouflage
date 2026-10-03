@@ -34,6 +34,15 @@ export interface MountOptions {
    * reports). Defaults to the CAMOUFLAGE_RECORD environment variable.
    */
   record?: string;
+  /**
+   * The renderer saves each session to ~/.camouflage/sessions.db (for
+   * --replay and crash reports). `false` saves nothing: use it when the host
+   * keeps its own history. Default true.
+   */
+  store?: boolean;
+  /** Delete saved sessions idle for longer than this many days, at
+   *  startup. 0 keeps everything. Default 30. */
+  retentionDays?: number;
   /** Renderer UI. `"inline"` prints finished output into the terminal's
    *  normal scrollback and redraws only a small live region at the bottom;
    *  it draws on the terminal even in the default piped mode. This is the

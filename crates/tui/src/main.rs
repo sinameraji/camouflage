@@ -6,6 +6,7 @@ pub(crate) mod scrolllog;
 pub(crate) mod settings;
 mod tty;
 mod platform;
+mod persist;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -31,6 +32,17 @@ struct Args {
     /// Path to SQLite database. Defaults to $HOME/.camouflage/sessions.db.
     #[arg(long)]
     db: Option<PathBuf>,
+
+    /// Don't save sessions at all (for hosts that keep their own history).
+    /// Full-screen mode, which pages history from the store, keeps it in
+    /// memory instead.
+    #[arg(long)]
+    no_store: bool,
+
+    /// Delete saved sessions idle for longer than this many days, at
+    /// startup. 0 keeps everything. Also CAMOUFLAGE_RETENTION_DAYS.
+    #[arg(long, value_name = "DAYS", env = "CAMOUFLAGE_RETENTION_DAYS", default_value_t = 30)]
+    retention_days: u32,
 
     /// Target frame rate (frames per second).
     #[arg(long, default_value_t = 60)]
@@ -138,8 +150,11 @@ fn main() -> Result<()> {
     let args = Args::parse();
     let db_path = args.db.unwrap_or_else(default_db_path);
 
-    let store =
-        camouflage_store::SqliteStore::open(&db_path).context("opening event store")?;
+    let store = if args.no_store {
+        camouflage_store::SqliteStore::open_in_memory().context("opening in-memory event store")?
+    } else {
+        camouflage_store::SqliteStore::open(&db_path).context("opening event store")?
+    };
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -158,7 +173,10 @@ fn main() -> Result<()> {
 
     if args.ui == UiMode::Inline && args.replay.is_none() && args.play.is_none() {
         let result = rt.block_on(inline_app::run(inline_app::InlineConfig {
-            store,
+            // Inline mode never reads the store back; with --no-store it
+            // keeps nothing at all (not even in memory).
+            store: (!args.no_store).then_some(store),
+            retention_days: Some(args.retention_days),
             stdin_events: args.stdin_events,
             emit_responses,
             responses_fd: args.responses_fd,

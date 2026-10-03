@@ -158,7 +158,16 @@ Themes use 24-bit RGB semantic colors (accent, user, assistant, tool, error, dif
 
 ## Replay & persistence
 
-Every event is persisted to SQLite before rendering. Sessions can be replayed deterministically:
+Sessions are saved to `~/.camouflage/sessions.db` (SQLite) for replay and
+crash reports. Like Claude Code's transcripts it keeps conversations, not
+keystrokes: a streamed reply is saved once when it completes, a tool's output
+once when it finishes, and repeated command lists or status updates are
+skipped. Sessions idle for more than 30 days are deleted at startup
+(`--retention-days N`, or `CAMOUFLAGE_RETENTION_DAYS`; 0 keeps everything).
+Hosts that keep their own history can turn saving off with `--no-store` /
+`mount({ store: false })`.
+
+Saved sessions can be replayed:
 
 ```bash
 camouflage-tui --replay <SESSION_UUID>
