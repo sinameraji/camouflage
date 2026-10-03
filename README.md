@@ -30,14 +30,14 @@ Camouflage takes a different approach:
 npm install camouflage-tui
 ```
 
-Pre-built binaries are downloaded automatically for macOS and Linux. No Rust toolchain required.
+Pre-built binaries are downloaded automatically for macOS (Apple Silicon and Intel), Linux (x64 and ARM) and Windows. No Rust toolchain required.
 
 ## Quick start
 
 ```js
 import { mount } from "camouflage-tui";
 
-const cam = await mount({ ui: "inline" });
+const cam = await mount(); // inline: output goes to normal scrollback
 
 // Start a session
 cam.send("SessionStarted", {});
