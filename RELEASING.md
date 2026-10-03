@@ -23,16 +23,15 @@ the Rust crates the binary is built from, opens a release PR. `ci:`,
 `chore:`, `docs:`, `test:` never do. It bumps `sdk/node/package.json`
 (the npm package), `version.txt`, and `sdk/node/CHANGELOG.md`.
 
-Versioning is `prerelease`: while on a beta, both fixes and features bump
-the beta number (`2.4.0-beta.7` → `2.4.0-beta.8`), which keeps us inside
-downstream caret ranges like autopilot's `^2.4.0-beta.3`. A breaking change
-(`!` / `BREAKING CHANGE:`) moves to the next major.
+Versioning is standard semver since 2.4.0: `fix:` → patch, `feat:` → minor,
+a breaking change (`!` / `BREAKING CHANGE:`) → major. Releases publish to
+npm's `latest` dist-tag, so ordinary caret ranges (`^2.4.0`) pick them up.
 
 To force a specific version, add a `Release-As: <version>` footer to any
 releasable commit.
 
-## Going stable
+## Pre-releases
 
-Pre-releases publish to the `beta` dist-tag. For a stable cut (publishes to
-`latest`), land a commit with `Release-As: <x.y.z>` and set `"prerelease":
-false` / `"versioning": "default"` in `.release-please-config.json`.
+To publish a beta again (to the `beta` dist-tag), set `"prerelease": true`
+and `"versioning": "prerelease"` in `.release-please-config.json` and land a
+commit with `Release-As: <x.y.z>-beta.1`.

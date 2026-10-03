@@ -6,10 +6,14 @@
       "component": "camouflage-tui",
       "include-component-in-tag": true,
       "changelog-path": "sdk/node/CHANGELOG.md",
-      "versioning": "prerelease",
-      "prerelease": true,
+      "versioning": "default",
+      "prerelease": false,
       "extra-files": [
-        { "type": "json", "path": "sdk/node/package.json", "jsonpath": "$.version" }
+        {
+          "type": "json",
+          "path": "sdk/node/package.json",
+          "jsonpath": "$.version"
+        }
       ]
     }
   }
