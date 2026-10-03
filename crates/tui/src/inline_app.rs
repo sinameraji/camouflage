@@ -9,6 +9,11 @@
 use anyhow::{Context, Result};
 use camouflage_headless::{NdjsonDecoder, NdjsonError};
 use camouflage_inline::session::{Key, Session, UNFOCUSED_FRAME_MS};
+
+/// Shortest gap between draws caused by the host (tokens, tool output):
+/// 20 fps is smooth for streaming text, and a burst of tokens then costs
+/// one frame instead of one per token. User input always draws at once.
+const MIN_FRAME_GAP_MS: i64 = 50;
 use camouflage_inline::{InlineTerminal, Theme};
 use camouflage_protocol::{Event, EventType, SCHEMA_VERSION};
 use camouflage_store::{EventStore, SqliteStore};
@@ -77,8 +82,9 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     persist(&store, &seq, session_id, EventType::SessionStarted, serde_json::json!({ "synthetic": true }));
 
     let mut last_frame = None;
-    // While the terminal is unfocused, draws are batched to one per
-    // UNFOCUSED_FRAME_MS; `deferred` means there's an undrawn change.
+    // Host-driven draws are batched to one per MIN_FRAME_GAP_MS (one per
+    // UNFOCUSED_FRAME_MS in the background); `deferred` means there's an
+    // undrawn change waiting for its slot.
     let mut last_draw: i64 = 0;
     let mut deferred = false;
     // A child process owns the terminal (TerminalSuspend): no drawing.
@@ -92,8 +98,9 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
         loop {
             let now = now_ms();
             let mut deadline = if suspended { None } else { session.next_wakeup(now) };
+            let gap = if session.focused { MIN_FRAME_GAP_MS } else { UNFOCUSED_FRAME_MS };
             if deferred {
-                let at = last_draw + UNFOCUSED_FRAME_MS;
+                let at = last_draw + gap;
                 deadline = Some(deadline.map_or(at, |d| d.min(at)));
             }
             let input = match deadline {
@@ -199,7 +206,8 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
             if suspended {
                 continue;
             }
-            if !session.focused && !urgent && !session.clear_screen && !session.exit && !host_closed && now - last_draw < UNFOCUSED_FRAME_MS {
+            let gap = if session.focused { MIN_FRAME_GAP_MS } else { UNFOCUSED_FRAME_MS };
+            if !urgent && !session.clear_screen && !session.exit && !host_closed && now - last_draw < gap {
                 deferred = true;
                 continue;
             }
