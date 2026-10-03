@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.4.0-beta.9](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.0-beta.8...camouflage-tui-v2.4.0-beta.9) (2026-10-03)
+
+
+### Features
+
+* **inline:** background activity: badge, browser, live output, stop requests ([8ffcd5c](https://github.com/sinameraji/camouflage/commit/8ffcd5cd08490ac355a8b2a5accee77ebb56efe1))
+* **inline:** background activity: badge, browser, live output, stop requests ([4d514ec](https://github.com/sinameraji/camouflage/commit/4d514ec9a435cacf362e8fe177565d6dfc5929af))
+
 ## [2.4.0-beta.8](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.0-beta.7...camouflage-tui-v2.4.0-beta.8) (2026-10-03)
 
 
