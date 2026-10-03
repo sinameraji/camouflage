@@ -1,8 +1,16 @@
 {
   "packages": {
-    "sdk/node": {
-      "release-type": "node",
-      "package-name": "camouflage-tui"
+    ".": {
+      "release-type": "simple",
+      "package-name": "camouflage-tui",
+      "component": "camouflage-tui",
+      "include-component-in-tag": true,
+      "changelog-path": "sdk/node/CHANGELOG.md",
+      "versioning": "prerelease",
+      "prerelease": true,
+      "extra-files": [
+        { "type": "json", "path": "sdk/node/package.json", "jsonpath": "$.version" }
+      ]
     }
   }
 }

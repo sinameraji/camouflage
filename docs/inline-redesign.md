@@ -244,7 +244,7 @@ autopilot 1.5.0 ships `--ui camouflage`. First real use: speed and smoothness ar
 
 **R3. Defaults.** After daily driving: make `camouflage` autopilot's default UI and `inline` Camouflage's default; full-screen mode becomes the replay viewer. Record real autopilot sessions as `.camo` fixtures for CI.
 
-**Release note:** release-please only tracks `sdk/node`. Crate-only fixes need `scripts/trigger-binary-release.sh`. Consider moving the npm package to the repo root so every change counts.
+**Release note:** release-please tracks the whole repo (package path `.`) with prerelease versioning since 2026-10-03, so crate-only fixes release on their own and stay on `2.4.0-beta.N`. See RELEASING.md.
 
 Order: R1 adapter and managers first (largest gap, mostly reuse), then `@` navigation and forms, then color, then the rest.
 
