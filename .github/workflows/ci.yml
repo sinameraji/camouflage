@@ -23,7 +23,7 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - run: cargo test --workspace
+      - run: cargo test --locked --workspace
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
@@ -40,7 +40,7 @@ jobs:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            test: cargo test -p camouflage-inline -p camouflage-protocol
+            test: cargo test --locked -p camouflage-inline -p camouflage-protocol
           - os: macos-14
             target: x86_64-apple-darwin
             test: "true"
@@ -52,5 +52,5 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - run: cargo build --release --target ${{ matrix.target }} -p camouflage-tui
+      - run: cargo build --locked --release --target ${{ matrix.target }} -p camouflage-tui
       - run: ${{ matrix.test }}
