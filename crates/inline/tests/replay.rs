@@ -87,7 +87,8 @@ fn recorded_sessions_render_as_before() {
             std::fs::write(&golden, &got).unwrap();
             continue;
         }
-        let want = std::fs::read_to_string(&golden).unwrap();
+        // Git may check the file out with CRLF (Windows); compare text, not bytes.
+        let want = std::fs::read_to_string(&golden).unwrap().replace("\r\n", "\n");
         if got != want {
             let first = got.lines().zip(want.lines()).position(|(a, b)| a != b).unwrap_or_else(|| got.lines().count().min(want.lines().count()));
             failures.push(format!(
