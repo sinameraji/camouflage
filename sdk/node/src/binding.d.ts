@@ -36,8 +36,8 @@ export interface MountOptions {
   record?: string;
   /** Renderer UI. `"inline"` prints finished output into the terminal's
    *  normal scrollback and redraws only a small live region at the bottom;
-   *  it draws on the terminal even in the default piped mode. Default
-   *  `"fullscreen"` (the v2 alternate-screen UI). */
+   *  it draws on the terminal even in the default piped mode. This is the
+   *  default since 2.4.0; `"fullscreen"` is the v2 alternate-screen UI. */
   ui?: "inline" | "fullscreen";
 }
 

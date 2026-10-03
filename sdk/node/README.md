@@ -51,7 +51,7 @@ interface MountOptions {
   env?: NodeJS.ProcessEnv;   // merged with process.env
   inheritStderr?: boolean;   // default true; false → "stderr" event
   renderToTerminal?: boolean; // true → stdout goes to terminal, responses on fd 3
-  ui?: "inline" | "fullscreen"; // default "fullscreen"; see below
+  ui?: "inline" | "fullscreen"; // default "inline" (since 2.4.0); see below
 }
 ```
 

@@ -67,10 +67,11 @@ struct Args {
     #[arg(long, value_name = "NAME")]
     app_title: Option<String>,
 
-    /// Rendering mode. `inline` prints finished output into the terminal's
-    /// normal scrollback and redraws only a small live region; `fullscreen`
-    /// is the v2 alternate-screen UI (also used for --replay and --play).
-    #[arg(long, value_enum, default_value_t = UiMode::Fullscreen)]
+    /// Rendering mode. `inline` (the default) prints finished output into
+    /// the terminal's normal scrollback and redraws only a small live
+    /// region; `fullscreen` is the v2 alternate-screen UI (always used for
+    /// --replay and --play).
+    #[arg(long, value_enum, default_value_t = UiMode::Inline)]
     ui: UiMode,
 }
 
@@ -86,6 +87,12 @@ mod tests {
         assert_eq!(b.emit_responses, Some(false));
         let c = Args::try_parse_from(["camouflage-tui", "--emit-responses", "--ui", "inline"]).unwrap();
         assert_eq!((c.emit_responses, c.ui), (Some(true), UiMode::Inline));
+    }
+
+    #[test]
+    fn inline_is_the_default_mode() {
+        assert_eq!(Args::try_parse_from(["camouflage-tui"]).unwrap().ui, UiMode::Inline);
+        assert_eq!(Args::try_parse_from(["camouflage-tui", "--ui", "fullscreen"]).unwrap().ui, UiMode::Fullscreen);
     }
 }
 
