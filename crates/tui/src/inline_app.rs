@@ -634,13 +634,9 @@ fn install_panic_hook() {
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         leave_terminal_modes();
-        if let Some(home) = crate::platform::home_dir() {
-            let dir = home.join(".camouflage");
-            let _ = std::fs::create_dir_all(&dir);
-            let path = dir.join(format!("crash-{}.txt", now_ms()));
-            if std::fs::write(&path, format!("{info}\n")).is_ok() {
-                eprintln!("camouflage crashed; details in {}", path.display());
-            }
+        let path = crate::platform::crash_dir().join(format!("crash-{}.txt", now_ms()));
+        if std::fs::write(&path, format!("{info}\n")).is_ok() {
+            eprintln!("camouflage crashed; details in {}", path.display());
         }
         prev(info);
     }));

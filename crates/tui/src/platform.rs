@@ -46,6 +46,14 @@ pub fn file_from_fd(fd: i32) -> anyhow::Result<File> {
     }
 }
 
+/// Where crash dumps go: `~/.camouflage`, never the user's working
+/// directory. Falls back to the temp dir when there's no home.
+pub fn crash_dir() -> PathBuf {
+    let dir = home_dir().map(|h| h.join(".camouflage")).unwrap_or_else(std::env::temp_dir);
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
 pub fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from)
 }

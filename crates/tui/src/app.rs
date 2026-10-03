@@ -2153,15 +2153,15 @@ fn install_panic_hook() {
         let _ = disable_raw_mode();
         let _ = std::io::stdout().execute(LeaveAlternateScreen);
         // Crash-replay dump: if the shared ring buffer has been wired up,
-        // flush its contents to crash-<unix_ts>.ndjson in cwd so the user
-        // can attach a reproducer to a bug report.
+        // flush its contents to ~/.camouflage/crash-<unix_ts>.ndjson so the
+        // user can attach a reproducer to a bug report.
         if let Some(ring) = CRASH_RING.get() {
             if let Ok(buf) = ring.lock() {
                 let ts = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
-                let path = std::path::PathBuf::from(format!("crash-{ts}.ndjson"));
+                let path = crate::platform::crash_dir().join(format!("crash-{ts}.ndjson"));
                 let mut header = format!("# camouflage crash dump\n# panic: {info}\n# events: {}\n", buf.len());
                 if let Some(ev) = buf.front() {
                     header.push_str(&format!("# session: {}\n", ev.session_id));
