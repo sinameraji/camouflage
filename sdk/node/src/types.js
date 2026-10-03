@@ -25,6 +25,8 @@ const KNOWN_TYPES = new Set([
   "TranscriptCleared", "Splash", "ShowToast", "MentionQuery",
   "AssistantReasoningDelta",
   "TerminalSuspend", "TerminalResume", "TerminalSuspended",
+  "ActivityUpdate", "ActivityLog", "ActivityRemoved", "ActivitySnapshot",
+  "ActivityBrowserOpen", "ActivityStopRequested", "ActivityViewChanged",
 ]);
 
 /**

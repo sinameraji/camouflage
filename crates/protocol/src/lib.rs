@@ -177,6 +177,26 @@ pub enum EventType {
     /// this renderer can't hand the terminal over (Windows, full-screen
     /// mode), so the host should run the child without a terminal.
     TerminalSuspended,
+    /// v2.4+ — Host → renderer: add or replace one background activity item
+    /// (a job or an agent). Payload: `payloads::ActivityItem`. Fields left
+    /// out keep their previous values; output is kept.
+    ActivityUpdate,
+    /// v2.4+ — Host → renderer: append output to an item (`{id, chunk}`).
+    ActivityLog,
+    /// v2.4+ — Host → renderer: drop an item (`{id}`).
+    ActivityRemoved,
+    /// v2.4+ — Host → renderer: the complete list; items not in it are
+    /// dropped (resync after reconnects so nothing stale stays on screen).
+    ActivitySnapshot,
+    /// v2.4+ — Host → renderer: open the activity browser (e.g. for `/jobs`).
+    ActivityBrowserOpen,
+    /// v2.4+ — Renderer → host: the user confirmed stopping an item (`{id}`).
+    /// The host decides; report the result with `ActivityUpdate`.
+    ActivityStopRequested,
+    /// v2.4+ — Renderer → host: the browser opened, closed, or shows an
+    /// item's details (`{view: "list" | "detail" | "closed", id?}`), e.g. to
+    /// stream an item's output only while it's on screen.
+    ActivityViewChanged,
 }
 
 impl EventType {
@@ -228,6 +248,13 @@ impl EventType {
             EventType::TerminalSuspend => "TerminalSuspend",
             EventType::TerminalResume => "TerminalResume",
             EventType::TerminalSuspended => "TerminalSuspended",
+            EventType::ActivityUpdate => "ActivityUpdate",
+            EventType::ActivityLog => "ActivityLog",
+            EventType::ActivityRemoved => "ActivityRemoved",
+            EventType::ActivitySnapshot => "ActivitySnapshot",
+            EventType::ActivityBrowserOpen => "ActivityBrowserOpen",
+            EventType::ActivityStopRequested => "ActivityStopRequested",
+            EventType::ActivityViewChanged => "ActivityViewChanged",
         }
     }
 
@@ -283,6 +310,13 @@ impl EventType {
             "TerminalSuspend" => Self::TerminalSuspend,
             "TerminalResume" => Self::TerminalResume,
             "TerminalSuspended" => Self::TerminalSuspended,
+            "ActivityUpdate" => Self::ActivityUpdate,
+            "ActivityLog" => Self::ActivityLog,
+            "ActivityRemoved" => Self::ActivityRemoved,
+            "ActivitySnapshot" => Self::ActivitySnapshot,
+            "ActivityBrowserOpen" => Self::ActivityBrowserOpen,
+            "ActivityStopRequested" => Self::ActivityStopRequested,
+            "ActivityViewChanged" => Self::ActivityViewChanged,
             _ => return None,
         })
     }
@@ -300,7 +334,9 @@ impl EventType {
             | EventType::ModeChangeRequested
             | EventType::CancelRequested
             | EventType::MentionQuery
-            | EventType::TerminalSuspended => Direction::Outbound,
+            | EventType::TerminalSuspended
+            | EventType::ActivityStopRequested
+            | EventType::ActivityViewChanged => Direction::Outbound,
             _ => Direction::Inbound,
         }
     }
@@ -499,6 +535,89 @@ pub mod payloads {
     #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct TerminalHandoff {
         pub id: String,
+    }
+
+    /// v2.4+ — one step of an activity item (agents' plans).
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct ActivityStep {
+        pub title: String,
+        /// `pending`, `running`, `done` or `failed`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub status: Option<String>,
+    }
+
+    /// v2.4+ — a background job or agent the host owns (`ActivityUpdate`,
+    /// and each entry of `ActivitySnapshot`).
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct ActivityItem {
+        /// Stable id; later updates, logs and removals refer to it.
+        pub id: String,
+        /// `job` or `agent`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub kind: Option<String>,
+        /// The command, task or agent name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub title: Option<String>,
+        /// `running`, `waiting`, `needs_attention`, `done`, `failed` or `stopped`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub status: Option<String>,
+        /// Whether the user may ask to stop it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub stoppable: Option<bool>,
+        /// One short line: current step, exit code, what it's waiting for.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub summary: Option<String>,
+        /// 0.0..=1.0 when known.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub progress: Option<f32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub started_at_ms: Option<i64>,
+        /// Last change; for finished items, when they finished.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub updated_at_ms: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub steps: Option<Vec<ActivityStep>>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct ActivityLog {
+        pub id: String,
+        /// Output text; may span lines or end mid-line. ANSI is stripped.
+        pub chunk: String,
+        /// `stdout` or `stderr`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub stream: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct ActivityRemoved {
+        pub id: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct ActivitySnapshot {
+        pub items: Vec<ActivityItem>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct ActivityStopRequested {
+        pub id: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct ActivityViewChanged {
+        /// `list`, `detail` or `closed`.
+        pub view: String,
+        /// The item, for `detail`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub id: Option<String>,
     }
 
     /// v2.4+ — renderer → host answer to `TerminalSuspend`.
@@ -1116,8 +1235,15 @@ mod tests {
             EventType::TerminalSuspend,
             EventType::TerminalResume,
             EventType::TerminalSuspended,
+            EventType::ActivityUpdate,
+            EventType::ActivityLog,
+            EventType::ActivityRemoved,
+            EventType::ActivitySnapshot,
+            EventType::ActivityBrowserOpen,
+            EventType::ActivityStopRequested,
+            EventType::ActivityViewChanged,
         ];
-        assert_eq!(types.len(), 46);
+        assert_eq!(types.len(), 53);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();
@@ -1149,6 +1275,7 @@ mod tests {
             EventType::TranscriptCleared, EventType::Splash, EventType::ShowToast,
             EventType::MentionQuery, EventType::AssistantReasoningDelta,
             EventType::TerminalSuspend, EventType::TerminalResume, EventType::TerminalSuspended,
+            EventType::ActivityUpdate, EventType::ActivityLog, EventType::ActivityRemoved, EventType::ActivitySnapshot, EventType::ActivityBrowserOpen, EventType::ActivityStopRequested, EventType::ActivityViewChanged,
         ];
         for t in all {
             let quoted = format!("\"{}\"", t.as_str());
@@ -1260,6 +1387,8 @@ mod tests {
             ConfirmResponse, TableColumn, ShowTable, KeyValueItem, ShowKeyValueView, FormField,
             ShowForm, FormResponse, ShowWizard, WizardCompleted, WizardCancelled,
             ModeChangeRequested, ShowToast, Splash, TerminalHandoff, TerminalSuspended,
+            ActivityStep, ActivityItem, ActivityLog, ActivityRemoved, ActivitySnapshot,
+            ActivityStopRequested, ActivityViewChanged,
         );
         let mut problems = Vec::new();
         for (name, fields) in &ts {

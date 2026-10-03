@@ -344,6 +344,10 @@ export async function mount(opts = {}) {
       handle.emit("cancelRequested", {});
     } else if (ev.event_type === "MentionQuery") {
       handle.emit("mentionQuery", { query: ev.payload?.query ?? "" });
+    } else if (ev.event_type === "ActivityStopRequested") {
+      handle.emit("activityStopRequested", { id: ev.payload?.id });
+    } else if (ev.event_type === "ActivityViewChanged") {
+      handle.emit("activityViewChanged", { view: ev.payload?.view, id: ev.payload?.id });
     } else if (ev.event_type === "TerminalSuspended") {
       handle.emit("terminalSuspended", { id: ev.payload?.id, supported: ev.payload?.supported === true });
     }

@@ -200,8 +200,26 @@ fn validate_payload(event_type: EventType, payload: serde_json::Value) -> Result
         ViewportMarker => {
             serde_json::from_value::<payloads::ViewportMarker>(or_empty(payload))?;
         }
+        ActivityUpdate => {
+            serde_json::from_value::<payloads::ActivityItem>(payload)?;
+        }
+        ActivityLog => {
+            serde_json::from_value::<payloads::ActivityLog>(payload)?;
+        }
+        ActivityRemoved => {
+            serde_json::from_value::<payloads::ActivityRemoved>(payload)?;
+        }
+        ActivitySnapshot => {
+            serde_json::from_value::<payloads::ActivitySnapshot>(payload)?;
+        }
+        ActivityStopRequested => {
+            serde_json::from_value::<payloads::ActivityStopRequested>(payload)?;
+        }
+        ActivityViewChanged => {
+            serde_json::from_value::<payloads::ActivityViewChanged>(payload)?;
+        }
         // Bodyless events — any JSON value is accepted.
-        SessionEnded | TranscriptCleared => {}
+        SessionEnded | TranscriptCleared | ActivityBrowserOpen => {}
     }
     Ok(())
 }
