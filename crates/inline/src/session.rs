@@ -987,8 +987,10 @@ impl Session {
             if matches!(e.block, Block::Reasoning { .. }) && !self.show_reasoning {
                 continue;
             }
-            // A model step that ended without text (between tool calls).
-            if e.done && matches!(&e.block, Block::Assistant { markdown } if markdown.trim().is_empty()) {
+            // A model step with no text (yet, or between tool calls): the
+            // spinner line already says it's working; a lone cursor bar
+            // just floats in the middle of the transcript.
+            if matches!(&e.block, Block::Assistant { markdown } if markdown.trim().is_empty()) {
                 continue;
             }
             if prev.as_ref().map(|p| gap_between(p, &e.block)).unwrap_or(false) {
@@ -1846,6 +1848,15 @@ mod tests {
         assert_eq!(s.next_wakeup(10), Some(FRAME_MS));
         s.focused = false;
         assert_eq!(s.next_wakeup(10), Some(UNFOCUSED_FRAME_MS));
+    }
+
+    #[test]
+    fn an_empty_reply_draws_no_cursor() {
+        let mut s = session();
+        s.apply(&ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})), 0);
+        assert!(!live_text(&s, 0).iter().any(|l| l.contains('▍')));
+        s.apply(&ev(EventType::AssistantTokenDelta, json!({"stream_id": "s", "token": "Hi"})), 0);
+        assert!(live_text(&s, 0).iter().any(|l| l.contains("Hi▍")));
     }
 
     #[test]
