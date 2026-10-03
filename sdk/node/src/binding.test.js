@@ -204,3 +204,11 @@ test("record: every event in and out is appended to the file", async () => {
   assert.equal(lines[1].out.event_type, "UserMessageCreated");
   assert.equal(typeof lines[0].t, "number");
 });
+
+test("store: false and retentionDays become renderer flags", async () => {
+  const cam = await mount({ bin: join(dirname(FAKE), "__fake-argv.js"), store: false, retentionDays: 7 });
+  const text = await new Promise((r) => cam.on("userInput", r));
+  await cam.close();
+  assert.match(text, /--no-store/);
+  assert.match(text, /--retention-days 7/);
+});

@@ -72,6 +72,51 @@ impl SqliteStore {
     }
 }
 
+impl SqliteStore {
+    /// Housekeeping, run off the hot path (e.g. on a background thread at
+    /// startup): delete sessions whose newest event is older than
+    /// `cutoff_ms` (None keeps every session), and within the sessions that
+    /// remain keep only the latest slash-command and mention registration
+    /// (hosts may resend identical lists thousands of times). Returns the
+    /// number of rows deleted.
+    pub fn prune(&self, cutoff_ms: Option<i64>) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let mut deleted = 0;
+        if let Some(cutoff) = cutoff_ms {
+            deleted += conn.execute(
+                "DELETE FROM events WHERE session_id IN (
+                    SELECT session_id FROM events GROUP BY session_id HAVING max(timestamp_ms) < ?1
+                )",
+                [cutoff],
+            )?;
+        }
+        deleted += conn.execute(
+            "DELETE FROM events
+             WHERE event_type IN ('SlashCommandsRegistered', 'MentionCandidatesRegistered')
+               AND rowid NOT IN (
+                 SELECT max(rowid) FROM events
+                 WHERE event_type IN ('SlashCommandsRegistered', 'MentionCandidatesRegistered')
+                 GROUP BY session_id, event_type
+               )",
+            [],
+        )?;
+        Ok(deleted)
+    }
+
+    /// Give free space back to the file system when more than a quarter of
+    /// the database is unused (after `prune`). Returns whether it did.
+    pub fn compact_if_sparse(&self) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let pages: i64 = conn.query_row("PRAGMA page_count", [], |r| r.get(0))?;
+        let free: i64 = conn.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
+        if pages == 0 || free * 4 < pages {
+            return Ok(false);
+        }
+        conn.execute_batch("VACUUM")?;
+        Ok(true)
+    }
+}
+
 fn row_to_event(
     id: String,
     session_id: String,
@@ -227,6 +272,27 @@ mod tests {
             event_type: et,
             payload: json!({"seq": seq}),
         }
+    }
+
+    #[test]
+    fn prune_drops_old_sessions_and_repeated_registrations() {
+        let s = SqliteStore::open_in_memory().unwrap();
+        let (old, new) = (Uuid::new_v4(), Uuid::new_v4());
+        let at = |sid, seq: i64, et, t: i64| Event { timestamp_ms: t, ..ev(sid, seq, et) };
+        s.append_batch(&[at(old, 0, EventType::UserMessageCreated, 1_000), at(old, 1, EventType::SessionEnded, 2_000)]).unwrap();
+        let mut batch = vec![at(new, 0, EventType::UserMessageCreated, 10_000)];
+        for i in 1..=50 {
+            batch.push(at(new, i, EventType::SlashCommandsRegistered, 10_000 + i));
+        }
+        batch.push(at(new, 51, EventType::AssistantTokenDelta, 10_100));
+        s.append_batch(&batch).unwrap();
+        assert_eq!(s.prune(Some(5_000)).unwrap(), 2 + 49);
+        assert!(s.load_session(old).unwrap().is_empty());
+        let kept = s.load_session(new).unwrap();
+        assert_eq!(kept.len(), 3);
+        assert_eq!(kept.iter().filter(|e| e.event_type == EventType::SlashCommandsRegistered).map(|e| e.seq).collect::<Vec<_>>(), vec![50]);
+        // Without a cutoff every session stays.
+        assert_eq!(s.prune(None).unwrap(), 0);
     }
 
     #[test]

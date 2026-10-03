@@ -27,7 +27,11 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 pub struct InlineConfig {
-    pub store: SqliteStore,
+    /// None: save nothing (`--no-store`, for hosts with their own history).
+    pub store: Option<SqliteStore>,
+    /// Delete stored sessions idle for longer than this at startup.
+    /// None keeps everything.
+    pub retention_days: Option<u32>,
     pub stdin_events: bool,
     pub emit_responses: bool,
     pub responses_fd: Option<i32>,
@@ -43,10 +47,13 @@ enum Input {
 }
 
 pub async fn run(cfg: InlineConfig) -> Result<()> {
-    let InlineConfig { store, stdin_events, emit_responses, responses_fd, app_title } = cfg;
-    let store = Arc::new(store);
+    let InlineConfig { store, retention_days, stdin_events, emit_responses, responses_fd, app_title } = cfg;
+    let store = store.map(Arc::new);
     let session_id = Uuid::new_v4();
-    let seq = Arc::new(AtomicI64::new(store.latest_seq(session_id).unwrap_or(-1).max(-1) + 1));
+    let seq = Arc::new(AtomicI64::new(store.as_ref().and_then(|s| s.latest_seq(session_id).ok()).unwrap_or(-1).max(-1) + 1));
+    if let Some(store) = &store {
+        spawn_housekeeping(store.clone(), retention_days);
+    }
 
     // Render to stdout when it's a terminal; otherwise (the SDK's default
     // piped mode) draw on /dev/tty and leave stdout for outbound events.
@@ -79,7 +86,9 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
 
     // A synthetic SessionStarted for the store; the session ignores it and
     // waits for the host's own (which may carry a title and welcome lines).
-    persist(&store, &seq, session_id, EventType::SessionStarted, serde_json::json!({ "synthetic": true }));
+    // Through the writer, like everything else: housekeeping may hold the
+    // database for a while on the first run after an upgrade.
+    let _ = writer.0.send(Some(make_event(&seq, session_id, EventType::SessionStarted, serde_json::json!({ "synthetic": true }))));
 
     let mut last_frame = None;
     // Host-driven draws are batched to one per MIN_FRAME_GAP_MS (one per
@@ -249,13 +258,22 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     }
     let _ = term.finish();
     leave_terminal_modes();
-    // Flush what the writer still holds before the final event.
+    // Save what's buffered plus the final event. Don't make the user wait
+    // behind a long housekeeping pass (first run after an upgrade): after
+    // 1.5 s exit anyway; SQLite rolls an unfinished VACUUM back safely.
     let (writer_tx, writer_thread) = writer;
+    let _ = writer_tx.send(Some(make_event(&seq, session_id, EventType::SessionEnded, serde_json::json!({}))));
     let _ = writer_tx.send(None);
     if let Some(t) = writer_thread {
-        let _ = t.join();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+        while !t.is_finished() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        if t.is_finished() {
+            let _ = t.join();
+        }
     }
-    persist(&store, &seq, session_id, EventType::SessionEnded, serde_json::json!({}));
+    drop(store);
     if let Some(path) = std::env::var_os("CAMOUFLAGE_STATS_PATH") {
         let _ = std::fs::write(path, serde_json::json!({ "wakeups": wakeups, "frames": frames, "by_source": by_source }).to_string());
     }
@@ -306,18 +324,33 @@ const STORE_BATCH_MS: u64 = 250;
 /// a sender while it waits on stdin.
 type StoreMsg = Option<Event>;
 
-fn spawn_store_writer(store: Arc<SqliteStore>) -> (std::sync::mpsc::Sender<StoreMsg>, Option<std::thread::JoinHandle<()>>) {
+fn spawn_store_writer(store: Option<Arc<SqliteStore>>) -> (std::sync::mpsc::Sender<StoreMsg>, Option<std::thread::JoinHandle<()>>) {
     let (tx, rx) = std::sync::mpsc::channel::<StoreMsg>();
+    // No store: nothing receives, so sends just fail quietly.
+    let Some(store) = store else { return (tx, None) };
     let handle = std::thread::Builder::new()
         .name("camouflage-store".into())
         .spawn(move || {
-            while let Ok(Some(first)) = rx.recv() {
-                let mut batch = vec![first];
+            // Saves conversations, not keystrokes; see persist.rs.
+            let mut coalescer = crate::persist::Coalescer::default();
+            loop {
+                let first = match rx.recv() {
+                    Ok(Some(ev)) => ev,
+                    // Closing (or every sender gone): save what's buffered.
+                    _ => {
+                        let rest = coalescer.flush();
+                        if !rest.is_empty() {
+                            let _ = store.append_batch(&rest);
+                        }
+                        break;
+                    }
+                };
+                let mut batch = coalescer.push(first);
                 let mut close = false;
                 let until = std::time::Instant::now() + std::time::Duration::from_millis(STORE_BATCH_MS);
                 while let Some(left) = until.checked_duration_since(std::time::Instant::now()) {
                     match rx.recv_timeout(left) {
-                        Ok(Some(ev)) => batch.push(ev),
+                        Ok(Some(ev)) => batch.extend(coalescer.push(ev)),
                         Ok(None) => {
                             close = true;
                             break;
@@ -325,7 +358,12 @@ fn spawn_store_writer(store: Arc<SqliteStore>) -> (std::sync::mpsc::Sender<Store
                         Err(_) => break,
                     }
                 }
-                let _ = store.append_batch(&batch);
+                if close {
+                    batch.extend(coalescer.flush());
+                }
+                if !batch.is_empty() {
+                    let _ = store.append_batch(&batch);
+                }
                 if close {
                     break;
                 }
@@ -333,6 +371,19 @@ fn spawn_store_writer(store: Arc<SqliteStore>) -> (std::sync::mpsc::Sender<Store
         })
         .ok();
     (tx, handle)
+}
+
+/// Retention and compaction, once per start on a low-priority thread: drop
+/// sessions idle for longer than `retention_days`, collapse repeated
+/// registrations, and give space back when much of the file is free. The
+/// writer simply waits if it needs the database meanwhile.
+fn spawn_housekeeping(store: Arc<SqliteStore>, retention_days: Option<u32>) {
+    let _ = std::thread::Builder::new().name("camouflage-housekeeping".into()).spawn(move || {
+        let cutoff = retention_days.filter(|d| *d > 0).map(|d| now_ms() - i64::from(d) * 86_400_000);
+        if store.prune(cutoff).is_ok() {
+            let _ = store.compact_if_sparse();
+        }
+    });
 }
 
 /// Read NDJSON from stdin, queue each event for the store, then hand it to the loop.
@@ -575,8 +626,8 @@ fn spawn_outbound(responses_fd: Option<i32>, emit_responses: bool, stdout_is_tty
     Ok(Some(tx))
 }
 
-fn persist(store: &SqliteStore, seq: &AtomicI64, session_id: Uuid, event_type: EventType, payload: serde_json::Value) {
-    let ev = Event {
+fn make_event(seq: &AtomicI64, session_id: Uuid, event_type: EventType, payload: serde_json::Value) -> Event {
+    Event {
         id: Uuid::new_v4(),
         session_id,
         seq: seq.fetch_add(1, Ordering::Relaxed),
@@ -584,8 +635,7 @@ fn persist(store: &SqliteStore, seq: &AtomicI64, session_id: Uuid, event_type: E
         schema_version: SCHEMA_VERSION,
         event_type,
         payload,
-    };
-    let _ = store.append_batch(&[ev]);
+    }
 }
 
 /// Dark unless COLORFGBG says the background is light.
