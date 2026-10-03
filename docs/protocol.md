@@ -558,6 +558,14 @@ Display-only marker row. Useful for bookmarking phases of a session.
 
 ---
 
+### Background activity (v2.4+)
+
+`ActivityUpdate`, `ActivityLog`, `ActivityRemoved`, `ActivitySnapshot`,
+`ActivityBrowserOpen` (host → renderer) and `ActivityStopRequested`,
+`ActivityViewChanged` (renderer → host): long-running jobs and agents the
+host owns, shown as a footer badge and a browser (Ctrl+B). See
+[`activity.md`](activity.md).
+
 ## Wire-protocol guarantees
 
 1. **Additive evolution**. Within `schema_version: 1`, payload fields

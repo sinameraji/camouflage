@@ -56,7 +56,14 @@ export type EventType =
   | "AssistantReasoningDelta"
   | "TerminalSuspend"
   | "TerminalResume"
-  | "TerminalSuspended";
+  | "TerminalSuspended"
+  | "ActivityUpdate"
+  | "ActivityLog"
+  | "ActivityRemoved"
+  | "ActivitySnapshot"
+  | "ActivityBrowserOpen"
+  | "ActivityStopRequested"
+  | "ActivityViewChanged";
 
 export type Direction = "inbound" | "outbound";
 
@@ -358,6 +365,41 @@ export type TerminalHandoff = { id: string };
 /** v2.4+: renderer → host. `supported: false` means run the child without a terminal. */
 export type TerminalSuspended = { id: string; supported: boolean };
 
+/** v2.4+: one step of an activity item (agents' plans). */
+export type ActivityStep = { title: string; status?: "pending" | "running" | "done" | "failed" };
+/**
+ * v2.4+: a background job or agent the host owns. Send it with
+ * `ActivityUpdate` (fields left out keep their previous values) or inside
+ * `ActivitySnapshot`. The renderer only displays it.
+ */
+export type ActivityItem = {
+  /** Stable id; later updates, logs and removals refer to it. */
+  id: string;
+  kind?: "job" | "agent";
+  /** The command, task or agent name. */
+  title?: string;
+  status?: "running" | "waiting" | "needs_attention" | "done" | "failed" | "stopped";
+  /** Whether the user may ask to stop it (they confirm first). */
+  stoppable?: boolean;
+  /** One short line: current step, exit code, what it's waiting for. */
+  summary?: string;
+  /** 0..1 when known. */
+  progress?: number;
+  started_at_ms?: number;
+  /** Last change; for finished items, when they finished. */
+  updated_at_ms?: number;
+  steps?: ActivityStep[];
+};
+/** v2.4+: output for an item; may span lines or end mid-line. ANSI is stripped. */
+export type ActivityLog = { id: string; chunk: string; stream?: "stdout" | "stderr" };
+export type ActivityRemoved = { id: string };
+/** v2.4+: the complete list; items not in it are dropped. */
+export type ActivitySnapshot = { items: ActivityItem[] };
+/** v2.4+: renderer → host, after the user confirmed. Report the outcome with ActivityUpdate. */
+export type ActivityStopRequested = { id: string };
+/** v2.4+: renderer → host. Stream an item's output while its details are open, for example. */
+export type ActivityViewChanged = { view: "list" | "detail" | "closed"; id?: string };
+
 /** A diff to show inline: full before/after text, or a unified diff. */
 export type DiffPayload = {
   path: string;
@@ -382,6 +424,14 @@ export type Event = EnvelopeMeta &
     | { event_type: "TerminalSuspend"; payload: TerminalHandoff }
     | { event_type: "TerminalResume"; payload: TerminalHandoff }
     | { event_type: "TerminalSuspended"; payload: TerminalSuspended }
+    /** v2.4+: background jobs and agents (see ActivityItem). */
+    | { event_type: "ActivityUpdate"; payload: ActivityItem }
+    | { event_type: "ActivityLog"; payload: ActivityLog }
+    | { event_type: "ActivityRemoved"; payload: ActivityRemoved }
+    | { event_type: "ActivitySnapshot"; payload: ActivitySnapshot }
+    | { event_type: "ActivityBrowserOpen"; payload?: Record<string, never> }
+    | { event_type: "ActivityStopRequested"; payload: ActivityStopRequested }
+    | { event_type: "ActivityViewChanged"; payload: ActivityViewChanged }
     | { event_type: "AssistantMessageCompleted"; payload: AssistantMessageCompleted }
     | { event_type: "ToolExecutionStarted"; payload: ToolStarted }
     | { event_type: "ToolExecutionStdout"; payload: ToolOutput }

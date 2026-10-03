@@ -154,6 +154,10 @@ pub struct Session {
     outbound: Vec<Outbound>,
     /// The host asked to clear the transcript; the app clears the screen.
     pub clear_screen: bool,
+    /// Background jobs and agents the host reports, and the browser over
+    /// them (Ctrl+B) when it's open.
+    activity: crate::activity::Activity,
+    browser: Option<crate::activity::View>,
     /// False while the terminal window is in the background (focus
     /// reporting, DEC 1004). Terminals without it never report, so this
     /// stays true.
@@ -177,6 +181,8 @@ impl Session {
             tools: HashMap::new(),
             open_group: None,
             status_until: None,
+            activity: Default::default(),
+            browser: None,
             plan: None,
             segments: BTreeMap::new(),
             editor: Editor::new(),
@@ -675,6 +681,24 @@ impl Session {
                 }
                 self.pick_sel = 0;
             }
+            EventType::ActivityUpdate => {
+                if let Some((change, item)) = self.activity.upsert(p, true) {
+                    self.announce(change, &item);
+                }
+                self.fix_browser();
+            }
+            EventType::ActivitySnapshot => {
+                for (change, item) in self.activity.snapshot(p) {
+                    self.announce(change, &item);
+                }
+                self.fix_browser();
+            }
+            EventType::ActivityLog => self.activity.log(p),
+            EventType::ActivityRemoved => {
+                self.activity.remove(&s("id"));
+                self.fix_browser();
+            }
+            EventType::ActivityBrowserOpen => self.open_browser(),
             EventType::TranscriptCleared => {
                 self.entries.retain(|e| !e.done);
                 self.last_printed = None;
@@ -714,6 +738,28 @@ impl Session {
             self.prompt_key(key, now);
             return;
         }
+        if let Some(mut view) = self.browser.take() {
+            let page = crate::activity::log_rows(self.height, view.item_id().and_then(|id| self.activity.get(id)));
+            let outcomes = view.key(&key, &self.activity, page);
+            self.browser = Some(view);
+            for o in outcomes {
+                match o {
+                    crate::activity::Outcome::Close => self.browser = None,
+                    crate::activity::Outcome::Stop(id) => {
+                        self.activity.request_stop(&id);
+                        self.outbound.push(Outbound { event_type: EventType::ActivityStopRequested, payload: json!({ "id": id }) });
+                    }
+                    crate::activity::Outcome::ViewChanged(view, id) => {
+                        let mut payload = json!({ "view": view });
+                        if let Some(id) = id {
+                            payload["id"] = json!(id);
+                        }
+                        self.outbound.push(Outbound { event_type: EventType::ActivityViewChanged, payload });
+                    }
+                }
+            }
+            return;
+        }
         if key != Key::Ctrl('c') {
             self.ctrl_c_at = None;
         }
@@ -750,6 +796,14 @@ impl Session {
             Key::Ctrl('o') => {
                 self.expanded = !self.expanded;
                 self.flash(if self.expanded { "Showing full tool output" } else { "Tool output collapsed" }, now);
+                return;
+            }
+            Key::Ctrl('b') if self.editor.is_empty() => {
+                if self.activity.is_empty() {
+                    self.flash("No background jobs or agents", now);
+                } else {
+                    self.open_browser();
+                }
                 return;
             }
             Key::Ctrl('r') => {
@@ -1032,6 +1086,8 @@ impl Session {
         } else if let Some(p) = &self.prompt {
             let view = prompt_view(p, self.height);
             lines.extend(chrome::prompt_box(t, &view, self.width, self.height.saturating_sub(2)));
+        } else if let Some(view) = &self.browser {
+            lines.extend(crate::activity::render(&self.activity, view, t, self.width, self.height.saturating_sub(2), now));
         } else {
             let (boxed, (cr, cc)) = chrome::input_box(t, &self.editor, self.mode, &self.placeholder(), self.width, 8);
             cursor = Some((lines.len() + cr, cc));
@@ -1065,6 +1121,11 @@ impl Session {
         if (self.is_busy() && self.prompt.is_none()) || !self.tasks.is_empty() {
             let step = if self.focused { FRAME_MS } else { UNFOCUSED_FRAME_MS };
             want(now + step - now.rem_euclid(step));
+        }
+        // The browser shows elapsed times: tick once a second while it's
+        // open and something is still running. Closed, nothing ticks.
+        if self.browser.is_some() && self.activity.any_active() {
+            want(now + 1000 - now.rem_euclid(1000));
         }
         if let Some(until) = self.status_until.filter(|u| *u > now && !self.is_busy()) {
             want(until);
@@ -1222,7 +1283,51 @@ impl Session {
         if let Some(w) = self.segments.get("warn") {
             return vec![Span::styled(w.clone(), self.theme.warn())];
         }
+        // Background activity stays visible; a mode badge, if any, follows.
+        if let Some(mut badge) = self.activity.badge(&self.theme) {
+            if self.mode != InputMode::Default {
+                badge.push(Span::styled(" · ", self.theme.dim()));
+                badge.extend(chrome::mode_hint(&self.theme, self.mode));
+            }
+            return badge;
+        }
         chrome::mode_hint(&self.theme, self.mode)
+    }
+
+    fn open_browser(&mut self) {
+        if self.browser.is_none() {
+            self.browser = Some(crate::activity::View::List { sel: 0 });
+            self.outbound.push(Outbound { event_type: EventType::ActivityViewChanged, payload: json!({ "view": "list" }) });
+        }
+    }
+
+    /// Keep the browser valid after items change: details of a removed
+    /// item go back to the list.
+    fn fix_browser(&mut self) {
+        if let Some(view) = &self.browser {
+            if let Some(id) = view.item_id() {
+                if self.activity.get(id).is_none() {
+                    self.browser = Some(crate::activity::View::List { sel: 0 });
+                    self.outbound.push(Outbound { event_type: EventType::ActivityViewChanged, payload: json!({ "view": "list" }) });
+                }
+            }
+        }
+    }
+
+    /// A line in the transcript for a job or agent that started, finished,
+    /// failed, or needs the user.
+    fn announce(&mut self, change: crate::activity::Transition, item: &crate::activity::Item) {
+        use crate::activity::Transition::*;
+        let noun = item.kind.noun();
+        let detail = item.summary.as_ref().map(|s| format!(" · {s}")).unwrap_or_default();
+        let (kind, text) = match change {
+            Started => (NoticeKind::Info, format!("Started {noun} · {}", item.title)),
+            Finished => (NoticeKind::Success, format!("{} finished · {}", capitalize(noun), item.title)),
+            Failed => (NoticeKind::Error, format!("{} failed · {}{detail}", capitalize(noun), item.title)),
+            NeedsAttention => (NoticeKind::Warn, format!("{} needs attention · {}{detail}", capitalize(noun), item.title)),
+            Stopped => (NoticeKind::Info, format!("Stopped {noun} · {}", item.title)),
+        };
+        self.push_done(Block::Notice { kind, text });
     }
 
     fn footer_right(&self) -> String {
@@ -1857,6 +1962,77 @@ mod tests {
         assert!(!live_text(&s, 0).iter().any(|l| l.contains('▍')));
         s.apply(&ev(EventType::AssistantTokenDelta, json!({"stream_id": "s", "token": "Hi"})), 0);
         assert!(live_text(&s, 0).iter().any(|l| l.contains("Hi▍")));
+    }
+
+    fn with_activity() -> Session {
+        let mut s = session();
+        s.apply(&ev(EventType::UserMessageCreated, json!({"text": "start the dev server"})), 0);
+        s.apply(&ev(EventType::ActivityUpdate, json!({"id": "j1", "kind": "job", "title": "npm run dev", "status": "running", "stoppable": true, "started_at_ms": 0})), 0);
+        s.apply(&ev(EventType::ActivityUpdate, json!({"id": "a1", "kind": "agent", "title": "research", "status": "running"})), 0);
+        s
+    }
+
+    #[test]
+    fn activity_badge_and_start_notices_without_any_timers() {
+        let mut s = with_activity();
+        assert_eq!(history_text(&mut s, 0), vec!["› start the dev server", "", "· Started job · npm run dev", "· Started agent · research"]);
+        let footer = live_text(&s, 0).last().cloned().unwrap();
+        assert!(footer.contains("◆ 1 job · 1 agent · ctrl+b"), "{footer}");
+        assert_eq!(s.next_wakeup(10), None, "a running job alone never wakes the renderer");
+    }
+
+    #[test]
+    fn ctrl_b_opens_the_browser_and_esc_leaves_the_chat_as_it_was() {
+        let mut s = with_activity();
+        history_text(&mut s, 0);
+        let before = live_text(&s, 0);
+        s.key(Key::Ctrl('b'), 0);
+        assert_eq!(s.take_outbound(), vec![Outbound { event_type: EventType::ActivityViewChanged, payload: json!({"view": "list"}) }]);
+        let open = live_text(&s, 0);
+        assert!(open.iter().any(|l| l.contains("Background activity")), "{open:?}");
+        assert!(!open.iter().any(|l| l.contains("Ask autopilot anything")), "the browser replaces the input box");
+        assert_eq!(s.next_wakeup(10), Some(1000), "elapsed times tick once a second while open");
+        s.key(Key::Enter { shift: false, alt: false }, 0);
+        assert_eq!(s.take_outbound()[0].payload, json!({"view": "detail", "id": "a1"}));
+        s.key(Key::Esc, 0);
+        s.key(Key::Esc, 0);
+        assert_eq!(s.take_outbound().last().unwrap().payload, json!({"view": "closed"}));
+        assert_eq!(live_text(&s, 0), before);
+        assert!(history_text(&mut s, 0).is_empty(), "nothing was printed");
+    }
+
+    #[test]
+    fn stopping_asks_then_emits_a_request_and_the_host_decides() {
+        let mut s = with_activity();
+        history_text(&mut s, 0);
+        s.key(Key::Ctrl('b'), 0);
+        s.key(Key::Down, 0);
+        s.key(Key::Text("s".into()), 0);
+        assert!(live_text(&s, 0).iter().any(|l| l.contains("Stop job npm run dev?")));
+        s.take_outbound();
+        s.key(Key::Text("y".into()), 0);
+        assert_eq!(s.take_outbound(), vec![Outbound { event_type: EventType::ActivityStopRequested, payload: json!({"id": "j1"}) }]);
+        assert!(live_text(&s, 0).iter().any(|l| l.contains("stopping…")));
+        s.apply(&ev(EventType::ActivityUpdate, json!({"id": "j1", "status": "stopped"})), 0);
+        assert!(history_text(&mut s, 0).contains(&"· Stopped job · npm run dev".to_string()));
+    }
+
+    #[test]
+    fn attention_failures_and_removals_show_up_without_opening_the_browser() {
+        let mut s = with_activity();
+        history_text(&mut s, 0);
+        s.apply(&ev(EventType::ActivityUpdate, json!({"id": "a1", "status": "needs_attention", "summary": "approve a deploy"})), 0);
+        s.apply(&ev(EventType::ActivityUpdate, json!({"id": "j1", "status": "failed", "summary": "exit 1"})), 0);
+        assert_eq!(history_text(&mut s, 0), vec!["! Agent needs attention · research · approve a deploy", "✗ Job failed · npm run dev · exit 1"]);
+        assert!(live_text(&s, 0).last().unwrap().contains("1 agent · 1 needs attention"));
+        // Details of an item the host removes fall back to the list.
+        s.key(Key::Ctrl('b'), 0);
+        s.key(Key::Enter { shift: false, alt: false }, 0);
+        s.take_outbound();
+        s.apply(&ev(EventType::ActivityRemoved, json!({"id": "a1"})), 0);
+        assert_eq!(s.take_outbound()[0].payload, json!({"view": "list"}));
+        s.apply(&ev(EventType::ActivitySnapshot, json!({"items": []})), 0);
+        assert!(!live_text(&s, 0).iter().any(|l| l.contains("◆")), "a snapshot clears stale items");
     }
 
     #[test]

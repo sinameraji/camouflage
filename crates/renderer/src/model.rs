@@ -1703,6 +1703,15 @@ impl RenderModel {
             EventType::AssistantReasoningDelta => {
                 // Reasoning is shown by the inline renderer only.
             }
+            EventType::ActivityUpdate
+            | EventType::ActivityLog
+            | EventType::ActivityRemoved
+            | EventType::ActivitySnapshot
+            | EventType::ActivityBrowserOpen
+            | EventType::ActivityStopRequested
+            | EventType::ActivityViewChanged => {
+                // Background activity is an inline-renderer feature.
+            }
             EventType::TerminalSuspend | EventType::TerminalResume | EventType::TerminalSuspended => {
                 // Terminal handoff is an inline-renderer feature.
             }

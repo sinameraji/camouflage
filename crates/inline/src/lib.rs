@@ -4,6 +4,7 @@
 //! only a small live region at the bottom is ever redrawn. See
 //! `docs/inline-redesign.md` §3 for the design and its rules.
 
+pub mod activity;
 pub mod ansi;
 pub mod blocks;
 pub mod chrome;

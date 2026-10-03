@@ -224,6 +224,10 @@ export interface CamouflageHandle extends EventEmitter {
   on(event: "cancelRequested", listener: () => void): this;
   /** The user is typing a path after `@`; answer with MentionCandidatesRegistered { for_query, candidates }. */
   on(event: "mentionQuery", listener: (q: { query: string }) => void): this;
+  /** v2.4+: the user confirmed stopping a background item; stop it (or not) and report via ActivityUpdate. */
+  on(event: "activityStopRequested", listener: (r: { id: string }) => void): this;
+  /** v2.4+: the activity browser opened/closed or shows an item's details. */
+  on(event: "activityViewChanged", listener: (r: { view: "list" | "detail" | "closed"; id?: string }) => void): this;
   on(event: "event", listener: (ev: Event) => void): this;
   on(event: "invalid", listener: (info: InvalidEvent) => void): this;
   on(event: "stderr", listener: (chunk: string) => void): this;
