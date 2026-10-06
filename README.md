@@ -1,5 +1,12 @@
 # Camouflage
 
+[![npm version](https://img.shields.io/npm/v/camouflage-tui?logo=npm&color=cb3837)](https://www.npmjs.com/package/camouflage-tui)
+[![npm downloads](https://img.shields.io/npm/dm/camouflage-tui?logo=npm&label=downloads)](https://www.npmjs.com/package/camouflage-tui)
+[![CI](https://github.com/sinameraji/camouflage/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sinameraji/camouflage/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/github/license/sinameraji/camouflage)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/sinameraji/camouflage?style=flat&logo=github)](https://github.com/sinameraji/camouflage/stargazers)
+[![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/sinameraji)
+
 A high-performance terminal renderer for AI agent applications. A React Ink alternative built for streaming, persistence, and replay.
 
 <!-- TODO: Add terminal GIF/screenshot here -->
