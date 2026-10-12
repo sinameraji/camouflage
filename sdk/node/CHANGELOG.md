@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.6.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.5.0...camouflage-tui-v2.6.0) (2026-10-12)
+
+
+### Features
+
+* **inline:** add compact live region for busy turns ([f5b3cb5](https://github.com/sinameraji/camouflage/commit/f5b3cb5ec4b464deeacfc7347e87c7dd0072ad64))
+* **inline:** add compact live region for busy turns ([a84ce18](https://github.com/sinameraji/camouflage/commit/a84ce18b8c2760dd539433a0c12022979919d664))
+
 ## [2.5.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.4.1...camouflage-tui-v2.5.0) (2026-10-03)
 
 
