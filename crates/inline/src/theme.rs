@@ -54,4 +54,10 @@ impl Theme {
     pub fn err(&self) -> Style { Style::new().fg(Color::Red) }
     pub fn warn(&self) -> Style { Style::new().fg(Color::Yellow) }
     pub fn inline_code(&self) -> Style { Style::new().fg(Color::Blue) }
+    /// Bright white for active elements.
+    pub fn bright(&self) -> Style { Style::new().fg(Color::BrightWhite) }
+    /// Dimmer than dim — for aged-out content.
+    pub fn dimmer(&self) -> Style { Style::new().fg(Color::BrightBlack) }
+    /// Info blue for shell commands etc.
+    pub fn info(&self) -> Style { Style::new().fg(Color::Blue) }
 }

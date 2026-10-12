@@ -8,6 +8,7 @@ pub mod activity;
 pub mod ansi;
 pub mod blocks;
 pub mod chrome;
+pub mod compact;
 pub mod diff;
 pub mod editor;
 pub mod form;

@@ -15,6 +15,7 @@ use crate::blocks::{explore_kind, GroupBlock,
     gap_between, render_block, Block, NoticeKind, PlanItem, PlanStatus, RenderCtx, ToolBlock, ToolStatus,
 };
 use crate::chrome::{self, InputMode, PickItem, PromptView};
+use crate::compact::{self, CompactState, TrailKind};
 use crate::diff::{count_changes, diff_texts, parse_unified};
 use crate::editor::{EditKey, EditOutcome, Editor};
 use crate::form::{FormOutcome, FormState};
@@ -164,6 +165,8 @@ pub struct Session {
     pub focused: bool,
     /// The user asked to exit.
     pub exit: bool,
+    /// Compact live region state for busy turns.
+    compact: CompactState,
 }
 
 impl Session {
@@ -211,6 +214,7 @@ impl Session {
             clear_screen: false,
             focused: true,
             exit: false,
+            compact: CompactState::new(),
         }
     }
 
@@ -287,7 +291,8 @@ impl Session {
                     self.echoes.drain(..=i);
                     return;
                 }
-                self.push_done(Block::User { text });
+                self.push_done(Block::User { text: text.clone() });
+                self.compact.user_message(&text, now, &self.theme);
             }
             EventType::AssistantStreamStarted => {
                 let id = self.push(Block::Assistant { markdown: String::new() }, false);
@@ -323,6 +328,8 @@ impl Session {
                 let token = s("token");
                 if !token.trim().is_empty() {
                     self.close_group();
+                    // Track token bursts for the compact pulse wave amplitude.
+                    self.compact.tokens(token.chars().count() as u64, now);
                 }
                 if let Some(rid) = self.reasoning.remove(&s("stream_id")) {
                     self.finish(rid);
@@ -366,6 +373,14 @@ impl Session {
                 t.started_at_ms = p.get("started_at_ms").and_then(Value::as_i64).or(Some(now));
                 let tid = s("tool_id");
                 self.became_busy(now);
+
+                // Feed the compact region: classify the tool and add a bead.
+                let kind = TrailKind::from_tool(&t.name);
+                // Only add to trail for non-explore tools (reads/searches are quiet).
+                if explore_kind(&t.name).is_none() {
+                    self.compact.tool(kind, &t.args, true, now, &self.theme, None, 0, 0);
+                }
+
                 if explore_kind(&t.name).is_none() {
                     let id = self.push(Block::Tool(t), false);
                     self.tools.insert(tid, (id, None));
@@ -402,6 +417,11 @@ impl Session {
                     None if exit.unwrap_or(0) != 0 => ToolStatus::Error,
                     None => ToolStatus::Ok,
                 };
+                let ok = status != ToolStatus::Error;
+
+                // Collect compact region data before mutating the tool.
+                let compact_info = self.tool_compact_info(id, idx);
+
                 if let Some(t) = self.tool_mut(id, idx) {
                     t.status = status;
                     t.elapsed_ms = t.started_at_ms.map(|st| (now - st).max(0) as u64);
@@ -429,6 +449,16 @@ impl Session {
                         }
                     }
                 }
+
+                // Feed the compact region outside the mutable borrow.
+                if let Some((kind, name, path, added, removed)) = compact_info {
+                    if kind == TrailKind::Edit {
+                        self.compact.tool(kind, &name, ok, now, &self.theme, path.as_deref(), added, removed);
+                    } else if !ok {
+                        self.compact.tool(TrailKind::Error, &name, ok, now, &self.theme, None, 0, 0);
+                    }
+                }
+
                 match idx {
                     None => self.finish(id),
                     Some(_) => self.finish_group_if_done(id),
@@ -635,7 +665,11 @@ impl Session {
                             .collect()
                     })
                     .unwrap_or_default();
-                self.plan = if items.is_empty() { None } else { Some(items) };
+                self.plan = if items.is_empty() { None } else { Some(items.clone()) };
+                // Feed the compact region's plan.
+                if !items.is_empty() {
+                    self.compact.plan(&items);
+                }
             }
             EventType::BackgroundTaskUpdate => {
                 let id = s("task_id");
@@ -684,6 +718,20 @@ impl Session {
             EventType::ActivityUpdate => {
                 if let Some((change, item)) = self.activity.upsert(p, true) {
                     self.announce(change, &item);
+                    // Feed the compact region for agent activities.
+                    if item.kind == crate::activity::Kind::Agent {
+                        let agent_n = item.id.chars().filter(|c| c.is_ascii_digit()).collect::<String>();
+                        let n: u32 = agent_n.parse().unwrap_or(1);
+                        match change {
+                            crate::activity::Transition::Started => {
+                                self.compact.agent_start(n, &item.title, now);
+                            }
+                            crate::activity::Transition::Finished | crate::activity::Transition::Stopped => {
+                                self.compact.agent_done(n, item.kind == crate::activity::Kind::Agent, now);
+                            }
+                            _ => {}
+                        }
+                    }
                 }
                 self.fix_browser();
             }
@@ -995,6 +1043,10 @@ impl Session {
                 self.push_done(Block::Plan { items: plan, live: false });
             }
         }
+        // Finalize the compact region.
+        if !interrupted && self.compact.phase != crate::compact::Phase::Idle {
+            self.compact.done(now, &self.theme);
+        }
         if interrupted && (was_busy || any) {
             let app = if self.app_name.is_empty() { "the agent".to_string() } else { self.app_name.clone() };
             self.push_done(Block::Notice { kind: NoticeKind::Interrupted, text: format!("Interrupted · what should {app} do instead?") });
@@ -1036,15 +1088,20 @@ impl Session {
         let ctx = self.ctx(now);
         let t = &self.theme;
         let mut lines: Vec<Line> = Vec::new();
+        let busy = self.is_busy();
+
+        // Render held entries (assistant text, reasoning, etc.) traditionally.
+        // The compact region replaces tool rows + plan + spinner.
         let mut prev = self.last_printed.clone();
         for e in &self.entries {
             if matches!(e.block, Block::Reasoning { .. }) && !self.show_reasoning {
                 continue;
             }
-            // A model step with no text (yet, or between tool calls): the
-            // spinner line already says it's working; a lone cursor bar
-            // just floats in the middle of the transcript.
             if matches!(&e.block, Block::Assistant { markdown } if markdown.trim().is_empty()) {
+                continue;
+            }
+            // Skip tool rows and groups when busy: the compact region replaces them.
+            if busy && matches!(e.block, Block::Tool(_) | Block::Group(_)) {
                 continue;
             }
             if prev.as_ref().map(|p| gap_between(p, &e.block)).unwrap_or(false) {
@@ -1061,12 +1118,20 @@ impl Session {
             lines.extend(rendered);
             prev = Some(e.block.clone());
         }
-        let busy = self.is_busy();
-        if let (Some(plan), true) = (&self.plan, busy) {
-            lines.push(Line::new());
-            lines.extend(render_block(&Block::Plan { items: plan.clone(), live: true }, self.width, t, ctx));
-        }
-        if busy && self.prompt.is_none() {
+
+        // When busy, append the compact region instead of plan + spinner.
+        if busy && self.compact.phase != crate::compact::Phase::Idle {
+            if !lines.is_empty() && lines.last().map_or(false, |l| l.plain_text().trim().is_empty()) {
+                lines.pop(); // Remove trailing blank line before compact region.
+            }
+            let compact_lines = compact::render_compact(&self.compact, now, self.width, t);
+            lines.extend(compact_lines);
+        } else if busy && self.prompt.is_none() {
+            // Traditional plan + spinner when compact is not active.
+            if let Some(plan) = &self.plan {
+                lines.push(Line::new());
+                lines.extend(render_block(&Block::Plan { items: plan.clone(), live: true }, self.width, t, ctx));
+            }
             lines.push(Line::new());
             let elapsed = self.busy_since.map(|b| (now - b).max(0) as u64).unwrap_or(0);
             let tokens = (self.streamed_chars - self.streamed_at_busy) / 4;
@@ -1145,6 +1210,24 @@ impl Session {
 
     pub fn is_busy(&self) -> bool {
         self.phase_busy || self.entries.iter().any(|e| !e.done)
+    }
+
+    /// Extract compact region info from a tool before mutating it.
+    fn tool_compact_info(&self, id: u64, idx: Option<usize>) -> Option<(TrailKind, String, Option<String>, u32, u32)> {
+        let entry = self.entries.iter().find(|e| e.id == id)?;
+        let tool = match (&entry.block, idx) {
+            (Block::Tool(t), None) => t,
+            (Block::Group(g), Some(i)) => g.tools.get(i)?,
+            _ => return None,
+        };
+        let kind = TrailKind::from_tool(&tool.name);
+        let (path, added, removed) = if let Some((ref p, ref lines)) = tool.diff {
+            let (a, r) = count_changes(lines);
+            (Some(p.clone()), a as u32, r as u32)
+        } else {
+            (None, 0, 0)
+        };
+        Some((kind, tool.name.clone(), path, added, removed))
     }
 
     // ----- helpers ------------------------------------------------------
@@ -1838,7 +1921,9 @@ mod tests {
         s.apply(&ev(EventType::UserMessageCreated, json!({"text": "fix it"})), 0);
         s.apply(&ev(EventType::ToolExecutionStarted, json!({"tool_id": "t1", "tool": "Bash", "command": "make"})), 0);
         assert_eq!(history_text(&mut s, 0), vec!["› fix it"]);
-        assert!(live_text(&s, 0).iter().any(|l| l.contains("Bash make")));
+        // Compact region shows trail beads instead of per-tool lines
+        let live = live_text(&s, 0);
+        assert!(live.iter().any(|l| l.contains("▲")), "compact trail should show bash bead");
         s.apply(&ev(EventType::ToolExecutionFinished, json!({"tool_id": "t1", "exit_code": 0, "summary": "142 lines"})), 500);
         assert_eq!(history_text(&mut s, 500), vec!["", "✓ Bash make"]);
         assert_eq!(s.held_blocks(), 0);
@@ -1859,7 +1944,9 @@ mod tests {
         start(&mut s, "2", "Grep", "foo");
         start(&mut s, "3", "Read", "b.ts");
         assert!(history_text(&mut s, 0).is_empty(), "the group stays open for more reads");
-        assert!(live_text(&s, 0).iter().any(|l| l.starts_with("⠋ Exploring 2 files · 1 search")));
+        // Compact region shows trail beads instead of per-tool lines
+        let live = live_text(&s, 0);
+        assert!(live.iter().any(|l| l.contains("·")), "compact trail should be visible");
         s.apply(&ev(EventType::ToolExecutionStarted, json!({"tool_id": "4", "tool": "Bash", "command": "make"})), 0);
         assert_eq!(history_text(&mut s, 0), vec!["✓ Explored 2 files · 1 search"]);
     }
