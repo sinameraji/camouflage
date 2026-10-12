@@ -1,130 +1,68 @@
 # Camouflage
 
-[![npm version](https://img.shields.io/npm/v/camouflage-tui?logo=npm&color=cb3837)](https://www.npmjs.com/package/camouflage-tui)
-[![npm downloads](https://img.shields.io/npm/dm/camouflage-tui?logo=npm&label=downloads)](https://www.npmjs.com/package/camouflage-tui)
-[![CI](https://github.com/sinameraji/camouflage/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sinameraji/camouflage/actions/workflows/ci.yml)
-[![License: Apache-2.0](https://img.shields.io/github/license/sinameraji/camouflage)](LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/sinameraji/camouflage?style=flat&logo=github)](https://github.com/sinameraji/camouflage/stargazers)
-[![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/sinameraji)
+Event-native rendering/runtime layer for long-running AI agent applications.
 
-A high-performance terminal renderer for AI agent applications. A React Ink alternative built for streaming, persistence, and replay.
+## What Camouflage is
 
-<!-- TODO: Add terminal GIF/screenshot here -->
+- An event protocol (append-only, serializable, replayable) — 39 event types covering chat, tools, permissions, slash commands, mentions, background tasks
+- A persistence layer (SQLite, WAL) — every event flushed before render
+- A viewport-virtualized terminal renderer (ratatui) with bounded memory
+- A catalog of overlay primitives — SelectList, Confirm, Form, Wizard, Table, KeyValueView, Toast — for hosts to compose drill-down UX
+- A replay/timeline substrate with playback controls + inline event inspector
+- A Node SDK (`camouflage` on npm) that wraps the renderer subprocess and the protocol
+- A high-performance candidate replacement for React Ink in agent UIs
 
-## Why not Ink?
+## What Camouflage is not
 
-If you're building an LLM-powered CLI tool — streaming responses, tool execution, permission prompts — React Ink starts to hurt:
+- An AI agent, orchestration framework, planner, LLM SDK, or MCP implementation.
 
-- **Full-tree re-render on every commit**: Each state update triggers a React reconciliation pass, Yoga layout recalculation, and a recursive walk of the entire node tree to rebuild the output buffer. Ink throttles terminal writes to 30 FPS, but the tree walk and buffer rebuild happen on every React commit.
-- **No scrollable viewport**: Ink manages cursor position, but has no built-in scrolling. When content exceeds terminal height, rendering breaks ([ink#359](https://github.com/vadimdemedes/ink/issues/359)). Historical output from `<Static>` is pushed to terminal scrollback with no way to navigate it programmatically.
-- **No persistence**: Close the terminal, lose the session. There's no built-in way to save or restore state.
-- **No replay**: Can't record, inspect, or debug past sessions.
-
-Camouflage takes a different approach:
-
-| Concern            | React Ink                                          | Camouflage                                |
-|--------------------|-------------------------------------------------------|-------------------------------------------|
-| State model        | retained React component tree                         | append-only event log + bounded view      |
-| Rendering          | full tree walk + buffer rebuild per React commit (output throttled to 30 FPS) | mutates one active row in place, 60 FPS   |
-| Memory             | application must manage its own transcript state      | bounded (2000-row cap, older rows paged from SQLite) |
-| Viewport           | no built-in scrolling; overflows break rendering      | own viewport with scroll, search, bookmarks |
-| Persistence        | none                                                  | SQLite WAL, every event persisted before render |
-| Replay             | not supported                                         | first-class, deterministic from event log |
-
-## Install
-
-```bash
-npm install camouflage-tui
-```
-
-Pre-built binaries are downloaded automatically for macOS (Apple Silicon and Intel), Linux (x64 and ARM) and Windows. No Rust toolchain required.
+Host applications own those concerns. Camouflage only renders, persists, replays, and inspects what the host emits.
 
 ## Quick start
 
-```js
-import { mount } from "camouflage-tui";
+Pipe NDJSON events from any source into the TUI:
 
-const cam = await mount(); // inline: output goes to normal scrollback
-
-// Start a session
-cam.send("SessionStarted", {});
-
-// Show a user message
-cam.send("UserMessageCreated", { text: "What files changed?" });
-
-// Stream an assistant response
-cam.send("AssistantStreamStarted", { stream_id: "s1" });
-cam.send("AssistantTokenDelta", { stream_id: "s1", token: "Let me " });
-cam.send("AssistantTokenDelta", { stream_id: "s1", token: "check..." });
-cam.send("AssistantMessageCompleted", { stream_id: "s1" });
-
-// Listen for user input
-cam.on("userInput", (text) => {
-  console.log("user said:", text);
-});
-
-await cam.close();
+```bash
+cargo run --release -p fake-agent -- --tokens 50000 --tools 200 | \
+  cargo run --release -p camouflage-tui -- --stdin-events
 ```
 
-## How it works
+Run the benchmark:
 
-Camouflage is **event-driven**, not component-driven. Your application emits NDJSON events; Camouflage persists, renders, and manages the terminal. You never touch the terminal directly.
-
-```
-Your app (Node/Python/Rust/Go)
-    │  emit NDJSON events
-    ▼
-camouflage-tui (Rust binary)
-    ├─ Persists to SQLite (append-only, WAL)
-    ├─ Renders to terminal (ratatui, 60 FPS)
-    └─ Sends user responses back to your app
+```bash
+cargo run --release -p camouflage-bench -- --events 100000 --tools 1000 --tokens 50000
 ```
 
-This means:
-- **Any language** can drive the TUI — just emit JSON lines
-- **Process isolation** — renderer crash doesn't kill your app
-- **Deterministic replay** — replay any session from the event log
+Replay a stored session:
 
-## Built-in components
+```bash
+cargo run --release -p camouflage-tui -- --replay <SESSION_UUID>
+```
 
-No need to build UI from scratch. Camouflage includes:
-
-| Component | What it does |
-|-----------|-------------|
-| **Transcript** | Streaming chat with user/assistant/tool/system rows |
-| **Status bar** | Configurable segments (mode, phase, tokens, cost, etc.) |
-| **Task ribbon** | Background task progress indicators |
-| **Permission widget** | Inline approve/deny modal with feedback |
-| **SelectList** | Filterable dropdown picker |
-| **Confirm** | Yes/no dialog |
-| **Form** | Multi-field text/password input |
-| **Table** | Tabular data display |
-| **Wizard** | Multi-step flow composing select/confirm/form steps |
-| **Diff viewer** | Unified-diff rendering with syntax coloring |
-
-Each component is triggered by sending an event and (for interactive ones) listening for the response:
+## Node SDK
 
 ```js
-import { selectList, confirm, form } from "camouflage-tui";
+import { mount, selectList, confirm, form, toast } from "camouflage";
 
-const model = await selectList(cam, {
-  id: "model-picker",
-  prompt: "Choose a model",
-  options: [
-    { value: "gpt-4", label: "GPT-4" },
-    { value: "claude", label: "Claude" },
-  ],
+const cam = await mount({ renderToTerminal: true });
+
+cam.emit("UserMessageCreated", { text: "hello" });
+
+const choice = await selectList(cam, {
+  title: "Pick a theme",
+  options: themes.map(t => ({ value: t.id, label: t.name })),
 });
 
-const confirmed = await confirm(cam, {
-  id: "deploy",
-  prompt: "Deploy to production?",
-});
+if (await confirm(cam, { title: "Apply?", yes: "Apply", no: "Cancel" })) {
+  toast(cam, { kind: "info", text: `Theme set to ${choice}`, ttl_ms: 3000 });
+}
 ```
 
-## Event protocol
+The SDK exposes `mount`, `selectList`, `confirm`, `form`, `wizard`, `table`, `keyValueView`, and `toast`. Each modal helper returns a Promise that resolves with the user's response — host code stays straight-line and avoids reconciliation overhead.
 
-Camouflage uses a simple NDJSON wire protocol with 40+ event types. The minimum:
+## Feeding events from an external Node/TS app
+
+Emit one JSON object per line on stdout. The minimum required fields:
 
 ```json
 {"event_type":"UserMessageCreated","payload":{"text":"hello"}}
@@ -133,87 +71,80 @@ Camouflage uses a simple NDJSON wire protocol with 40+ event types. The minimum:
 {"event_type":"AssistantMessageCompleted","payload":{"stream_id":"s1"}}
 ```
 
-Fields like `id`, `session_id`, `seq`, and `timestamp_ms` are auto-filled if absent.
+`id`, `session_id`, `seq`, and `timestamp_ms` are filled in by Camouflage if absent.
 
-See [docs/protocol.md](docs/protocol.md) for the full reference.
+## UI components
 
-## Theming
+Surfaces the renderer draws natively:
 
-7 built-in themes, switchable at runtime with the `T` key:
-
-- default-dark, default-light
-- dracula, nord, gruvbox-dark, tokyo-night
-
-Themes use 24-bit RGB semantic colors (accent, user, assistant, tool, error, diff colors, etc.).
+- **Transcript** — user / assistant / system / tool rows with hand-rolled markdown (paragraphs, fenced ``` code, bulleted + numbered lists)
+- **Tool view** — per-tool status glyphs (✓ done, ✗ error, ⊘ cancelled, ⊗ rejected), duration, repeated-signature warning, optional captured stdout overlay
+- **Permission modal** — vertical 1/2/3 picker with ↑↓ / j/k navigation, `?` help overlay, inline unified `+/-` diff for file edits, free-text feedback that rides along with the response
+- **Task ribbon** — background tasks with a celebration window so completed entries linger ~2s with a strikethrough ✓ before sweeping
+- **Slash command picker** — fuzzy filter with `[builtin] [project] [global]` source badges
+- **Mention picker** — `Recent` then `All files` sections, recent entries marked with `↻ @`
+- **Status bar** — mode · timer · cost · branch, plus warn segments (e.g. `/compact recommended` past 80% of the context limit)
+- **Toasts** — bottom-right, multiple stack, TTL-driven sweep
+- **Catalog overlays** — SelectList, Confirm, Form (text/secret/multiline fields), Wizard (multi-step), Table, KeyValueView; compose host-side for drill-down menus and wizards
+- **Replay UI** — play/pause/step/speed controls, scrub timeline, side-panel event inspector with kind filter
 
 ## Keyboard controls
 
+Transcript / input:
+
 | Key            | Action                                  |
 |----------------|-----------------------------------------|
-| Enter          | Submit input                            |
-| Esc            | Cancel active stream                    |
-| Up/Down        | Scroll line by line                     |
-| PgUp/PgDn      | Scroll page                             |
-| End / Ctrl+E   | Jump to latest, re-engage auto-follow   |
-| T              | Cycle theme                             |
-| ?              | Help overlay                            |
-| Ctrl+F         | Search                                  |
-| /              | Slash command picker                    |
-| @              | Mention picker                          |
-| r              | Replay current session                  |
-| q / Ctrl+C     | Quit                                    |
+| Enter          | submit input as `UserMessageCreated`    |
+| Esc            | cancel active stream                    |
+| ↑ / ↓          | scroll line (frozen anchor while away from bottom) |
+| PgUp / PgDn    | scroll page                             |
+| Home / End     | scroll to top / jump to latest          |
+| Ctrl+E         | jump to latest (or end-of-line when typing) |
+| Ctrl+A         | start-of-line when typing               |
+| Ctrl+W / Ctrl+U| delete word / line before cursor        |
+| Ctrl+F         | open inline search                      |
+| Ctrl+C         | quit                                    |
 
-## Replay & persistence
+Overlays (empty input only, so they don't fire mid-prose):
 
-Sessions are saved to `~/.camouflage/sessions.db` (SQLite) for replay and
-crash reports. Like Claude Code's transcripts it keeps conversations, not
-keystrokes: a streamed reply is saved once when it completes, a tool's output
-once when it finishes, and repeated command lists or status updates are
-skipped. Sessions idle for more than 30 days are deleted at startup
-(`--retention-days N`, or `CAMOUFLAGE_RETENTION_DAYS`; 0 keeps everything).
-Hosts that keep their own history can turn saving off with `--no-store` /
-`mount({ store: false })`.
+| Key | Action                                |
+|-----|---------------------------------------|
+| `?` | toggle help overlay                   |
+| `M` | toggle live metrics (events/s, frame, RSS) |
+| `T` | cycle theme                           |
+| `X` | toggle most-recent tool's stdout/stderr overlay |
 
-Saved sessions can be replayed:
+Permission modal:
 
-```bash
-camouflage-tui --replay <SESSION_UUID>
-```
+| Key            | Action                                  |
+|----------------|-----------------------------------------|
+| 1 / 2 / 3      | allow once / allow session / deny       |
+| ↑ / ↓ / j / k  | move highlight                          |
+| Enter          | confirm highlighted option              |
+| `?`            | toggle help overlay                     |
+| Esc            | deny                                    |
+| (any other)    | buffered as feedback on the response    |
 
-Replay mode includes play/pause (Space), step forward/backward (arrows), speed control (+/-), and timeline jumping (1-9 for 10%-90%).
+Replay (with empty input, `--replay` mode):
 
-## Architecture
+| Key      | Action                  |
+|----------|-------------------------|
+| Space    | play / pause            |
+| ← / →    | step backward / forward |
+| `+` / `-`| faster / slower         |
+| `0`      | restart                 |
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design. The workspace contains:
+## How this differs from React Ink
 
-| Crate | What |
-|-------|------|
-| `protocol` | Event schema (serde types) |
-| `store` | SQLite WAL persistence |
-| `renderer` | Pure render logic (RenderModel + Snapshot) |
-| `tui` | Terminal UI (ratatui + crossterm) |
-| `headless` | Non-TUI tools (record, broadcast, export, validate) |
-| `sdk` | Rust SDK facade |
+| Concern          | React Ink                              | Camouflage                                |
+|------------------|----------------------------------------|-------------------------------------------|
+| State model      | retained UI tree                       | append-only event log + bounded view      |
+| Memory           | grows with transcript length           | bounded (row cap, evict-then-page-back)   |
+| Streaming        | re-renders on each token               | mutates one active row, 30–60 FPS throttle|
+| Modals           | nested React subtrees                  | one overlay slot, ≈hundreds of bytes      |
+| Persistence      | none                                   | SQLite WAL, persisted before render       |
+| Replay           | not supported                          | first-class, deterministic                |
+| Terminal scrollback | trusted                             | not trusted — own viewport                |
+| Output ownership | mixed (tool stdout, model, UI)         | renderer is sole writer; everything else is an event |
 
-Plus `sdk/node/` for the Node.js binding.
-
-## Building from source
-
-If you prefer to build the renderer yourself:
-
-```bash
-git clone https://github.com/sinameraji/camouflage.git
-cd camouflage
-cargo install --path crates/tui
-```
-
-Or pipe NDJSON directly:
-
-```bash
-cargo run --release -p fake-agent -- --tokens 50000 --tools 200 | \
-  cargo run --release -p camouflage-tui -- --stdin-events
-```
-
-## License
-
-Apache-2.0
+See `ARCHITECTURE.md` for details and `BENCHMARKS.md` for the headline numbers.
