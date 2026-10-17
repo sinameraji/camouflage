@@ -526,7 +526,12 @@ fn render_latest_action(latest: &LatestAction, age: i64, theme: &Theme) -> Line 
     let mut line = Line::new();
     line.push("  ", Style::default());
 
-    let n = (age / 14).min(latest.text.len() as i64) as usize;
+    let mut n = (age / 14).min(latest.text.len() as i64) as usize;
+    // `n` is a byte offset, but the typewriter text can contain multibyte
+    // UTF-8 characters (for example, the ellipsis). Never slice mid-codepoint.
+    while !latest.text.is_char_boundary(n) {
+        n -= 1;
+    }
     let visible = &latest.text[..n];
 
     let fg = if latest.is_error {
@@ -724,6 +729,29 @@ mod tests {
         // At 13s, scout has been home for 8s > 7s, line should be gone
         let lines = render_compact(&state, 13000, 80, &theme());
         assert!(!lines.iter().any(|l| l.plain_text().contains("scout")));
+    }
+
+    #[test]
+    fn latest_action_typewriter_never_slices_inside_unicode_character() {
+        let latest = LatestAction {
+            text: format!("{}… done", "a".repeat(119)),
+            at: 0,
+            is_error: false,
+        };
+
+        let partial = format!("  {}", "a".repeat(119));
+        assert_eq!(
+            render_latest_action(&latest, 120 * 14, &theme()).plain_text(),
+            partial,
+        );
+        assert_eq!(
+            render_latest_action(&latest, 121 * 14, &theme()).plain_text(),
+            partial,
+        );
+        assert_eq!(
+            render_latest_action(&latest, 122 * 14, &theme()).plain_text(),
+            format!("{partial}…"),
+        );
     }
 
     #[test]
