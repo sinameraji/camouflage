@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.6.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.6.0...camouflage-tui-v2.6.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* **inline:** guard UTF-8 typewriter slicing ([c756ffc](https://github.com/sinameraji/camouflage/commit/c756ffc5be2d556f797538fa1deeb3de4e395677))
+* **inline:** prevent compact renderer UTF-8 slice panic ([39fdfaa](https://github.com/sinameraji/camouflage/commit/39fdfaae6f43c05348e22d3b553b8d4403992052))
+
 ## [2.6.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.5.0...camouflage-tui-v2.6.0) (2026-10-12)
 
 
