@@ -289,6 +289,7 @@ impl Session {
                 let text = s("text");
                 if let Some(i) = self.echoes.iter().position(|e| e.trim() == text.trim()) {
                     self.echoes.drain(..=i);
+                    self.compact.begin_turn(now);
                     return;
                 }
                 self.push_done(Block::User { text: text.clone() });
@@ -2154,6 +2155,24 @@ mod tests {
         assert_eq!(out, vec![Outbound { event_type: EventType::UserInputSubmitted, payload: json!({"text": "The build fails"}) }]);
         s.apply(&ev(EventType::UserMessageCreated, json!({"text": "The build fails"})), 0);
         assert_eq!(history_text(&mut s, 0), vec!["› The build fails"]);
+    }
+
+    #[test]
+    fn echoed_prompt_starts_a_fresh_compact_turn() {
+        let mut s = session();
+        s.apply(&ev(EventType::UserMessageCreated, json!({"text": "first"})), 0);
+        s.apply(&ev(EventType::StatusUpdate, json!({"segments": {"phase": "thinking"}})), 1);
+        s.apply(&ev(EventType::AssistantStreamStarted, json!({"stream_id": "first"})), 2);
+        s.apply(&ev(EventType::AssistantTokenDelta, json!({"stream_id": "first", "token": "done"})), 3);
+        s.apply(&ev(EventType::StatusUpdate, json!({"segments": {"phase": "idle"}})), 4);
+
+        type_str(&mut s, "second");
+        s.key(Key::Enter { shift: false, alt: false }, 4000);
+        s.apply(&ev(EventType::UserMessageCreated, json!({"text": "second"})), 4001);
+        s.apply(&ev(EventType::StatusUpdate, json!({"segments": {"phase": "thinking"}})), 4002);
+
+        let live = live_text(&s, 7000);
+        assert!(live.iter().any(|line| line.contains("thinking…")), "{live:?}");
     }
 
     #[test]
