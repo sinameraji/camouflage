@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.6.2](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.6.1...camouflage-tui-v2.6.2) (2026-10-18)
+
+
+### Bug Fixes
+
+* **inline:** keep compact activity visible across turns ([8089961](https://github.com/sinameraji/camouflage/commit/80899611455432feca2672e5e71c2addb2d19217))
+* **inline:** reset compact activity for echoed turns ([39a2e9c](https://github.com/sinameraji/camouflage/commit/39a2e9c28ebafbf84164e6f8e8448fce97ea4e62))
+
 ## [2.6.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.6.0...camouflage-tui-v2.6.1) (2026-10-17)
 
 
