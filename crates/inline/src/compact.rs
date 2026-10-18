@@ -170,22 +170,22 @@ impl CompactState {
 // ---------------------------------------------------------------- events
 
 impl CompactState {
+    /// Start a new turn with fresh compact activity state.
+    pub fn begin_turn(&mut self, now: i64) {
+        self.reset();
+        self.phase = Phase::Thinking;
+        self.started_at = now;
+        self.ended_at = None;
+        self.tokens = 0;
+    }
+
     /// Apply a user message event.
     pub fn user_message(&mut self, text: &str, now: i64, theme: &Theme) {
         let mut line = Line::new();
         line.push("› ", theme.accent().bold());
         line.push(text, Style::default().bold());
         self.scrollback.push(line);
-        self.phase = Phase::Thinking;
-        self.started_at = now;
-        self.ended_at = None;
-        self.tokens = 0;
-        self.token_events.clear();
-        self.plan.clear();
-        self.scouts.clear();
-        self.trail.clear();
-        self.latest = None;
-        self.files = 0;
+        self.begin_turn(now);
     }
 
     /// Apply a token burst event.
