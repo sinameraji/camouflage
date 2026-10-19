@@ -19,11 +19,14 @@ tests/visual/run.sh splash
 tests/visual/run.sh esc-idle
 tests/visual/run.sh esc-stream
 tests/visual/run.sh host-flow
+tests/visual/run.sh busy-turn
 ```
 
 Outputs land in `tests/visual/out/<scenario>/`:
 - `01-*.png`, `02-*.png` — checkpoint frames in order
 - `session.gif` — full session as a GIF (handy for scrubbing)
+
+The `busy-turn` tape feeds `fixtures/busy-turn.ndjson` and captures the compact plan, agent, tool-trail and streaming states at three checkpoints. Review `tests/visual/out/busy-turn/session.gif` for motion and the numbered PNGs for individual frames; outputs are generated locally and are not golden-image CI diffs.
 
 ## Adding a scenario
 
