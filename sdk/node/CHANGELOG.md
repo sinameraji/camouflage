@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.7.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.6.2...camouflage-tui-v2.7.0) (2026-10-19)
+
+
+### Features
+
+* **inline:** revamp busy-turn animations ([e006966](https://github.com/sinameraji/camouflage/commit/e006966a730fddbad24770c3de89c05196efb023))
+
 ## [2.6.2](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.6.1...camouflage-tui-v2.6.2) (2026-10-18)
 
 
