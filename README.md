@@ -78,6 +78,7 @@ Emit one JSON object per line on stdout. The minimum required fields:
 Surfaces the renderer draws natively:
 
 - **Transcript** — user / assistant / system / tool rows with hand-rolled markdown (paragraphs, fenced ``` code, bulleted + numbered lists)
+- **Busy-turn summary** — turn-scoped elapsed time and token count, compact plan progress, live agents, a bounded trail of reads/edits/shell actions, and the latest action; Ctrl+O expands tool detail
 - **Tool view** — per-tool status glyphs (✓ done, ✗ error, ⊘ cancelled, ⊗ rejected), duration, repeated-signature warning, optional captured stdout overlay
 - **Permission modal** — vertical 1/2/3 picker with ↑↓ / j/k navigation, `?` help overlay, inline unified `+/-` diff for file edits, free-text feedback that rides along with the response
 - **Task ribbon** — background tasks with a celebration window so completed entries linger ~2s with a strikethrough ✓ before sweeping

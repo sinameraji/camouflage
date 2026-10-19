@@ -1,70 +1,15 @@
-//! Compact live region: a maximum six-line summary that replaces the full
-//! tool-row + plan + spinner display while a turn is busy.
-//!
-//! Port of the prototype in `autopilot-prototypes/compact-live/core.mjs`.
-//! The prototype is the behavioural spec; this module ports its render
-//! function, event model, and timings to Rust.
-//!
-//! The six lines (each present only when it has content):
-//! 1. Plan bar — progress segments with the active step title
-//! 2. Scouts line — subagent chips with orbit animation
-//! 3. Trail — one bead per tool call this turn
-//! 4. Latest action — humanized tool title with typewriter effect
-//! 5. Pulse line — travelling sine wave replacing the spinner
-//! 6. Done message — shown briefly after turn ends
-
-use crate::blocks::{format_elapsed, PlanItem, PlanStatus};
+//! Compact, bounded live state for a busy turn.
+pub use crate::anim::FRAME_MS;
+use crate::anim::{self, FadeStep};
+use crate::blocks::{PlanItem, PlanStatus, RenderCtx};
 use crate::style::{Line, Style};
 use crate::theme::Theme;
-use crate::width::str_width;
-use std::collections::VecDeque;
+use crate::width::{ellipsize_middle, str_width, truncate};
+use std::collections::HashMap;
 
-// ---------------------------------------------------------------- constants
+const MAX_TRAIL_BEADS: usize = 32;
 
-/// Spinner frame interval in ms (shared with session.rs).
-pub const FRAME_MS: i64 = 80;
-
-/// Bar glyphs for the pulse wave.
-const BARS: [&str; 8] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
-
-/// Orbit glyphs for running scouts.
-const ORBIT: [&str; 4] = ["◐", "◓", "◑", "◒"];
-
-/// Verbs that rotate while the model is thinking.
-const VERBS: [&str; 3] = ["thinking", "reasoning", "composing"];
-
-// ---------------------------------------------------------------- state
-
-/// What phase the turn is in.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Phase {
-    #[default]
-    Idle,
-    Thinking,
-    Working,
-    Done,
-}
-
-/// A single plan step.
-#[derive(Clone, Debug)]
-pub struct CompactPlanStep {
-    pub title: String,
-    pub status: PlanStatus,
-    pub done_at: Option<i64>,
-}
-
-/// A scout (subagent) in the compact region.
-#[derive(Clone, Debug)]
-pub struct Scout {
-    pub n: u32,
-    pub title: String,
-    pub started_at: i64,
-    pub finished_at: Option<i64>,
-    pub ok: bool,
-}
-
-/// A bead in the trail.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrailKind {
     Read,
     Search,
@@ -74,196 +19,182 @@ pub enum TrailKind {
     Code,
     Error,
 }
-
 impl TrailKind {
-    /// Classify a tool name into a trail kind.
     pub fn from_tool(name: &str) -> Self {
         let n = name.to_ascii_lowercase();
         match n.as_str() {
-            "read" | "view" | "cat" | "open" | "read_file" => Self::Read,
-            "grep" | "glob" | "find" | "search" | "rg" | "codesearch" | "code_search" | "web_search" | "websearch" | "ls" | "list" | "list_dir" | "tree" | "web_fetch" | "webfetch" | "fetch" => Self::Search,
-            other if other.starts_with("lsp_") => Self::Search,
-            "edit" | "write" => Self::Edit,
-            "bash" => Self::Bash,
+            "read" | "view" | "cat" | "open" | "read_file" | "read_file_contents" => Self::Read,
+            "grep" | "glob" | "find" | "search" | "rg" | "codesearch" | "code_search"
+            | "web_search" | "websearch" | "ls" | "list" | "list_dir" | "tree" | "web_fetch"
+            | "webfetch" | "fetch" => Self::Search,
+            x if x.starts_with("lsp_") => Self::Search,
+            "edit" | "write" | "multiedit" | "multi_edit" | "notebook_edit" | "write_file" => {
+                Self::Edit
+            }
+            "bash" | "shell" => Self::Bash,
             "execute_code" | "code" => Self::Code,
-            other if other.starts_with("subagent") || other == "agent" => Self::Agent,
-            _ => Self::Read, // default to read for unknown tools
+            "task" | "agent" => Self::Agent,
+            x if x.starts_with("subagent") || x.starts_with("mcp_") => Self::Agent,
+            _ => Self::Read,
         }
     }
-
-    pub fn glyph(self) -> &'static str {
+    pub fn glyph(self, g: &crate::glyphs::Glyphs) -> &'static str {
         match self {
-            Self::Read => "·",
-            Self::Search => "·",
-            Self::Edit => "◆",
-            Self::Bash => "▲",
-            Self::Agent => "●",
-            Self::Code => "▣",
-            Self::Error => "✕",
+            Self::Read | Self::Search => g.read,
+            Self::Edit => g.edit,
+            Self::Bash => g.shell,
+            Self::Agent => g.agent,
+            Self::Code => g.code,
+            Self::Error => g.error,
         }
     }
 }
-
-/// A single bead in the trail.
 #[derive(Clone, Debug)]
-pub struct TrailBead {
+pub struct Bead {
     pub kind: TrailKind,
     pub at: i64,
     pub ok: bool,
 }
-
-/// The latest action being shown.
 #[derive(Clone, Debug)]
 pub struct LatestAction {
     pub text: String,
     pub at: i64,
     pub is_error: bool,
 }
-
-/// Accumulated scrollback lines (the <10% that print).
 #[derive(Clone, Debug)]
-pub struct CompactState {
-    pub phase: Phase,
-    pub started_at: i64,
-    pub ended_at: Option<i64>,
-    pub tokens: u64,
-    /// Timestamps of token bursts for wave amplitude.
-    pub token_events: VecDeque<i64>,
-    pub plan: Vec<CompactPlanStep>,
-    pub scouts: Vec<Scout>,
-    pub trail: Vec<TrailBead>,
-    pub latest: Option<LatestAction>,
-    pub files: usize,
-    /// Lines printed into scrollback.
-    pub scrollback: Vec<Line>,
+pub struct CompactPlanStep {
+    pub title: String,
+    pub status: PlanStatus,
+    pub done_at: Option<i64>,
 }
-
+#[derive(Clone, Debug)]
+pub struct Agent {
+    pub n: u32,
+    pub title: String,
+    pub started_at: i64,
+    pub finished_at: Option<i64>,
+    pub ok: bool,
+}
+#[derive(Clone, Debug, Default)]
+pub struct CompactState {
+    pub since: Option<i64>,
+    pub beads: Vec<Bead>,
+    pub by_tool: HashMap<String, usize>,
+    pub latest: Option<LatestAction>,
+    pub plan: Vec<CompactPlanStep>,
+    pub agents: Vec<Agent>,
+    pub files: usize,
+}
 impl CompactState {
     pub fn new() -> Self {
-        Self {
-            phase: Phase::Idle,
-            started_at: 0,
-            ended_at: None,
-            tokens: 0,
-            token_events: VecDeque::new(),
-            plan: Vec::new(),
-            scouts: Vec::new(),
-            trail: Vec::new(),
-            latest: None,
-            files: 0,
-            scrollback: Vec::new(),
-        }
+        Self::default()
     }
-
-    /// Reset for a new turn.
-    pub fn reset(&mut self) {
-        self.phase = Phase::Idle;
-        self.token_events.clear();
-        self.plan.clear();
-        self.scouts.clear();
-        self.trail.clear();
-        self.latest = None;
-        self.files = 0;
+    pub fn begin(&mut self, now: i64) {
+        self.clear();
+        self.since = Some(now);
     }
-}
-
-// ---------------------------------------------------------------- events
-
-impl CompactState {
-    /// Start a new turn with fresh compact activity state.
-    pub fn begin_turn(&mut self, now: i64) {
-        self.reset();
-        self.phase = Phase::Thinking;
-        self.started_at = now;
-        self.ended_at = None;
-        self.tokens = 0;
+    pub fn clear(&mut self) {
+        *self = Self::default();
     }
-
-    /// Apply a user message event.
-    pub fn user_message(&mut self, text: &str, now: i64, theme: &Theme) {
-        let mut line = Line::new();
-        line.push("› ", theme.accent().bold());
-        line.push(text, Style::default().bold());
-        self.scrollback.push(line);
-        self.begin_turn(now);
-    }
-
-    /// Apply a token burst event.
-    pub fn tokens(&mut self, n: u64, now: i64) {
-        self.tokens += n;
-        self.token_events.push_back(now);
-        // Prune old token events (keep last 2 seconds).
-        while self.token_events.front().map_or(false, |&t| now - t > 2000) {
-            self.token_events.pop_front();
-        }
-        if self.phase != Phase::Done {
-            self.phase = Phase::Thinking;
-        }
-    }
-
-    /// Apply a tool execution event.
-    pub fn tool(&mut self, kind: TrailKind, text: &str, ok: bool, now: i64, theme: &Theme, path: Option<&str>, added: u32, removed: u32) {
-        self.trail.push(TrailBead { kind, at: now, ok });
-        self.phase = Phase::Working;
-        self.latest = Some(LatestAction { text: text.to_string(), at: now, is_error: !ok });
-
-        if kind == TrailKind::Edit {
-            self.files += 1;
-            let mut line = Line::new();
-            line.push("◆ ", theme.accent());
-            if let Some(p) = path {
-                line.push(p, Style::default());
+    fn push_bead(&mut self, kind: TrailKind, at: i64) -> usize {
+        if self.beads.len() == MAX_TRAIL_BEADS {
+            self.beads.remove(0);
+            self.by_tool.retain(|_, index| *index > 0);
+            for index in self.by_tool.values_mut() {
+                *index -= 1;
             }
-            line.push(&format!("  +{added} "), theme.ok());
-            line.push(&format!("−{removed}"), theme.err());
-            self.scrollback.push(line);
         }
-
-        if kind == TrailKind::Error {
-            let mut line = Line::new();
-            line.push("✕ ", theme.err());
-            line.push(text.to_string(), theme.err());
-            self.scrollback.push(line);
+        let index = self.beads.len();
+        self.beads.push(Bead { kind, at, ok: true });
+        index
+    }
+    pub fn tool_started(&mut self, id: &str, name: &str, title: &str, now: i64) {
+        let kind = TrailKind::from_tool(name);
+        let index = self.push_bead(kind, now);
+        self.by_tool.insert(id.to_string(), index);
+        let text = crate::blocks::flat(if title.trim().is_empty() { name } else { title });
+        self.latest = Some(LatestAction {
+            text,
+            at: now,
+            is_error: false,
+        });
+    }
+    pub fn tool_finished(
+        &mut self,
+        id: &str,
+        ok: bool,
+        failure: Option<&str>,
+        _path: Option<&str>,
+        has_diff: bool,
+        now: i64,
+    ) {
+        if let Some(i) = self.by_tool.remove(id) {
+            if let Some(b) = self.beads.get_mut(i) {
+                if !ok {
+                    b.kind = TrailKind::Error;
+                }
+                b.ok = ok;
+                if ok && b.kind == TrailKind::Edit && has_diff {
+                    self.files += 1;
+                }
+            }
+        }
+        if !ok {
+            let text = failure
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or("Tool failed");
+            self.latest = Some(LatestAction {
+                text: crate::blocks::flat(text),
+                at: now,
+                is_error: true,
+            });
         }
     }
-
-    /// Apply a subagent start event.
     pub fn agent_start(&mut self, n: u32, title: &str, now: i64) {
-        self.scouts.push(Scout {
+        self.agents.push(Agent {
             n,
-            title: title.to_string(),
+            title: crate::blocks::flat(title),
             started_at: now,
             finished_at: None,
             ok: true,
         });
-        self.trail.push(TrailBead { kind: TrailKind::Agent, at: now, ok: true });
-        self.phase = Phase::Working;
+        self.push_bead(TrailKind::Agent, now);
     }
-
-    /// Apply a subagent done event.
     pub fn agent_done(&mut self, n: u32, ok: bool, now: i64) {
-        if let Some(a) = self.scouts.iter_mut().find(|a| a.n == n) {
+        if let Some(a) = self
+            .agents
+            .iter_mut()
+            .find(|a| a.n == n && a.finished_at.is_none())
+        {
             a.finished_at = Some(now);
             a.ok = ok;
         }
     }
-
-    /// Apply a plan update.
     pub fn plan(&mut self, items: &[PlanItem]) {
-        self.plan = items.iter().enumerate().map(|(_i, item)| CompactPlanStep {
-            title: item.title.clone(),
-            status: item.status,
-            done_at: None,
-        }).collect();
-        // First item is active if there are any.
-        if self.plan.len() > 0 && self.plan[0].status == PlanStatus::Pending {
-            self.plan[0].status = PlanStatus::InProgress;
+        self.plan = items
+            .iter()
+            .map(|i| CompactPlanStep {
+                title: crate::blocks::flat(&i.title),
+                status: i.status,
+                done_at: None,
+            })
+            .collect();
+        if !self.plan.iter().any(|p| p.status == PlanStatus::InProgress) {
+            if let Some(p) = self
+                .plan
+                .iter_mut()
+                .find(|p| p.status == PlanStatus::Pending)
+            {
+                p.status = PlanStatus::InProgress;
+            }
         }
     }
-
-    /// Mark the current active plan step as done.
     pub fn plan_step_done(&mut self, now: i64) {
-        if let Some(i) = self.plan.iter().position(|p| p.status == PlanStatus::InProgress) {
+        if let Some(i) = self
+            .plan
+            .iter()
+            .position(|p| p.status == PlanStatus::InProgress)
+        {
             self.plan[i].status = PlanStatus::Done;
             self.plan[i].done_at = Some(now);
             if i + 1 < self.plan.len() {
@@ -271,534 +202,411 @@ impl CompactState {
             }
         }
     }
-
-    /// Apply an assistant reply (goes to scrollback).
-    pub fn reply(&mut self, text: &str, _theme: &Theme) {
-        let mut line = Line::new();
-        line.push("  ", Style::default());
-        line.push(text, Style::default());
-        self.scrollback.push(line);
-    }
-
-    /// Apply turn done.
-    pub fn done(&mut self, now: i64, theme: &Theme) {
-        self.phase = Phase::Done;
-        self.ended_at = Some(now);
-
-        let done_count = self.plan.iter().filter(|p| p.status == PlanStatus::Done).count();
-        let elapsed = format_elapsed((now - self.started_at).max(0) as u64);
-
-        let mut line = Line::new();
-        line.push("✓ ", theme.ok().bold());
-        line.push(&format!("done in {elapsed}"), Style::default());
-        line.push(
-            &format!(
-                "  ·  {done_count}/{} steps  ·  {} scouts  ·  {} tools  ·  {} files",
-                self.plan.len(),
-                self.scouts.len(),
-                self.trail.len(),
-                self.files
-            ),
-            theme.dim(),
-        );
-        self.scrollback.push(line);
-    }
-
-    /// Set phase to idle.
-    pub fn idle(&mut self) {
-        self.phase = Phase::Idle;
-    }
-}
-
-// ---------------------------------------------------------------- render
-
-/// Render the compact live region. Returns at most 6 lines.
-pub fn render_compact(state: &CompactState, now: i64, width: usize, theme: &Theme) -> Vec<Line> {
-    let mut lines = Vec::new();
-    if state.phase == Phase::Idle {
-        return lines;
-    }
-
-    let t = now - state.started_at;
-
-    // -- Plan bar
-    if !state.plan.is_empty() {
-        lines.push(render_plan_bar(state, now, width, theme));
-    }
-
-    // -- Scouts line
-    let scout_line = render_scouts_line(state, now, width, theme);
-    if let Some(line) = scout_line {
-        lines.push(line);
-    }
-
-    // -- Trail
-    if !state.trail.is_empty() {
-        lines.push(render_trail(state, now, width, theme));
-    }
-
-    // -- Latest action
-    if let Some(ref latest) = state.latest {
-        let age = now - latest.at;
-        if age < 4200 && state.phase != Phase::Done {
-            lines.push(render_latest_action(latest, age, theme));
+    /// Returns at most four compact rows. The session appends the common spinner.
+    pub fn render(&self, ctx: RenderCtx, width: usize, theme: &Theme) -> Vec<Line> {
+        if self.since.is_none() {
+            return Vec::new();
         }
+        let mut out = Vec::with_capacity(4);
+        if !self.plan.is_empty() {
+            out.push(render_plan(self, ctx, width, theme));
+        }
+        if let Some(l) = render_agents(self, ctx, width, theme) {
+            out.push(l);
+        }
+        if !self.beads.is_empty() {
+            out.push(render_trail(self, ctx, width, theme));
+        }
+        if let Some(a) = &self.latest {
+            let age = age_frames(ctx, self.since.unwrap_or(a.at), a.at) as i64 * FRAME_MS;
+            if a.is_error || anim::fade(age) != FadeStep::Gone {
+                out.push(render_latest(a, age, width, theme));
+            }
+        }
+        out
     }
-
-    // -- Pulse line (or done message)
-    if state.phase != Phase::Done {
-        lines.push(render_pulse_line(state, t, now, width, theme));
-    } else if state.ended_at.map_or(false, |e| now - e < 2600) {
-        let _ended_at = state.ended_at.unwrap();
-        let elapsed = format_elapsed((now - state.started_at).max(0) as u64);
-        let mut line = Line::new();
-        line.push("✦ ", theme.bright());
-        line.push("done", theme.ok().bold());
-        line.push(&format!("  {elapsed}"), theme.dim());
-        lines.push(line);
+}
+fn safe_text(s: &str, theme: &Theme) -> String {
+    let flat = crate::blocks::flat(s).replace(" ⏎ ", " ");
+    if theme.glyphs.ascii {
+        flat.chars()
+            .map(|c| if c.is_ascii() { c } else { '?' })
+            .collect()
+    } else {
+        flat
     }
-
-    lines
+}
+fn age_frames(ctx: RenderCtx, since: i64, at: i64) -> u64 {
+    (ctx.frame as u64).saturating_sub(anim::frame_for(at, since))
 }
 
-/// Render the plan bar: `◆ Plan ▰▰▱▱▱▱▱ 2/7  <active step title>`.
-fn render_plan_bar(state: &CompactState, now: i64, width: usize, theme: &Theme) -> Line {
-    let mut line = Line::new();
-    let done_count = state.plan.iter().filter(|p| p.status == PlanStatus::Done).count();
-
-    line.push("◆ ", theme.accent());
-    line.push("Plan", Style::default().bold());
-
-    for step in &state.plan {
-        match step.status {
+fn clipped(s: &str, max: usize, theme: &Theme) -> String {
+    let s = safe_text(s, theme);
+    let s = truncate(&s, max);
+    if theme.glyphs.ascii {
+        s.replace('…', ".")
+    } else {
+        s
+    }
+}
+fn render_plan(state: &CompactState, ctx: RenderCtx, width: usize, theme: &Theme) -> Line {
+    let mut l = Line::new();
+    let done = state
+        .plan
+        .iter()
+        .filter(|p| p.status == PlanStatus::Done)
+        .count();
+    let count = format!(" {done}/{}", state.plan.len());
+    l.push(theme.glyphs.plan, theme.accent());
+    l.push(" Plan ", Style::default().bold());
+    let title_reserve = if width >= 60 { 2 } else { 0 };
+    let segment_room = width.saturating_sub(l.width() + str_width(&count) + title_reserve);
+    let hidden = state.plan.len() > segment_room;
+    let segment_limit = segment_room.saturating_sub(usize::from(hidden));
+    for p in state.plan.iter().take(segment_limit) {
+        match p.status {
             PlanStatus::Done => {
-                let fresh = step.done_at.map_or(false, |d| now - d < 700);
-                line.push("▰", if fresh { theme.bright().bold() } else { theme.accent() });
+                let fresh = p
+                    .done_at
+                    .is_some_and(|at| age_frames(ctx, state.since.unwrap_or(at), at) < 8);
+                l.push(
+                    theme.glyphs.progress_done,
+                    if fresh {
+                        theme.bright().bold()
+                    } else {
+                        theme.accent()
+                    },
+                );
             }
             PlanStatus::InProgress => {
-                let on = (now / 450) % 2 == 0;
-                line.push(if on { "▰" } else { "▱" }, theme.bright());
+                let bright = anim::breathe(ctx.frame as u64, 6) >= 2;
+                l.push(
+                    theme.glyphs.progress_active,
+                    if bright {
+                        theme.bright().bold()
+                    } else {
+                        theme.accent()
+                    },
+                );
             }
             PlanStatus::Pending => {
-                line.push("▱", theme.dimmer());
+                l.push(theme.glyphs.progress_pending, theme.dimmer());
             }
         }
     }
-
-    line.push(&format!(" {done_count}/{}", state.plan.len()), theme.dim());
-
-    let active = state.plan.iter().find(|p| p.status == PlanStatus::InProgress);
-    let finished = state.phase == Phase::Done;
-
-    if finished {
-        line.push("  all done", theme.ok());
-    } else if let Some(a) = active {
-        // Calculate available width for the step title.
-        let prefix_len = 2 + 2 + 4 + state.plan.len() + 1 + format!("{done_count}/{}", state.plan.len()).len() + 2;
-        let avail = width.saturating_sub(prefix_len).max(5);
-        let clipped = clip_str(&a.title, avail);
-        line.push(&format!("  {clipped}"), Style::default());
+    if hidden {
+        l.push(theme.glyphs.ellipsis, theme.dim());
     }
-
-    line
+    l.push(count, theme.dim());
+    if width >= 60 && !hidden {
+        if let Some(p) = state
+            .plan
+            .iter()
+            .find(|p| p.status == PlanStatus::InProgress)
+        {
+            l.push("  ", Style::default());
+            let avail = width.saturating_sub(l.width());
+            if avail > 0 {
+                l.push(clipped(&p.title, avail, theme), Style::default());
+            }
+        }
+    }
+    l
 }
-
-/// Render the scouts line. Returns None if all scouts have been home for 7s.
-fn render_scouts_line(state: &CompactState, now: i64, _width: usize, theme: &Theme) -> Option<Line> {
-    let running: Vec<&Scout> = state.scouts.iter().filter(|a| a.finished_at.is_none()).collect();
-    let just_done: Vec<&Scout> = state.scouts.iter()
-        .filter(|a| a.finished_at.map_or(false, |f| now - f < 2500))
-        .collect();
-    let folded: Vec<&Scout> = state.scouts.iter()
-        .filter(|a| a.finished_at.map_or(false, |f| now - f >= 2500))
-        .collect();
-
-    // Once every scout has been home for 7s, the line disappears.
-    let all_home = running.is_empty()
-        && !state.scouts.is_empty()
-        && state.scouts.iter().all(|a| a.finished_at.map_or(false, |f| now - f > 7000));
-
-    if (running.is_empty() && just_done.is_empty() && folded.is_empty()) || all_home {
+fn render_agents(
+    state: &CompactState,
+    ctx: RenderCtx,
+    width: usize,
+    theme: &Theme,
+) -> Option<Line> {
+    if state.agents.is_empty() {
         return None;
     }
-
-    let mut line = Line::new();
-    line.push("● ", theme.ok());
-
-    let label = if !running.is_empty() {
-        let count = running.len();
-        let word = match count {
-            1 => "one",
-            2 => "two",
-            3 => "three",
-            n => return Some(line.with(&format!("{n} scouts out"), Style::default().bold())),
-        };
-        format!("{word} scout{} out", if count == 1 { "" } else { "s" })
+    let running: Vec<&Agent> = state
+        .agents
+        .iter()
+        .filter(|a| a.finished_at.is_none())
+        .collect();
+    let since = state.since.unwrap_or(0);
+    let visible: Vec<&Agent> = state
+        .agents
+        .iter()
+        .filter(|a| {
+            a.finished_at
+                .is_some_and(|t| age_frames(ctx, since, t) < 31)
+        })
+        .collect();
+    let folded = state
+        .agents
+        .iter()
+        .filter(|a| {
+            a.finished_at
+                .is_some_and(|t| age_frames(ctx, since, t) >= 31)
+        })
+        .count();
+    if running.is_empty()
+        && visible.is_empty()
+        && state.agents.iter().all(|a| {
+            a.finished_at
+                .is_some_and(|t| age_frames(ctx, since, t) >= 88)
+        })
+    {
+        return None;
+    }
+    let mut l = Line::new();
+    let n = if running.is_empty() {
+        state.agents.len()
     } else {
-        "scouts home".to_string()
+        running.len()
     };
-    line.push(&label, Style::default().bold());
-
-    // Running scouts with orbit animation
-    for (i, scout) in running.iter().enumerate() {
-        let g = ORBIT[((now / 160) as usize + i) % ORBIT.len()];
-        let elapsed = format_elapsed((now - scout.started_at).max(0) as u64);
-        let title = short_title(&scout.title);
-        line.push(&format!(" {g} #{} {} {}", scout.n, title, elapsed), theme.ok());
-    }
-
-    // Just done scouts (flash for 900ms)
-    for scout in &just_done {
-        let flash = scout.finished_at.map_or(false, |f| now - f < 900);
-        let elapsed = scout.finished_at.map_or("0s".to_string(), |f| format_elapsed((f - scout.started_at).max(0) as u64));
-        let title = short_title(&scout.title);
-        line.push(" ✓ ", theme.ok().bold());
-        line.push(&format!("#{} ", scout.n), theme.dim());
-        line.push(&title, if flash { theme.bright() } else { theme.dim() });
-        line.push(&format!(" {elapsed}"), theme.dim());
-    }
-
-    // Folded scouts
-    if !folded.is_empty() {
-        line.push(&format!("  ✓{} back", folded.len()), theme.dim());
-    }
-
-    Some(line)
-}
-
-/// Render the trail: one bead per tool call.
-fn render_trail(state: &CompactState, now: i64, width: usize, theme: &Theme) -> Line {
-    let mut line = Line::new();
-    line.push("  ", Style::default());
-
-    let room = (width - 10).max(10);
-    let beads = if state.trail.len() > room {
-        &state.trail[state.trail.len() - room..]
-    } else {
-        &state.trail[..]
-    };
-
-    if state.trail.len() > room {
-        line.push("…", theme.dimmer());
-    }
-
-    for bead in beads {
-        let age = now - bead.at;
-        let kind = bead.kind; // TrailKind is Copy
-        let (fg, bold) = if !bead.ok {
-            (theme.err(), false)
-        } else if age < 500 {
-            (theme.bright(), true)
-        } else if age < 4000 {
-            (kind_color(kind, theme), false)
-        } else if matches!(kind, TrailKind::Read | TrailKind::Search) {
-            (theme.dimmer(), false)
-        } else {
-            (theme.dim(), false)
-        };
-        line.push(kind.glyph(), if bold { fg.bold() } else { fg });
-    }
-
-    // Blinking cursor while busy
-    if state.phase != Phase::Done {
-        let blink = (now / 500) % 2 != 0;
-        line.push(if blink { "▸" } else { " " }, theme.accent());
-    } else if let Some(ended_at) = state.ended_at {
-        // Sparkle sweep after done
-        let k = (now - ended_at) / 40;
-        let _bead_offset = if state.trail.len() > room { 3 } else { 2 }; // "  " + optional "…"
-        if (k as usize) < beads.len() + 3 {
-            // Sparkle is applied by replacing beads with ✦
-            // For simplicity, we add sparkle indicators at the end
-            let sparkle_count = ((k as usize).min(3)).min(beads.len());
-            if sparkle_count > 0 {
-                // The sparkle sweep is handled by re-rendering with ✦
-                // This is a simplification; the full prototype replaces beads in-place
-            }
-        }
-    }
-
-    line
-}
-
-/// Render the latest action with typewriter effect.
-fn render_latest_action(latest: &LatestAction, age: i64, theme: &Theme) -> Line {
-    let mut line = Line::new();
-    line.push("  ", Style::default());
-
-    let mut n = (age / 14).min(latest.text.len() as i64) as usize;
-    // `n` is a byte offset, but the typewriter text can contain multibyte
-    // UTF-8 characters (for example, the ellipsis). Never slice mid-codepoint.
-    while !latest.text.is_char_boundary(n) {
-        n -= 1;
-    }
-    let visible = &latest.text[..n];
-
-    let fg = if latest.is_error {
-        theme.err()
-    } else if age < 2200 {
-        Style::default()
-    } else if age < 3200 {
-        theme.dim()
-    } else {
-        theme.dimmer()
-    };
-
-    line.push(visible, fg);
-
-    if age < 300 {
-        line.push("▍", theme.accent());
-    }
-
-    line
-}
-
-/// Render the pulse line: travelling sine wave + status text.
-fn render_pulse_line(state: &CompactState, t: i64, now: i64, _width: usize, theme: &Theme) -> Line {
-    let mut line = Line::new();
-
-    // Token burst rate in last 1500ms
-    let rate = state.token_events.iter().filter(|&&x| now - x < 1500).count();
-
-    // Amplitude: higher while thinking with token bursts, lower while working
-    let amp = if state.phase == Phase::Thinking {
-        (0.35 + rate as f64 * 0.12).min(1.0)
-    } else {
-        0.22
-    };
-
-    // Generate 10 bars of the travelling wave
-    let mut wave = String::new();
-    for i in 0..10 {
-        let v = 0.5 + amp * 0.5 * ((now as f64 / 130.0 - i as f64 * 0.7).sin());
-        let idx = (v * 7.0).round() as usize;
-        let idx = idx.clamp(0, 7);
-        wave.push_str(BARS[idx]);
-    }
-    line.push(&wave, theme.accent());
-    line.push("  ", Style::default());
-
-    // Verb
-    let running_scouts = state.scouts.iter().filter(|a| a.finished_at.is_none()).count();
-    let verb = if state.phase == Phase::Thinking {
-        VERBS[(t / 4000).min(2) as usize]
-    } else if running_scouts > 0 {
-        "waiting on scouts"
-    } else {
-        "working"
-    };
-    line.push(&format!("{verb}…"), theme.accent());
-
-    // Meta
-    let elapsed = format_elapsed(t.max(0) as u64);
-    let meta = format!("  {elapsed} · ↓ {} tokens · esc to interrupt", state.tokens);
-    line.push(&meta, theme.dim());
-
-    line
-}
-
-// ---------------------------------------------------------------- helpers
-
-fn kind_color(kind: TrailKind, theme: &Theme) -> Style {
-    match kind {
-        TrailKind::Read | TrailKind::Search => theme.dim(),
-        TrailKind::Edit | TrailKind::Code => theme.accent(),
-        TrailKind::Bash => theme.info(),
-        TrailKind::Agent => theme.ok(),
-        TrailKind::Error => theme.err(),
-    }
-}
-
-/// Clip a string to the given display width, adding "…" if truncated.
-fn clip_str(s: &str, max_width: usize) -> String {
-    if str_width(s) <= max_width {
-        return s.to_string();
-    }
-    let mut result = String::new();
-    let mut width = 0;
-    for ch in s.chars() {
-        let cw = ch.len_utf16(); // approximate grapheme width
-        if width + cw > max_width.saturating_sub(1) {
+    l.push(theme.glyphs.agent, theme.ok());
+    l.push(
+        format!(" {n} agent{}", if n == 1 { "" } else { "s" }),
+        Style::default().bold(),
+    );
+    for (i, a) in running.iter().enumerate() {
+        if l.width() + 5 >= width {
             break;
         }
-        width += cw;
-        result.push(ch);
-    }
-    if !result.is_empty() && str_width(&result) < max_width {
-        result.push('…');
-    }
-    result
-}
-
-/// Extract the first three words of a title, stripping trailing punctuation.
-fn short_title(s: &str) -> String {
-    s.split_whitespace()
-        .take(3)
-        .collect::<Vec<_>>()
-        .join(" ")
-        .trim_end_matches(|c: char| ",;:.".contains(c))
-        .to_string()
-}
-
-// ---------------------------------------------------------------- width-aware rendering
-
-/// Render the compact region with width-aware degradation.
-/// At narrow widths, drop less important elements first.
-pub fn render_compact_width_aware(state: &CompactState, now: i64, width: usize, theme: &Theme) -> Vec<Line> {
-    let mut lines = render_compact(state, now, width, theme);
-
-    // At very narrow widths, degrade gracefully
-    if width < 40 {
-        // Drop the step title from the plan bar (last span)
-        if let Some(plan_line) = lines.first_mut() {
-            // Keep only the first few spans (◆ Plan ▰▰▱▱ 2/7)
-            if plan_line.spans.len() > 4 {
-                plan_line.spans.truncate(4);
+        let si = anim::cycle(
+            ctx.frame as u64 + i as u64 * 2,
+            2,
+            theme.glyphs.spinner.len(),
+        );
+        l.push(
+            format!(" {} #{}", theme.glyphs.spinner[si], a.n),
+            theme.ok(),
+        );
+        if width >= 60 {
+            l.push(" ", Style::default());
+            let title = safe_text(&a.title, theme);
+            let available = width.saturating_sub(l.width()).saturating_sub(6);
+            if available > 0 {
+                l.push(clipped(&title, available, theme), theme.ok());
             }
         }
-        // Drop scout titles
-        if lines.len() > 1 {
-            // Simplify scout line to just the count
+        let e = crate::blocks::format_elapsed((ctx.now_ms - a.started_at).max(0) as u64);
+        if l.width() + str_width(&e) < width {
+            l.push(format!(" {e}"), theme.dim());
         }
     }
-
-    lines
+    for a in visible {
+        if l.width() + 5 >= width {
+            break;
+        }
+        let done = a.finished_at.unwrap_or(ctx.now_ms);
+        let style = if age_frames(ctx, since, done) < 11 {
+            theme.bright().bold()
+        } else {
+            theme.dim()
+        };
+        l.push(format!(" {} #{}", theme.glyphs.success, a.n), style);
+        if width >= 60 {
+            l.push(" ", Style::default());
+            let available = width.saturating_sub(l.width()).saturating_sub(6);
+            if available > 0 {
+                l.push(clipped(&a.title, available, theme), style);
+            }
+        }
+        let e = crate::blocks::format_elapsed((done - a.started_at).max(0) as u64);
+        if l.width() + str_width(&e) < width {
+            l.push(format!(" {e}"), theme.dim());
+        }
+    }
+    if folded > 0 && l.width() + 8 < width {
+        l.push(
+            format!(" {}{folded} back", theme.glyphs.success),
+            theme.dim(),
+        );
+    }
+    Some(l)
 }
-
+fn render_trail(state: &CompactState, ctx: RenderCtx, width: usize, theme: &Theme) -> Line {
+    let mut l = Line::new();
+    l.push("  ", Style::default());
+    let cap = if width < 40 {
+        width.saturating_sub(4)
+    } else {
+        width.saturating_sub(2)
+    };
+    let skip = state.beads.len().saturating_sub(cap);
+    if skip > 0 {
+        l.push(theme.glyphs.ellipsis, theme.dim());
+    }
+    for b in state.beads.iter().skip(skip) {
+        if l.width() >= width {
+            break;
+        }
+        let age = age_frames(ctx, state.since.unwrap_or(b.at), b.at);
+        let style = if !b.ok {
+            theme.err()
+        } else if age < 4 {
+            theme.bright().bold()
+        } else {
+            kind_color(b.kind, theme)
+        };
+        l.push(b.kind.glyph(&theme.glyphs), style);
+    }
+    l
+}
+fn render_latest(a: &LatestAction, age_ms: i64, width: usize, theme: &Theme) -> Line {
+    let mut l = Line::new();
+    l.push("  ", Style::default());
+    let text = safe_text(&a.text, theme);
+    let max = width.saturating_sub(l.width());
+    let visible = if str_width(&text) > max {
+        ellipsize_middle(&text, max)
+    } else {
+        text
+    };
+    let visible = if theme.glyphs.ascii {
+        visible.replace('…', ".")
+    } else {
+        visible
+    };
+    let style = if a.is_error {
+        theme.err()
+    } else {
+        match anim::fade(age_ms) {
+            FadeStep::Bright => theme.bright().bold(),
+            FadeStep::Normal => Style::default(),
+            FadeStep::Dim => theme.dim(),
+            FadeStep::Dimmer | FadeStep::Gone => theme.dimmer(),
+        }
+    };
+    l.push(visible, style);
+    l
+}
+fn kind_color(k: TrailKind, t: &Theme) -> Style {
+    match k {
+        TrailKind::Read | TrailKind::Search => t.dim(),
+        TrailKind::Edit | TrailKind::Code => t.accent(),
+        TrailKind::Bash => t.info(),
+        TrailKind::Agent => t.ok(),
+        TrailKind::Error => t.err(),
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn theme() -> Theme {
-        Theme::default()
-    }
-
     #[test]
-    fn idle_produces_no_lines() {
-        let state = CompactState::new();
-        let lines = render_compact(&state, 0, 80, &theme());
-        assert!(lines.is_empty());
+    fn tool_finish_updates_one_bead_and_counts_diff() {
+        let mut s = CompactState::new();
+        s.begin(1000);
+        s.tool_started("e", "Edit", "Edit src/a.rs", 1100);
+        s.tool_finished("e", true, None, Some("src/a.rs"), true, 1200);
+        assert_eq!(s.beads.len(), 1);
+        assert_eq!(s.files, 1);
+        assert_eq!(s.latest.as_ref().unwrap().text, "Edit src/a.rs");
     }
-
     #[test]
-    fn done_phase_shows_summary_in_scrollback() {
+    fn failed_tool_and_read_are_visible() {
+        let mut s = CompactState::new();
+        s.begin(1000);
+        s.tool_started("r", "Read", "Read file.rs", 1000);
+        s.tool_finished("r", true, None, None, false, 1100);
+        s.tool_started("b", "Bash", "npm test", 1200);
+        s.tool_finished("b", false, Some("Exit code 1"), None, false, 1400);
+        assert_eq!(s.beads.len(), 2);
+        assert_eq!(s.beads[0].kind, TrailKind::Read);
+        assert_eq!(s.beads[1].kind, TrailKind::Error);
+        assert!(s.latest.as_ref().unwrap().is_error);
+    }
+    #[test]
+    fn busy_region_is_bounded_and_ascii_fallback_is_ascii() {
+        let theme = Theme::default().with_glyphs(crate::glyphs::Glyphs::ascii());
         let mut state = CompactState::new();
-        state.user_message("fix it", 0, &theme());
-        state.tool(TrailKind::Edit, "Edited src/main.rs", true, 1000, &theme(), Some("src/main.rs"), 5, 2);
-        state.done(5000, &theme());
-
-        assert_eq!(state.phase, Phase::Done);
-        assert!(!state.scrollback.is_empty());
-        let last = state.scrollback.last().unwrap();
-        let text = last.plain_text();
-        assert!(text.contains("done in"));
-        assert!(text.contains("steps"));
-        assert!(text.contains("scouts"));
-    }
-
-    #[test]
-    fn trail_beads_are_colored_by_kind() {
-        let state = TrailKind::from_tool("read");
-        assert_eq!(state, TrailKind::Read);
-        assert_eq!(TrailKind::from_tool("edit"), TrailKind::Edit);
-        assert_eq!(TrailKind::from_tool("bash"), TrailKind::Bash);
-        assert_eq!(TrailKind::from_tool("execute_code"), TrailKind::Code);
-        assert_eq!(TrailKind::from_tool("grep"), TrailKind::Search);
-        assert_eq!(TrailKind::from_tool("glob"), TrailKind::Search);
-    }
-
-    #[test]
-    fn short_title_truncates_correctly() {
-        assert_eq!(short_title("fix the login bug"), "fix the login");
-        assert_eq!(short_title("read file.ts"), "read file.ts");
-        assert_eq!(short_title("hello,"), "hello");
-        assert_eq!(short_title("a"), "a");
-    }
-
-    #[test]
-    fn scout_line_disappears_after_all_home_7s() {
-        let mut state = CompactState::new();
-        state.user_message("test", 0, &theme());
-        state.agent_start(1, "research API", 1000);
-        state.agent_done(1, true, 5000);
-
-        // At 6s, scout is still visible (just done)
-        let lines = render_compact(&state, 6000, 80, &theme());
-        assert!(lines.iter().any(|l| l.plain_text().contains("scout")));
-
-        // At 13s, scout has been home for 8s > 7s, line should be gone
-        let lines = render_compact(&state, 13000, 80, &theme());
-        assert!(!lines.iter().any(|l| l.plain_text().contains("scout")));
-    }
-
-    #[test]
-    fn latest_action_typewriter_never_slices_inside_unicode_character() {
-        let latest = LatestAction {
-            text: format!("{}… done", "a".repeat(119)),
-            at: 0,
-            is_error: false,
-        };
-
-        let partial = format!("  {}", "a".repeat(119));
-        assert_eq!(
-            render_latest_action(&latest, 120 * 14, &theme()).plain_text(),
-            partial,
-        );
-        assert_eq!(
-            render_latest_action(&latest, 121 * 14, &theme()).plain_text(),
-            partial,
-        );
-        assert_eq!(
-            render_latest_action(&latest, 122 * 14, &theme()).plain_text(),
-            format!("{partial}…"),
-        );
-    }
-
-    #[test]
-    fn compact_region_never_exceeds_six_lines() {
-        let mut state = CompactState::new();
-        state.user_message("do a big task", 0, &theme());
-        state.plan(&[
-            PlanItem { title: "Step 1".into(), status: PlanStatus::Done },
-            PlanItem { title: "Step 2".into(), status: PlanStatus::InProgress },
-            PlanItem { title: "Step 3".into(), status: PlanStatus::Pending },
-        ]);
-        state.agent_start(1, "research", 1000);
-        state.agent_start(2, "implement", 1100);
-        for i in 0..20 {
-            let text = format!("read file{i}.ts");
-            state.tool(TrailKind::Read, &text, true, 2000 + i * 100, &theme(), None, 0, 0);
+        state.begin(1_000);
+        let plan: Vec<PlanItem> = (0..50)
+            .map(|i| PlanItem {
+                title: format!("step {i} with an intentionally long title"),
+                status: if i == 0 {
+                    PlanStatus::InProgress
+                } else {
+                    PlanStatus::Pending
+                },
+            })
+            .collect();
+        state.plan(&plan);
+        state.agent_start(1, "Survey approvals", 1_000);
+        for i in 0..100 {
+            state.tool_started(&format!("t{i}"), "Bash", "npm test\n--watch", 1_000 + i);
         }
-        state.latest = Some(LatestAction { text: "Reading file19.ts".into(), at: 3900, is_error: false });
-
-        let lines = render_compact(&state, 4000, 80, &theme());
-        assert!(lines.len() <= 6, "compact region has {} lines, expected <= 6", lines.len());
+        let ctx = RenderCtx {
+            frame: 2,
+            now_ms: 2_000,
+            expanded: false,
+        };
+        let mut lines = state.render(ctx, 38, &theme);
+        lines.push(crate::chrome::spinner_line(
+            &theme,
+            ctx.frame,
+            "Writing",
+            1_000,
+            Some(4),
+            38,
+        ));
+        assert_eq!(lines.len(), 5);
+        for line in &lines {
+            assert!(
+                line.width() <= 38,
+                "{}: {:?}",
+                line.width(),
+                line.plain_text()
+            );
+            assert!(!line.plain_text().contains('\n'));
+            assert!(line.plain_text().is_ascii(), "{:?}", line.plain_text());
+        }
     }
 
     #[test]
-    fn edits_print_one_line_to_scrollback() {
+    fn tool_trail_and_index_remain_bounded_during_long_turn() {
         let mut state = CompactState::new();
-        state.user_message("fix it", 0, &theme());
-        state.tool(TrailKind::Edit, "Edited src/main.rs", true, 1000, &theme(), Some("src/main.rs"), 5, 2);
+        state.begin(0);
+        for i in 0..(MAX_TRAIL_BEADS + 100) {
+            state.tool_started(&format!("tool-{i}"), "Read", "Read src/lib.rs", i as i64);
+        }
+        assert_eq!(state.beads.len(), MAX_TRAIL_BEADS);
+        assert_eq!(state.by_tool.len(), MAX_TRAIL_BEADS);
+        assert!(!state.by_tool.contains_key("tool-0"));
+        assert!(state
+            .by_tool
+            .contains_key(&format!("tool-{}", MAX_TRAIL_BEADS + 99)));
+        assert!(state.by_tool.values().all(|i| *i < MAX_TRAIL_BEADS));
 
-        // Should have user prompt + edit line in scrollback
-        assert_eq!(state.scrollback.len(), 2);
-        let edit_line = &state.scrollback[1];
-        let text = edit_line.plain_text();
-        assert!(text.contains("◆"));
-        assert!(text.contains("src/main.rs"));
-        assert!(text.contains("+5"));
+        state.tool_finished(
+            &format!("tool-{}", MAX_TRAIL_BEADS + 99),
+            false,
+            Some("failed"),
+            None,
+            false,
+            200,
+        );
+        assert_eq!(state.beads.last().unwrap().kind, TrailKind::Error);
     }
 
     #[test]
-    fn reads_and_searches_do_not_print_to_scrollback() {
-        let mut state = CompactState::new();
-        state.user_message("explore", 0, &theme());
-        state.tool(TrailKind::Read, "read file.ts", true, 1000, &theme(), None, 0, 0);
-        state.tool(TrailKind::Search, "grep foo", true, 1100, &theme(), None, 0, 0);
-        state.tool(TrailKind::Bash, "make", true, 1200, &theme(), None, 0, 0);
-
-        // Only user prompt should be in scrollback (reads, searches, bash don't print)
-        assert_eq!(state.scrollback.len(), 1);
+    fn width_and_newlines_are_bounded() {
+        let mut s = CompactState::new();
+        s.begin(1000);
+        s.plan(&[PlanItem {
+            title: "a long implementation plan step".into(),
+            status: PlanStatus::InProgress,
+        }]);
+        s.tool_started("x", "Bash", "npm test\n--watch", 1000);
+        for width in [80, 38] {
+            for l in s.render(
+                RenderCtx {
+                    frame: 1,
+                    now_ms: 1100,
+                    expanded: false,
+                },
+                width,
+                &Theme::default(),
+            ) {
+                assert!(l.width() <= width, "{} {:?}", l.width(), l.plain_text());
+                assert!(!l.plain_text().contains('\n'));
+            }
+        }
     }
 }

@@ -244,6 +244,30 @@ fn a_turn_renders_inline_and_stays_after_exit() {
 }
 
 #[test]
+fn busy_turn_animates_then_stops_writing_after_settle() {
+    let mut t = Pty::spawn();
+    t.host("StatusUpdate", serde_json::json!({ "segments": { "phase": "thinking" } }));
+    let screen = t.wait_for("esc to interrupt");
+    assert!(screen.iter().any(|line| line.contains("esc to interrupt")));
+
+    let before_animation = t.len();
+    std::thread::sleep(Duration::from_millis(350));
+    let animated_bytes = t.len().saturating_sub(before_animation);
+    assert!(animated_bytes > 0, "busy animation produced no PTY output; screen:\n{}", t.all_lines().join("\n"));
+
+    let before_settle = t.len();
+    t.host("StatusUpdate", serde_json::json!({ "segments": { "phase": "idle" } }));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while t.len() == before_settle && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let settled_bytes = t.len();
+    std::thread::sleep(Duration::from_millis(350));
+    assert_eq!(t.len(), settled_bytes, "settled renderer continued writing: {}", t.all_lines().join("\n"));
+    let _ = t.finish();
+}
+
+#[test]
 fn idle_costs_nothing() {
     let run = |idle: Duration| -> (Duration, u64, usize) {
         let mut t = Pty::spawn();

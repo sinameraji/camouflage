@@ -5,6 +5,7 @@
 //! `docs/inline-redesign.md` §3 for the design and its rules.
 
 pub mod activity;
+pub mod anim;
 pub mod ansi;
 pub mod blocks;
 pub mod chrome;
@@ -12,6 +13,7 @@ pub mod compact;
 pub mod diff;
 pub mod editor;
 pub mod form;
+pub mod glyphs;
 pub mod highlight;
 pub mod markdown;
 pub mod session;
@@ -20,11 +22,11 @@ pub mod term;
 pub mod theme;
 pub mod width;
 
+pub use blocks::{render_block, Block, RenderCtx};
+pub use editor::{EditKey, EditOutcome, Editor};
+pub use markdown::render_markdown;
+pub use session::{Key, Outbound, Session};
 pub use style::{Color, Line, Span, Style};
 pub use term::{InlineTerminal, LiveFrame};
 pub use theme::Theme;
-pub use blocks::{render_block, Block, RenderCtx};
-pub use markdown::render_markdown;
-pub use editor::{EditKey, EditOutcome, Editor};
-pub use session::{Key, Outbound, Session};
 pub use width::{str_width, truncate, wrap};

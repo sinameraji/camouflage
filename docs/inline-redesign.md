@@ -93,7 +93,7 @@ The proposed design, as built in the prototype:
 
 ## 3. Architecture: inline rendering
 
-Finished blocks are printed **once** into the terminal's normal scrollback and never redrawn. Only a small live area at the bottom is redrawn: the in-progress block, the plan, the spinner, the input and the footer. SQLite stays the source of truth for replay and resume.
+Finished blocks are printed **once** into the terminal's normal scrollback and never redrawn. The live area contains only the unfinished assistant block, input and footer, plus a compact busy-turn summary. That summary shows the current plan, active agents, a bounded trail of recent reads/edits/shell actions, and the latest action; it is capped at four rows, with one separate spinner/status row (five rows total). Its elapsed time and token count are anchored to the current turn, and the trail is cleared when the turn settles. Ctrl+O expands per-tool details without rewriting the printed transcript. One shared 80 ms frame clock drives the visible animations and stops when the renderer is idle. SQLite stays the source of truth for replay and resume.
 
 What this gives you:
 - You can scroll with the terminal's own scrollback while the agent works.
@@ -103,9 +103,9 @@ What this gives you:
 - Drawing cost depends on the size of the live area, not the length of the session.
 
 Rules that make it work:
-1. **The live area must always be shorter than the screen.** A streaming answer is printed paragraph by paragraph and only the unfinished part stays live. Running tool output shows only its last few lines. The plan panel has a maximum height. If the live area ever grows past the screen, it's back to clearing the terminal, which is exactly how Ink breaks (`ink/build/ink.js:705`).
+1. **The live area must always be shorter than the screen.** A streaming answer is printed paragraph by paragraph and only the unfinished part stays live. Running tool output shows only its last few lines. The compact busy-turn summary itself is capped at four rows plus one spinner/status row; narrow terminals drop descriptive labels before clipping. If the full live area ever grows past the screen, it's back to clearing the terminal, which is exactly how Ink breaks (`ink/build/ink.js:705`).
 2. **Never clear the terminal**, except on an explicit `/clear`.
-3. **Printed blocks are final.** Ctrl+O "expand" opens a separate full-screen transcript view built from SQLite. The current viewport, paging and search code gets reused there.
+3. **Printed blocks are final.** Ctrl+O expands tool details in the live region; it does not rewrite scrollback. The full-screen transcript/replay view built from SQLite remains a separate roadmap item.
 4. **No full-width boxes or rules in printed output.** The terminal re-wraps old text on resize, but full-width lines break badly. Boxes belong only in the live area, which is redrawn at the new width anyway.
 
 Trade-off: the terminal's scrollback limit caps how far back you can scroll. Older history stays reachable through SQLite, the transcript view and `--resume`.
@@ -137,12 +137,12 @@ Camouflage v2.1 has the same class of bug:
 ### 4.2 Requirements (for both the Camouflage rewrite and the autopilot hotfix)
 
 1. **Printed output is the default.** Finished blocks are written once and dropped from the live tree.
-2. **Idle means zero work:** no timers, no drawing, no allocation. One shared animation clock runs only while something visible is animating, and it stops completely otherwise. No component starts its own timer.
+2. **Idle means zero work:** no timers, no drawing, no allocation. One shared 80 ms animation clock runs only while visible content animates, starts from the first busy event of the current turn, and stops completely otherwise. Every component uses that frame index; no component starts its own timer.
 3. **The renderer settles everything when a turn ends.** Spinners stop even if the host never sends the finish events.
 4. **Drawing cost depends on the live area, not the history.** Anything scrollable is virtualized.
 5. **Track what changed.** Redraw only what changed, and skip frames that would be identical to the last one. Cap the frame rate.
 6. **Keep the hot path low-allocation.** Cache text widths and wrapping.
-7. **Slow down or pause when the terminal window loses focus** (terminal focus events, `CSI ?1004h`).
+7. **Slow down or pause when the terminal window loses focus** (terminal focus events, `CSI ?1004h`). Decorative frame changes pause while unfocused; turn elapsed time still advances and is shown when the terminal is redrawn.
 8. **CI soak test:** draw 10k, 50k and 100k lines, then go idle. Idle CPU must be about 0 and the same at every size, memory must level off, and there must be zero wakeups with no animation running. With one spinner visible, the time per frame must not change between 1k and 100k lines.
 
 ## 5. Related bug: `usage.json` gets corrupted
@@ -184,14 +184,14 @@ Known limits of the Ink hotfix (the Camouflage rewrite removes them):
 - Ink keeps its own copy of all printed output and reprints it on some redraws (for example a resize), so a `/clear`ed screen can come back after a resize.
 
 **B. Camouflage rewrite**
-- [~] B1. Inline renderer: printed output plus a small live area (§3). Done behind `--ui inline` (#31 writer, #32 blocks and markdown, #33 editor and chrome, #34 session, #35 binary). Left: make it the default; turn full-screen mode into the Ctrl+O transcript/replay view.
-- [~] B2. Event-driven loop with no fixed ticker, settle on turn end, skip identical frames: done (#34, #35); waiting on a prompt counts as idle. Left: slow down when the terminal is unfocused.
+- [~] B1. Inline renderer: printed output plus a small live area (§3). The busy-turn summary now shows turn-scoped progress, active agents, a bounded tool trail and latest action behind `--ui inline`; Ctrl+O expands tool details. Left: make inline the default and build the separate full-screen transcript/replay view.
+- [~] B2. Event-driven loop with no fixed ticker, settle on turn end, skip identical frames: done (#34, #35); waiting for a prompt counts as idle. The busy-turn frame clock is turn-anchored and decorative animation pauses while unfocused.
 - [x] B3. Input (#33, #35): crossterm with `use-dev-tty`, movement by grapheme, UTF-8, `\`+Enter / Shift+Enter / Alt+Enter, undo and yank, draft kept while browsing history, paste chips, no single-key shortcuts.
 - [x] B4. Markdown with pulldown-cmark, syntax highlighting with syntect mapped onto the terminal palette (#32).
 - [ ] B5. Protocol: row ids and updates, a generic block type, host-set theme, accent and keymap, a version check, a warning for unknown events.
 - [ ] B6. SDK: TypeScript types generated from the Rust types; helpers reject when the renderer exits; `renderToTerminal` by default; capture the host's console output.
 - [ ] B7. Fix the smaller bugs in §1.1 (forms, panic handler, crash dump location, search over SQLite).
-- [~] B8. End-to-end pseudo-terminal tests and the idle soak (#35). Left: record real autopilot sessions as fixtures.
+- [~] B8. End-to-end pseudo-terminal tests and the idle soak (#35). Added a PTY assertion for busy redraws stopping at settle and a VHS `busy-turn` visual tape; left: record real autopilot sessions as fixtures.
 
 ## Work log
 
@@ -223,6 +223,8 @@ Known limits of the Ink hotfix (the Camouflage rewrite removes them):
 - **Next:** /compact and the MCP/LSP/memory managers in autopilot's Camouflage mode; daily-drive it; then make `--ui inline` the Camouflage default and `camouflage` the autopilot default.
 - **2026-10-01** — cf#49–#51 released as 2.3.0-beta.1; ap#688 merged. ap#691 (draft) ports every remaining Ink dialog (command editor, changelog image, inbox, multi-agent, remote dashboard, LSP wizard, hooks dashboard + wizard) to the Camouflage view. It needs cf#53 (multi-line fields) released, because 2.3.0's renderer rejects the `multiline` kind. Left after that: Ctrl+R reasoning, the Ctrl+O transcript view.
 - **2026-10-01 (later)** — cf#53 and cf#54 released as 2.4.0-beta.1. ap#691 bumps `camouflage-tui` to it. Left: the Ctrl+O full transcript view (beyond Ink, which only toggles verbose), `/reasoning` driving the renderer toggle, live `/theme` accent, and pausing while the terminal is unfocused.
+
+- **2026-10-19** — Revamped the inline busy-turn summary: current-turn timing/token accounting, a four-row plan/agent/tool-trail/action panel, frame-indexed animation, ASCII-safe glyphs and compact-width handling. Added session regressions, a PTY busy-redraw/settle test, and the `busy-turn` VHS scenario. Verified `cargo test -p camouflage-inline` (112 unit, 1 replay, 11 terminal tests), the workspace suite, the focused PTY test, and generated three VHS checkpoints plus a GIF; added the matching renderer golden snapshot. Next: inspect the visual output, run workspace validation, then open one PR.
 
 ## 8. Roadmap: Ink parity, then defaults (2026-10-01)
 
