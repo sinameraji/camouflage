@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.8.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.8.0...camouflage-tui-v2.8.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* **sdk:** retry failed renderer installs ([c6e9cbc](https://github.com/sinameraji/camouflage/commit/c6e9cbc1edf6fccdebeb8cf72d363c34490202aa))
+* **sdk:** retry failed renderer installs ([c1ee5e1](https://github.com/sinameraji/camouflage/commit/c1ee5e13abe937e83a36eaa619d40b8928e14b8a))
+
 ## [2.8.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.7.0...camouflage-tui-v2.8.0) (2026-10-20)
 
 
