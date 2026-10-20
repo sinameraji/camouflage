@@ -261,7 +261,18 @@ fn busy_turn_animates_then_stops_writing_after_settle() {
     while t.len() == before_settle && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
     }
-    let settled_bytes = t.len();
+    // The settle frame can land in several PTY reads; wait for a quiet window
+    // longer than one animation frame before measuring.
+    let mut settled_bytes = t.len();
+    let mut quiet_since = Instant::now();
+    while quiet_since.elapsed() < Duration::from_millis(150) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+        let now_len = t.len();
+        if now_len != settled_bytes {
+            settled_bytes = now_len;
+            quiet_since = Instant::now();
+        }
+    }
     std::thread::sleep(Duration::from_millis(350));
     assert_eq!(t.len(), settled_bytes, "settled renderer continued writing: {}", t.all_lines().join("\n"));
     let _ = t.finish();
