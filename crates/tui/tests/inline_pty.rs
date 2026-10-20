@@ -57,7 +57,7 @@ impl Pty {
             .stdin(Stdio::piped())
             // SAFETY: each Stdio takes ownership of its own dup of the slave.
             .stdout(unsafe { Stdio::from(OwnedFd::from_raw_fd(libc::dup(slave_fd))) })
-            .stderr(Stdio::null());
+            .stderr(Stdio::from(std::fs::File::create(db.0.join("stderr.log")).unwrap()));
         // Make the pty the child's controlling terminal so /dev/tty works.
         unsafe {
             use std::os::unix::process::CommandExt;
@@ -101,8 +101,17 @@ impl Pty {
     fn host(&mut self, event_type: &str, payload: serde_json::Value) {
         let line = serde_json::json!({ "event_type": event_type, "payload": payload }).to_string();
         let stdin = self.child.stdin.as_mut().unwrap();
-        writeln!(stdin, "{line}").unwrap();
-        stdin.flush().unwrap();
+        if let Err(e) = writeln!(stdin, "{line}").and_then(|_| stdin.flush()) {
+            panic!("{e} sending {event_type}; child: {}", self.child_report());
+        }
+    }
+
+    /// Exit status and stderr of the renderer, for when it dies mid-test.
+    fn child_report(&mut self) -> String {
+        std::thread::sleep(Duration::from_millis(100));
+        let status = self.child.try_wait().ok().flatten();
+        let stderr = std::fs::read_to_string(self._db.0.join("stderr.log")).unwrap_or_default();
+        format!("status {status:?}, stderr:\n{stderr}")
     }
 
     fn keys(&mut self, bytes: &[u8]) {
