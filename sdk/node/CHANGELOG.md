@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.8.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.7.0...camouflage-tui-v2.8.0) (2026-10-20)
+
+
+### Features
+
+* **inline:** adapt code glimpses to compact renderer ([1c379bb](https://github.com/sinameraji/camouflage/commit/1c379bb30189a3bdfc41d03dbfeb3b5e2a9b6772))
+* **inline:** show rotating code glimpses while working ([473a744](https://github.com/sinameraji/camouflage/commit/473a7445b617413baa9cba54d8101ada22a8e6be))
+* **inline:** show rotating code glimpses while working ([92b0ee4](https://github.com/sinameraji/camouflage/commit/92b0ee450c8450f6d163fedd49424d58e2133ced))
+
+
+### Bug Fixes
+
+* **inline:** only show the stream caret on a still-streaming message ([8d0e6c5](https://github.com/sinameraji/camouflage/commit/8d0e6c5cff704d2ad373d583dbb0abbc601accc9))
+* **inline:** only show the stream caret on a still-streaming message ([a969835](https://github.com/sinameraji/camouflage/commit/a969835987446a4cf304c424d2bdc7801f13463b))
+
 ## [2.7.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.6.2...camouflage-tui-v2.7.0) (2026-10-19)
 
 
