@@ -1471,7 +1471,9 @@ impl Session {
                 lines.push(Line::new());
             }
             let mut rendered = render_block(&e.block, self.width, t, ctx);
-            if let Block::Assistant { .. } = e.block {
+            // Only a still-streaming message gets the caret; finished ones can
+            // sit here behind a running tool and must not look live.
+            if matches!(e.block, Block::Assistant { .. }) && !e.done {
                 if let Some(last) = rendered.last_mut() {
                     last.push(t.glyphs.caret, t.accent());
                 } else {
@@ -3987,6 +3989,64 @@ mod tests {
                 .iter()
                 .any(|line| line.contains("Code glimpse")),
             "glimpses pause between rotations"
+        );
+    }
+
+    #[test]
+    fn finished_narration_held_behind_a_running_tool_has_no_caret() {
+        let mut s = session();
+        s.apply(&ev(EventType::UserMessageCreated, json!({"text": "go"})), 0);
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({"tool_id": "bg", "tool": "Bash", "command": "sleep 100"}),
+            ),
+            10,
+        );
+        for i in 0..3 {
+            let id = format!("s{i}");
+            s.apply(
+                &ev(EventType::AssistantStreamStarted, json!({"stream_id": id})),
+                100,
+            );
+            s.apply(
+                &ev(
+                    EventType::AssistantTokenDelta,
+                    json!({"stream_id": id, "token": format!("Narration {i}.")}),
+                ),
+                120,
+            );
+            s.apply(
+                &ev(
+                    EventType::AssistantMessageCompleted,
+                    json!({"stream_id": id}),
+                ),
+                150,
+            );
+        }
+        s.apply(
+            &ev(
+                EventType::AssistantStreamStarted,
+                json!({"stream_id": "live"}),
+            ),
+            200,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantTokenDelta,
+                json!({"stream_id": "live", "token": "Still going"}),
+            ),
+            220,
+        );
+
+        let caret = Theme::default().glyphs.caret;
+        let shown = live_text(&s, 300);
+        let with_caret: Vec<_> = shown.iter().filter(|l| l.contains(caret)).collect();
+        assert_eq!(with_caret.len(), 1, "{shown:#?}");
+        assert!(with_caret[0].contains("Still going"), "{shown:#?}");
+        assert!(
+            shown.iter().any(|l| l.trim() == "Narration 0."),
+            "{shown:#?}"
         );
     }
 }

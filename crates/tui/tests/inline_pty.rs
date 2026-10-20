@@ -57,7 +57,7 @@ impl Pty {
             .stdin(Stdio::piped())
             // SAFETY: each Stdio takes ownership of its own dup of the slave.
             .stdout(unsafe { Stdio::from(OwnedFd::from_raw_fd(libc::dup(slave_fd))) })
-            .stderr(Stdio::null());
+            .stderr(Stdio::from(std::fs::File::create(db.0.join("stderr.log")).unwrap()));
         // Make the pty the child's controlling terminal so /dev/tty works.
         unsafe {
             use std::os::unix::process::CommandExt;
@@ -101,8 +101,17 @@ impl Pty {
     fn host(&mut self, event_type: &str, payload: serde_json::Value) {
         let line = serde_json::json!({ "event_type": event_type, "payload": payload }).to_string();
         let stdin = self.child.stdin.as_mut().unwrap();
-        writeln!(stdin, "{line}").unwrap();
-        stdin.flush().unwrap();
+        if let Err(e) = writeln!(stdin, "{line}").and_then(|_| stdin.flush()) {
+            panic!("{e} sending {event_type}; child: {}", self.child_report());
+        }
+    }
+
+    /// Exit status and stderr of the renderer, for when it dies mid-test.
+    fn child_report(&mut self) -> String {
+        std::thread::sleep(Duration::from_millis(100));
+        let status = self.child.try_wait().ok().flatten();
+        let stderr = std::fs::read_to_string(self._db.0.join("stderr.log")).unwrap_or_default();
+        format!("status {status:?}, stderr:\n{stderr}")
     }
 
     fn keys(&mut self, bytes: &[u8]) {
@@ -116,13 +125,18 @@ impl Pty {
 
     /// Wait until the emulated screen (or scrollback) shows `needle`.
     fn wait_for(&self, needle: &str) -> Vec<String> {
+        self.wait_until(needle, |l| l.contains(needle))
+    }
+
+    /// Wait until some screen (or scrollback) line satisfies `pred`.
+    fn wait_until(&self, what: &str, pred: impl Fn(&str) -> bool) -> Vec<String> {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let all = self.all_lines();
-            if all.iter().any(|l| l.contains(needle)) {
+            if all.iter().any(|l| pred(l)) {
                 return all;
             }
-            assert!(Instant::now() < deadline, "timed out waiting for {needle:?}; screen:\n{}", all.join("\n"));
+            assert!(Instant::now() < deadline, "timed out waiting for {what:?}; screen:\n{}", all.join("\n"));
             std::thread::sleep(Duration::from_millis(20));
         }
     }
@@ -211,7 +225,9 @@ fn a_turn_renders_inline_and_stays_after_exit() {
     t.keys("The café build fails 👍".as_bytes());
     t.wait_for("The café build fails 👍");
     t.keys(b"\r");
-    t.wait_for("› The café build fails 👍");
+    // The input box also shows "› …" before Enter lands; wait for the
+    // submitted transcript line so host events can't race the keypress.
+    t.wait_until("submitted prompt", |l| l.starts_with("› The café build fails 👍"));
 
     t.host("StatusUpdate", serde_json::json!({ "segments": { "phase": "thinking" } }));
     t.host("ToolExecutionStarted", serde_json::json!({ "tool_id": "t1", "tool": "Bash", "command": "npm run build" }));
