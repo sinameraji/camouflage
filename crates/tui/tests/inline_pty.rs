@@ -116,13 +116,18 @@ impl Pty {
 
     /// Wait until the emulated screen (or scrollback) shows `needle`.
     fn wait_for(&self, needle: &str) -> Vec<String> {
+        self.wait_until(needle, |l| l.contains(needle))
+    }
+
+    /// Wait until some screen (or scrollback) line satisfies `pred`.
+    fn wait_until(&self, what: &str, pred: impl Fn(&str) -> bool) -> Vec<String> {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let all = self.all_lines();
-            if all.iter().any(|l| l.contains(needle)) {
+            if all.iter().any(|l| pred(l)) {
                 return all;
             }
-            assert!(Instant::now() < deadline, "timed out waiting for {needle:?}; screen:\n{}", all.join("\n"));
+            assert!(Instant::now() < deadline, "timed out waiting for {what:?}; screen:\n{}", all.join("\n"));
             std::thread::sleep(Duration::from_millis(20));
         }
     }
@@ -211,7 +216,9 @@ fn a_turn_renders_inline_and_stays_after_exit() {
     t.keys("The café build fails 👍".as_bytes());
     t.wait_for("The café build fails 👍");
     t.keys(b"\r");
-    t.wait_for("› The café build fails 👍");
+    // The input box also shows "› …" before Enter lands; wait for the
+    // submitted transcript line so host events can't race the keypress.
+    t.wait_until("submitted prompt", |l| l.starts_with("› The café build fails 👍"));
 
     t.host("StatusUpdate", serde_json::json!({ "segments": { "phase": "thinking" } }));
     t.host("ToolExecutionStarted", serde_json::json!({ "tool_id": "t1", "tool": "Bash", "command": "npm run build" }));
