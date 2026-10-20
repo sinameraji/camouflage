@@ -490,6 +490,7 @@ impl Session {
 
                 let mut compact_path = None;
                 let mut compact_has_diff = false;
+                let mut compact_diff: Option<(String, Vec<crate::blocks::DiffLine>)> = None;
                 let mut compact_failure = None;
 
                 if let Some(t) = self.tool_mut(id, idx) {
@@ -527,6 +528,27 @@ impl Session {
                     }
                     compact_path = t.diff.as_ref().map(|(path, _)| path.clone());
                     compact_has_diff = t.diff.is_some();
+                    compact_diff = t.diff.as_ref().map(|(path, diff)| {
+                        let preview = diff
+                            .iter()
+                            .take(crate::compact::MAX_CODE_PREVIEW_LINES)
+                            .cloned()
+                            .map(|mut line| {
+                                line.text = line
+                                    .text
+                                    .chars()
+                                    .take(crate::compact::MAX_CODE_PREVIEW_CHARS)
+                                    .collect();
+                                line
+                            })
+                            .collect();
+                        (
+                            path.chars()
+                                .take(crate::compact::MAX_CODE_PREVIEW_PATH_CHARS)
+                                .collect(),
+                            preview,
+                        )
+                    });
                     compact_failure = t.summary.clone();
                 }
 
@@ -538,6 +560,11 @@ impl Session {
                     compact_has_diff,
                     now,
                 );
+                if ok {
+                    if let Some((path, diff)) = compact_diff {
+                        self.compact.push_code_preview(&path, &diff, now);
+                    }
+                }
 
                 match idx {
                     None => self.finish(id),
@@ -563,6 +590,7 @@ impl Session {
                 t.status = ToolStatus::Ok;
                 t.summary = Some(format!("Proposed · +{a} −{r}"));
                 if !lines.is_empty() {
+                    self.compact.push_code_preview(&path, &lines, now);
                     t.diff = Some((path, lines));
                 }
                 self.push_done(Block::Tool(t));
@@ -3911,5 +3939,54 @@ mod tests {
         assert!(live_text(&s, 1_700)
             .iter()
             .any(|line| line.contains("Read src/readme.md")));
+    }
+
+    #[test]
+    fn active_turn_shows_recent_edit_code_as_a_rotating_glimpse() {
+        let mut s = session();
+        s.apply(
+            &ev(
+                EventType::UserMessageCreated,
+                json!({"text": "change the value"}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantStreamStarted,
+                json!({"stream_id": "turn"}),
+            ),
+            50,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({"tool_id": "edit", "tool": "Write", "command": "src/lib.rs"}),
+            ),
+            100,
+        );
+        s.apply(&ev(EventType::ToolExecutionFinished, json!({
+            "tool_id": "edit",
+            "exit_code": 0,
+            "diff": {"path": "src/lib.rs", "before": "fn answer() {\n    41\n}\n", "after": "fn answer() {\n    const value = 42;\n}\n"}
+        })), 500);
+
+        let shown = live_text(&s, 500);
+        assert!(
+            shown
+                .iter()
+                .any(|line| line.contains("Code glimpse · src/lib.rs")),
+            "{shown:?}"
+        );
+        assert!(
+            shown.iter().any(|line| line.contains("const value = 42")),
+            "{shown:?}"
+        );
+        assert!(
+            !live_text(&s, 7_500)
+                .iter()
+                .any(|line| line.contains("Code glimpse")),
+            "glimpses pause between rotations"
+        );
     }
 }

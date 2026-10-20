@@ -1,13 +1,17 @@
 //! Compact, bounded live state for a busy turn.
 pub use crate::anim::FRAME_MS;
 use crate::anim::{self, FadeStep};
-use crate::blocks::{PlanItem, PlanStatus, RenderCtx};
+use crate::blocks::{DiffLine, PlanItem, PlanStatus, RenderCtx};
 use crate::style::{Line, Style};
 use crate::theme::Theme;
 use crate::width::{ellipsize_middle, str_width, truncate};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 const MAX_TRAIL_BEADS: usize = 32;
+const MAX_CODE_PREVIEWS: usize = 4;
+pub(crate) const MAX_CODE_PREVIEW_LINES: usize = 96;
+pub(crate) const MAX_CODE_PREVIEW_CHARS: usize = 512;
+pub(crate) const MAX_CODE_PREVIEW_PATH_CHARS: usize = 512;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrailKind {
@@ -61,6 +65,13 @@ pub struct LatestAction {
     pub at: i64,
     pub is_error: bool,
 }
+
+#[derive(Clone, Debug)]
+struct CodePreview {
+    path: String,
+    diff: Vec<DiffLine>,
+    at: i64,
+}
 #[derive(Clone, Debug)]
 pub struct CompactPlanStep {
     pub title: String,
@@ -84,6 +95,7 @@ pub struct CompactState {
     pub plan: Vec<CompactPlanStep>,
     pub agents: Vec<Agent>,
     pub files: usize,
+    code_previews: VecDeque<CodePreview>,
 }
 impl CompactState {
     pub fn new() -> Self {
@@ -95,6 +107,27 @@ impl CompactState {
     }
     pub fn clear(&mut self) {
         *self = Self::default();
+    }
+    pub fn push_code_preview(&mut self, path: &str, diff: &[DiffLine], now: i64) {
+        if diff.is_empty() {
+            return;
+        }
+        self.code_previews.push_back(CodePreview {
+            path: path.chars().take(MAX_CODE_PREVIEW_PATH_CHARS).collect(),
+            diff: diff
+                .iter()
+                .take(MAX_CODE_PREVIEW_LINES)
+                .cloned()
+                .map(|mut line| {
+                    line.text = line.text.chars().take(MAX_CODE_PREVIEW_CHARS).collect();
+                    line
+                })
+                .collect(),
+            at: now,
+        });
+        while self.code_previews.len() > MAX_CODE_PREVIEWS {
+            self.code_previews.pop_front();
+        }
     }
     fn push_bead(&mut self, kind: TrailKind, at: i64) -> usize {
         if self.beads.len() == MAX_TRAIL_BEADS {
@@ -223,8 +256,69 @@ impl CompactState {
                 out.push(render_latest(a, age, width, theme));
             }
         }
+        out.extend(render_code_glimpse(self, ctx, width, theme));
         out
     }
+}
+fn render_code_glimpse(
+    state: &CompactState,
+    ctx: RenderCtx,
+    width: usize,
+    theme: &Theme,
+) -> Vec<Line> {
+    const CYCLE_MS: i64 = 9_000;
+    const VISIBLE_MS: i64 = 6_200;
+    const LINES_PER_GLIMPSE: usize = 4;
+
+    let Some(latest) = state.code_previews.back() else {
+        return Vec::new();
+    };
+    let age = ctx.now_ms.saturating_sub(latest.at).max(0);
+    if age.rem_euclid(CYCLE_MS) >= VISIBLE_MS {
+        return Vec::new();
+    }
+
+    let count = state.code_previews.len();
+    let rotation = (age / CYCLE_MS) as usize;
+    let preview_index = count.saturating_sub(1).saturating_sub(rotation % count);
+    let preview = &state.code_previews[preview_index];
+    let sections = preview.diff.len().div_ceil(LINES_PER_GLIMPSE).max(1);
+    let section = ((age % CYCLE_MS) / (CYCLE_MS / 2)) as usize % sections;
+    let start = section * LINES_PER_GLIMPSE;
+    let end = (start + LINES_PER_GLIMPSE).min(preview.diff.len());
+
+    let mut title = Line::raw("  ");
+    title.push("Code glimpse", theme.accent().bold());
+    title.push(" · ", theme.dim());
+    title.push(
+        crate::width::truncate(&preview.path, width.saturating_sub(18)),
+        theme.dim(),
+    );
+    let section = &preview.diff[start..end];
+    let number_width = section
+        .iter()
+        .filter_map(|line| line.line_no)
+        .max()
+        .map(|number| number.to_string().len())
+        .unwrap_or(1)
+        .max(3);
+    let text_width = width.saturating_sub(4 + number_width + 3).max(1);
+    let clipped: Vec<_> = section
+        .iter()
+        .cloned()
+        .map(|mut line| {
+            line.text = truncate(&line.text, text_width);
+            line
+        })
+        .collect();
+    let mut out = vec![title];
+    out.extend(crate::blocks::render_diff(
+        &preview.path,
+        &clipped,
+        width,
+        theme,
+    ));
+    out
 }
 fn safe_text(s: &str, theme: &Theme) -> String {
     let flat = crate::blocks::flat(s).replace(" ⏎ ", " ");
