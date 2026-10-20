@@ -422,6 +422,7 @@ impl Session {
 
                 // Collect compact region data before mutating the tool.
                 let compact_info = self.tool_compact_info(id, idx);
+                let mut code_preview = None;
 
                 if let Some(t) = self.tool_mut(id, idx) {
                     t.status = status;
@@ -449,6 +450,11 @@ impl Session {
                             }
                         }
                     }
+                    code_preview = t.diff.clone();
+                }
+
+                if let Some((path, diff)) = code_preview {
+                    self.compact.code_preview(&path, &diff, now);
                 }
 
                 // Feed the compact region outside the mutable borrow.
@@ -477,6 +483,7 @@ impl Session {
                 t.status = ToolStatus::Ok;
                 t.summary = Some(format!("Proposed · +{a} −{r}"));
                 if !lines.is_empty() {
+                    self.compact.code_preview(&path, &lines, now);
                     t.diff = Some((path, lines));
                 }
                 self.push_done(Block::Tool(t));
@@ -1127,6 +1134,13 @@ impl Session {
             }
             let compact_lines = compact::render_compact(&self.compact, now, self.width, t);
             lines.extend(compact_lines);
+            if self.prompt.is_none() && self.height >= 18 {
+                let glimpse = compact::render_code_glimpse(&self.compact, now, self.width, t);
+                if !glimpse.is_empty() {
+                    lines.push(Line::new());
+                    lines.extend(glimpse);
+                }
+            }
         } else if busy && self.prompt.is_none() {
             // Traditional plan + spinner when compact is not active.
             if let Some(plan) = &self.plan {
@@ -1929,6 +1943,25 @@ mod tests {
         assert_eq!(history_text(&mut s, 500), vec!["", "✓ Bash make"]);
         assert_eq!(s.held_blocks(), 0);
         assert!(history_text(&mut s, 600).is_empty());
+    }
+
+    #[test]
+    fn active_turn_shows_recent_edit_code_as_a_rotating_glimpse() {
+        let mut s = session();
+        s.apply(&ev(EventType::UserMessageCreated, json!({"text": "change the value"})), 0);
+        s.apply(&ev(EventType::AssistantStreamStarted, json!({"stream_id": "turn"})), 50);
+        s.apply(&ev(EventType::ToolExecutionStarted, json!({"tool_id": "edit", "tool": "Write", "command": "src/lib.rs"})), 100);
+        s.apply(&ev(EventType::ToolExecutionFinished, json!({
+            "tool_id": "edit",
+            "exit_code": 0,
+            "diff": {"path": "src/lib.rs", "before": "fn answer() {\n    41\n}\n", "after": "fn answer() {\n    const value = 42;\n}\n"}
+        })), 500);
+
+        let frame = s.live_frame(500);
+        let shown: Vec<String> = frame.lines.iter().map(|line| line.plain_text()).collect();
+        assert!(shown.iter().any(|line| line.contains("Code glimpse · src/lib.rs")), "{shown:?}");
+        assert!(shown.iter().any(|line| line.contains("const value = 42")), "{shown:?}");
+        assert!(!live_text(&s, 7_500).iter().any(|line| line.contains("Code glimpse")), "glimpses should pause before rotating back");
     }
 
     #[test]

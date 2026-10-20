@@ -12,8 +12,11 @@
 //! 4. Latest action — humanized tool title with typewriter effect
 //! 5. Pulse line — travelling sine wave replacing the spinner
 //! 6. Done message — shown briefly after turn ends
+//!
+//! During longer working turns, recent edit diffs also appear below this
+//! region as rotating, syntax-highlighted code glimpses.
 
-use crate::blocks::{format_elapsed, PlanItem, PlanStatus};
+use crate::blocks::{format_elapsed, render_diff, DiffLine, PlanItem, PlanStatus};
 use crate::style::{Line, Style};
 use crate::theme::Theme;
 use crate::width::str_width;
@@ -120,6 +123,14 @@ pub struct LatestAction {
     pub is_error: bool,
 }
 
+/// A recently edited file that can be glimpsed while the agent keeps working.
+#[derive(Clone, Debug)]
+pub struct CodePreview {
+    pub path: String,
+    pub diff: Vec<DiffLine>,
+    pub at: i64,
+}
+
 /// Accumulated scrollback lines (the <10% that print).
 #[derive(Clone, Debug)]
 pub struct CompactState {
@@ -134,6 +145,8 @@ pub struct CompactState {
     pub trail: Vec<TrailBead>,
     pub latest: Option<LatestAction>,
     pub files: usize,
+    /// Recent file edits shown as occasional syntax-highlighted code glimpses.
+    pub code_previews: VecDeque<CodePreview>,
     /// Lines printed into scrollback.
     pub scrollback: Vec<Line>,
 }
@@ -151,6 +164,7 @@ impl CompactState {
             trail: Vec::new(),
             latest: None,
             files: 0,
+            code_previews: VecDeque::new(),
             scrollback: Vec::new(),
         }
     }
@@ -164,6 +178,7 @@ impl CompactState {
         self.trail.clear();
         self.latest = None;
         self.files = 0;
+        self.code_previews.clear();
     }
 }
 
@@ -177,6 +192,23 @@ impl CompactState {
         self.started_at = now;
         self.ended_at = None;
         self.tokens = 0;
+    }
+
+    /// Add a bounded diff to the rotating code-glimpse queue.
+    pub fn code_preview(&mut self, path: &str, diff: &[DiffLine], now: i64) {
+        if diff.is_empty() {
+            return;
+        }
+        const MAX_PREVIEWS: usize = 4;
+        const MAX_LINES_PER_PREVIEW: usize = 96;
+        self.code_previews.push_back(CodePreview {
+            path: path.to_string(),
+            diff: diff.iter().take(MAX_LINES_PER_PREVIEW).cloned().collect(),
+            at: now,
+        });
+        while self.code_previews.len() > MAX_PREVIEWS {
+            self.code_previews.pop_front();
+        }
     }
 
     /// Apply a user message event.
@@ -359,6 +391,38 @@ pub fn render_compact(state: &CompactState, now: i64, width: usize, theme: &Them
     }
 
     lines
+}
+
+/// Render one recent code section during alternating intervals of the busy
+/// state. Different files and hunks rotate every few seconds without a timer
+/// of their own; the normal compact activity remains visible between glimpses.
+pub fn render_code_glimpse(state: &CompactState, now: i64, width: usize, theme: &Theme) -> Vec<Line> {
+    const CYCLE_MS: i64 = 9_000;
+    const VISIBLE_MS: i64 = 6_200;
+    const LINES_PER_GLIMPSE: usize = 4;
+
+    let Some(latest) = state.code_previews.back() else { return Vec::new() };
+    let age = (now - latest.at).max(0);
+    if age.rem_euclid(CYCLE_MS) >= VISIBLE_MS {
+        return Vec::new();
+    }
+
+    let count = state.code_previews.len();
+    let rotation = (age / CYCLE_MS) as usize;
+    let preview_index = count.saturating_sub(1).saturating_sub(rotation % count);
+    let preview = &state.code_previews[preview_index];
+    let sections = preview.diff.len().div_ceil(LINES_PER_GLIMPSE).max(1);
+    let section = ((age / (CYCLE_MS / 2)) as usize) % sections;
+    let start = section * LINES_PER_GLIMPSE;
+    let end = (start + LINES_PER_GLIMPSE).min(preview.diff.len());
+
+    let mut title = Line::raw("  ");
+    title.push("Code glimpse", theme.accent().bold());
+    title.push(" · ", theme.dim());
+    title.push(crate::width::truncate(&preview.path, width.saturating_sub(18)), theme.dim());
+    let mut out = vec![title];
+    out.extend(render_diff(&preview.path, &preview.diff[start..end], width, theme));
+    out
 }
 
 /// Render the plan bar: `◆ Plan ▰▰▱▱▱▱▱ 2/7  <active step title>`.
@@ -668,6 +732,7 @@ pub fn render_compact_width_aware(state: &CompactState, now: i64, width: usize, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blocks::DiffKind;
 
     fn theme() -> Theme {
         Theme::default()
@@ -729,6 +794,29 @@ mod tests {
         // At 13s, scout has been home for 8s > 7s, line should be gone
         let lines = render_compact(&state, 13000, 80, &theme());
         assert!(!lines.iter().any(|l| l.plain_text().contains("scout")));
+    }
+
+    #[test]
+    fn code_glimpses_rotate_sections_and_pause_between_showings() {
+        let mut state = CompactState::new();
+        state.user_message("edit file", 0, &theme());
+        let diff = vec![
+            DiffLine { line_no: Some(1), kind: DiffKind::Context, text: "fn answer() {".into() },
+            DiffLine { line_no: Some(2), kind: DiffKind::Del, text: "    41".into() },
+            DiffLine { line_no: Some(2), kind: DiffKind::Add, text: "    const value = 42;".into() },
+            DiffLine { line_no: Some(3), kind: DiffKind::Context, text: "}".into() },
+            DiffLine { line_no: Some(4), kind: DiffKind::Add, text: "// second section".into() },
+        ];
+        state.code_preview("src/lib.rs", &diff, 1_000);
+
+        let first = render_code_glimpse(&state, 1_000, 80, &theme());
+        assert!(first.iter().any(|line| line.plain_text().contains("Code glimpse · src/lib.rs")));
+        assert!(first.iter().any(|line| line.plain_text().contains("const value = 42")));
+        assert!(first.iter().flat_map(|line| &line.spans).any(|span| span.text.contains("const") && span.style.fg == crate::style::Color::Magenta));
+
+        let second = render_code_glimpse(&state, 5_500, 80, &theme());
+        assert!(second.iter().any(|line| line.plain_text().contains("second section")));
+        assert!(render_code_glimpse(&state, 8_000, 80, &theme()).is_empty(), "leave a quiet interval between glimpses");
     }
 
     #[test]
