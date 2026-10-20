@@ -1,0 +1,13 @@
+{"event_type":"SessionStarted","payload":{"title":"Camouflage busy-turn animation","detail":["gpt-6-luna · ~/project · main","inline renderer visual smoke"],"accent":"cyan","assistant_label":"assistant"}}
+{"event_type":"UserMessageCreated","payload":{"text":"Inspect the renderer and run the focused checks."}}
+{"event_type":"StatusUpdate","payload":{"segments":{"phase":"thinking","model":"gpt-6-luna"}}}
+{"event_type":"TodoListUpdate","payload":{"todos":[{"id":"inspect","title":"Inspect the inline event flow","status":"completed"},{"id":"render","title":"Update busy-turn rendering","status":"in_progress"},{"id":"checks","title":"Run regression checks","status":"pending"},{"id":"review","title":"Review the visual result","status":"pending"}]}}
+{"event_type":"ActivityUpdate","payload":{"id":"agent-1","kind":"agent","title":"Scout renderer edge cases","status":"running","started_at_ms":1000}}
+{"event_type":"ToolExecutionStarted","payload":{"tool_id":"read-1","tool":"Read","command":"Read crates/inline/src/session.rs","started_at_ms":1200}}
+{"event_type":"ToolExecutionFinished","payload":{"tool_id":"read-1","exit_code":0,"summary":"Session flow and renderer state"}}
+{"event_type":"ToolExecutionStarted","payload":{"tool_id":"edit-1","tool":"Edit","command":"Edit crates/inline/src/compact.rs","started_at_ms":1600}}
+{"event_type":"ToolExecutionFinished","payload":{"tool_id":"edit-1","exit_code":0,"diff":{"path":"crates/inline/src/compact.rs","before":"let old = true;\n","after":"let new = true;\n"}}}
+{"event_type":"ToolExecutionStarted","payload":{"tool_id":"bash-1","tool":"Bash","command":"cargo test -p camouflage-inline","started_at_ms":2000}}
+{"event_type":"ToolExecutionStdout","payload":{"tool_id":"bash-1","chunk":"Compiling camouflage-inline v0.1.0\n"}}
+{"event_type":"AssistantStreamStarted","payload":{"stream_id":"stream-1"}}
+{"event_type":"AssistantTokenDelta","payload":{"stream_id":"stream-1","token":"The compact live region now tracks this turn.\n\n- One shared animation clock\n- A short, bounded tool trail\n- A fresh elapsed timer\n"}}

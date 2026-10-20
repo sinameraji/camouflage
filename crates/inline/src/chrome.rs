@@ -1,7 +1,8 @@
 //! The live region's fixed parts: spinner line, input box, pickers, prompts,
 //! and footer. Only these (plus unfinished blocks) are ever redrawn.
 
-use crate::blocks::{format_elapsed, render_diff, DiffLine, SPINNER};
+use crate::anim;
+use crate::blocks::{format_elapsed, render_diff, DiffLine};
 use crate::editor::Editor;
 use crate::style::{Color, Line, Span, Style};
 use crate::theme::Theme;
@@ -11,24 +12,75 @@ use unicode_segmentation::UnicodeSegmentation;
 /// `⠹ Editing session.ts… (12s · ↓ 1.2k tokens · esc to interrupt)`.
 /// A brighter band sweeps across the verb so the line reads as alive even
 /// when the numbers don't change.
-pub fn spinner_line(theme: &Theme, frame: usize, verb: &str, elapsed_ms: u64, tokens: Option<u64>, width: usize) -> Line {
+pub fn spinner_line(
+    theme: &Theme,
+    frame: usize,
+    verb: &str,
+    elapsed_ms: u64,
+    tokens: Option<u64>,
+    width: usize,
+) -> Line {
     let mut line = Line::new();
-    line.push(SPINNER[frame % SPINNER.len()], theme.accent());
+    line.push(
+        theme.glyphs.spinner[frame % theme.glyphs.spinner.len()],
+        theme.accent(),
+    );
     line.push(" ", Style::new());
-    let label = format!("{verb}…");
+    let elapsed = format_elapsed(elapsed_ms);
+    let sep = if theme.glyphs.ascii { " | " } else { " · " };
+    let mut meta = if width >= 60 {
+        let mut m = format!("{sep}{elapsed}");
+        if let Some(t) = tokens {
+            if theme.glyphs.ascii {
+                m.push_str(&format!("{sep}tokens {}", format_count(t)));
+            } else {
+                m.push_str(&format!("{sep}↓ {} tokens", format_count(t)));
+            }
+        }
+        m.push_str(&format!("{sep}esc to interrupt"));
+        m
+    } else {
+        format!("{sep}{elapsed}")
+    };
+    let raw = if theme.glyphs.ascii {
+        verb.chars()
+            .map(|c| if c.is_ascii() { c } else { '?' })
+            .collect::<String>()
+    } else {
+        verb.to_string()
+    };
+    let suffix = if theme.glyphs.ascii { "." } else { "…" };
+    let mut label = format!("{raw}{suffix}");
+    if width
+        .saturating_sub(line.width())
+        .saturating_sub(str_width(&meta))
+        < 1
+    {
+        meta.clear();
+    }
+    let room = width
+        .saturating_sub(line.width())
+        .saturating_sub(str_width(&meta));
+    if str_width(&label) > room {
+        label = truncate(&label, room);
+        if theme.glyphs.ascii {
+            label = label.replace('…', ".");
+        }
+    }
     let gs: Vec<&str> = label.graphemes(true).collect();
-    let span = gs.len() + 6;
-    let head = frame % span;
+    let head = anim::shimmer_band(frame as u64, gs.len());
     for (i, g) in gs.iter().enumerate() {
-        let lit = i + 2 >= head && i <= head;
-        line.push(*g, if lit { theme.accent().bold() } else { theme.accent() });
+        let lit = head < gs.len() && i >= head && i < head + 3;
+        line.push(
+            *g,
+            if lit {
+                theme.accent().bold()
+            } else {
+                theme.accent()
+            },
+        );
     }
-    let mut meta = format!(" ({}", format_elapsed(elapsed_ms));
-    if let Some(t) = tokens {
-        meta.push_str(&format!(" · ↓ {} tokens", format_count(t)));
-    }
-    meta.push_str(" · esc to interrupt)");
-    if line.width() + str_width(&meta) <= width {
+    if !meta.is_empty() && line.width() + str_width(&meta) <= width {
         line.push(meta, theme.dim());
     }
     line
@@ -82,7 +134,8 @@ pub fn input_box(
         let (cr, cc) = editor.cursor_pos(text_w);
         // Keep the cursor row visible when the input is taller than allowed.
         let visible = max_rows.max(1);
-        let first = if cr >= visible { cr + 1 - visible } else { 0 }.min(rows.len().saturating_sub(visible));
+        let first = if cr >= visible { cr + 1 - visible } else { 0 }
+            .min(rows.len().saturating_sub(visible));
         for (i, r) in rows.iter().enumerate().skip(first).take(visible) {
             let mut l = Line::new();
             l.push(if i == 0 { "› " } else { "  " }, theme.accent());
@@ -93,7 +146,10 @@ pub fn input_box(
     };
 
     let mut out = Vec::with_capacity(rows_out.len() + 2);
-    out.push(Line::styled(format!("╭{}╮", "─".repeat(width.saturating_sub(2))), border));
+    out.push(Line::styled(
+        format!("╭{}╮", "─".repeat(width.saturating_sub(2))),
+        border,
+    ));
     for r in rows_out {
         let pad = inner.saturating_sub(r.width());
         let mut l = Line::styled("│ ", border);
@@ -102,7 +158,10 @@ pub fn input_box(
         l.push(" │", border);
         out.push(l);
     }
-    out.push(Line::styled(format!("╰{}╯", "─".repeat(width.saturating_sub(2))), border));
+    out.push(Line::styled(
+        format!("╰{}╯", "─".repeat(width.saturating_sub(2))),
+        border,
+    ));
     (out, (cursor.0 + 1, cursor.1 + 2))
 }
 
@@ -159,13 +218,29 @@ pub struct PickItem {
 }
 
 /// A list under the input box (`/` commands, `@` files).
-pub fn picker(theme: &Theme, items: &[PickItem], selected: usize, width: usize, max_rows: usize) -> Vec<Line> {
+pub fn picker(
+    theme: &Theme,
+    items: &[PickItem],
+    selected: usize,
+    width: usize,
+    max_rows: usize,
+) -> Vec<Line> {
     if items.is_empty() {
         return Vec::new();
     }
     let rows = max_rows.max(1).min(items.len());
-    let first = if selected >= rows { selected + 1 - rows } else { 0 };
-    let label_w = items.iter().map(|i| str_width(&i.label)).max().unwrap_or(0).min(width / 2).max(8);
+    let first = if selected >= rows {
+        selected + 1 - rows
+    } else {
+        0
+    };
+    let label_w = items
+        .iter()
+        .map(|i| str_width(&i.label))
+        .max()
+        .unwrap_or(0)
+        .min(width / 2)
+        .max(8);
     let mut out = Vec::new();
     for (i, it) in items.iter().enumerate().skip(first).take(rows) {
         let sel = i == selected;
@@ -177,7 +252,11 @@ pub fn picker(theme: &Theme, items: &[PickItem], selected: usize, width: usize, 
             if used + gw > label_w {
                 break;
             }
-            let style = if it.hits.contains(&bi) || sel { base.bold() } else { base };
+            let style = if it.hits.contains(&bi) || sel {
+                base.bold()
+            } else {
+                base
+            };
             l.push(g, style);
             used += gw;
         }
@@ -185,13 +264,19 @@ pub fn picker(theme: &Theme, items: &[PickItem], selected: usize, width: usize, 
             l.push(" ".repeat(label_w - used + 2), Style::new());
             let room = width.saturating_sub(2 + label_w + 2);
             if room > 3 {
-                l.push(truncate(h, room), if sel { Style::new() } else { theme.dim() });
+                l.push(
+                    truncate(h, room),
+                    if sel { Style::new() } else { theme.dim() },
+                );
             }
         }
         out.push(l);
     }
     if items.len() > rows {
-        out.push(Line::styled(format!("  {}/{}", selected + 1, items.len()), theme.dim()));
+        out.push(Line::styled(
+            format!("  {}/{}", selected + 1, items.len()),
+            theme.dim(),
+        ));
     }
     out
 }
@@ -230,7 +315,11 @@ pub fn prompt_box(theme: &Theme, p: &PromptView, width: usize, max_rows: usize) 
     let inner = width.saturating_sub(4).max(8);
     let mut content: Vec<Line> = vec![Line::styled(truncate(&p.title, inner), theme.strong())];
     if let Some(s) = &p.subtitle {
-        content.extend(wrap(&Line::styled(s.clone(), theme.dim()), inner, &Line::new()));
+        content.extend(wrap(
+            &Line::styled(s.clone(), theme.dim()),
+            inner,
+            &Line::new(),
+        ));
     }
     if let Some(diff_lines) = &p.diff_lines {
         content.push(Line::new());
@@ -240,7 +329,10 @@ pub fn prompt_box(theme: &Theme, p: &PromptView, width: usize, max_rows: usize) 
         if lines.len() > budget {
             let more = lines.len() - budget;
             lines.truncate(budget);
-            lines.push(Line::styled(format!("    … +{more} more lines"), theme.dim()));
+            lines.push(Line::styled(
+                format!("    … +{more} more lines"),
+                theme.dim(),
+            ));
         }
         content.extend(lines.into_iter().map(|mut l| {
             l.fill = None;
@@ -255,9 +347,20 @@ pub fn prompt_box(theme: &Theme, p: &PromptView, width: usize, max_rows: usize) 
     let label_w = p.options.iter().map(|o| str_width(o)).max().unwrap_or(0);
     let ncols = p.columns.iter().map(Vec::len).max().unwrap_or(0);
     let col_w: Vec<usize> = (0..ncols)
-        .map(|c| p.columns.iter().filter_map(|r| r.get(c)).map(|v| str_width(v)).max().unwrap_or(0))
+        .map(|c| {
+            p.columns
+                .iter()
+                .filter_map(|r| r.get(c))
+                .map(|v| str_width(v))
+                .max()
+                .unwrap_or(0)
+        })
         .collect();
-    let num_w = if p.numbered { format!("{}. ", p.options.len()).len() } else { 0 };
+    let num_w = if p.numbered {
+        format!("{}. ", p.options.len()).len()
+    } else {
+        0
+    };
     for (i, o) in p.options.iter().enumerate() {
         if let Some(Some(header)) = p.sections.get(i) {
             if i > 0 {
@@ -269,17 +372,43 @@ pub fn prompt_box(theme: &Theme, p: &PromptView, width: usize, max_rows: usize) 
         let mut l = Line::new();
         l.push(if sel { "› " } else { "  " }, theme.accent());
         if p.numbered {
-            l.push(format!("{:<num_w$}", format!("{}. ", i + 1)), if sel { theme.accent() } else { theme.dim() });
+            l.push(
+                format!("{:<num_w$}", format!("{}. ", i + 1)),
+                if sel { theme.accent() } else { theme.dim() },
+            );
         }
         if let Some(Some(on)) = p.states.get(i) {
-            l.push(if *on { "● " } else { "○ " }, if *on { theme.ok() } else { theme.dim() });
+            l.push(
+                if *on {
+                    theme.glyphs.radio_on
+                } else {
+                    theme.glyphs.radio_off
+                },
+                if *on { theme.ok() } else { theme.dim() },
+            )
+            .push(" ", Style::new());
         }
-        let label_style = if sel { theme.accent().bold() } else { Style::new() };
+        let label_style = if sel {
+            theme.accent().bold()
+        } else {
+            Style::new()
+        };
         if ncols > 0 {
-            l.push(format!("{}{}", o, " ".repeat(label_w.saturating_sub(str_width(o)))), label_style);
+            l.push(
+                format!("{}{}", o, " ".repeat(label_w.saturating_sub(str_width(o)))),
+                label_style,
+            );
             for (c, w) in col_w.iter().enumerate() {
-                let v = p.columns.get(i).and_then(|r| r.get(c)).cloned().unwrap_or_default();
-                l.push(format!("  {}{}", " ".repeat(w.saturating_sub(str_width(&v))), v), theme.dim());
+                let v = p
+                    .columns
+                    .get(i)
+                    .and_then(|r| r.get(c))
+                    .cloned()
+                    .unwrap_or_default();
+                l.push(
+                    format!("  {}{}", " ".repeat(w.saturating_sub(str_width(&v))), v),
+                    theme.dim(),
+                );
             }
         } else {
             l.push(o.clone(), label_style);
@@ -292,7 +421,11 @@ pub fn prompt_box(theme: &Theme, p: &PromptView, width: usize, max_rows: usize) 
         }
         if let Some(Some(h)) = p.hints.get(i) {
             let used = l.width();
-            let col = if ncols > 0 { used + 2 } else { used.max(40.min(inner / 2)) + 2 };
+            let col = if ncols > 0 {
+                used + 2
+            } else {
+                used.max(40.min(inner / 2)) + 2
+            };
             if col + 4 < inner {
                 l.push(" ".repeat(col - used), Style::new());
                 l.push(truncate(h, inner - col), theme.dim());
@@ -302,7 +435,10 @@ pub fn prompt_box(theme: &Theme, p: &PromptView, width: usize, max_rows: usize) 
     }
 
     let border = theme.accent();
-    let mut out = vec![Line::styled(format!("╭{}╮", "─".repeat(width.saturating_sub(2))), border)];
+    let mut out = vec![Line::styled(
+        format!("╭{}╮", "─".repeat(width.saturating_sub(2))),
+        border,
+    )];
     for c in content {
         let pad = inner.saturating_sub(c.width());
         let mut l = Line::styled("│ ", border);
@@ -311,8 +447,14 @@ pub fn prompt_box(theme: &Theme, p: &PromptView, width: usize, max_rows: usize) 
         l.push(" │", border);
         out.push(l);
     }
-    out.push(Line::styled(format!("╰{}╯", "─".repeat(width.saturating_sub(2))), border));
-    out.push(Line::styled(format!("  {}", truncate(&p.footer, width.saturating_sub(2))), theme.dim()));
+    out.push(Line::styled(
+        format!("╰{}╯", "─".repeat(width.saturating_sub(2))),
+        border,
+    ));
+    out.push(Line::styled(
+        format!("  {}", truncate(&p.footer, width.saturating_sub(2))),
+        theme.dim(),
+    ));
     out
 }
 
@@ -326,7 +468,10 @@ fn clip(line: Line, width: usize) -> Line {
     if line.width() <= width {
         return line;
     }
-    let mut out = Line { spans: Vec::new(), fill: line.fill };
+    let mut out = Line {
+        spans: Vec::new(),
+        fill: line.fill,
+    };
     let mut used = 0;
     for s in line.spans {
         let w = s.width();
@@ -334,7 +479,8 @@ fn clip(line: Line, width: usize) -> Line {
             used += w;
             out.spans.push(s);
         } else {
-            out.spans.push(Span::styled(truncate(&s.text, width - used), s.style));
+            out.spans
+                .push(Span::styled(truncate(&s.text, width - used), s.style));
             break;
         }
     }
@@ -376,8 +522,16 @@ pub fn mode_hint(theme: &Theme, mode: InputMode) -> Vec<Span> {
 pub fn shortcuts(theme: &Theme, width: usize) -> Vec<Line> {
     let cols = [
         ["/ for commands", "@ to mention files", "↑ for history"],
-        ["shift+tab to switch modes", "\\ + enter for a newline", "ctrl+c twice to exit"],
-        ["esc to interrupt", "ctrl+o to expand output", "ctrl+r for reasoning"],
+        [
+            "shift+tab to switch modes",
+            "\\ + enter for a newline",
+            "ctrl+c twice to exit",
+        ],
+        [
+            "esc to interrupt",
+            "ctrl+o to expand output",
+            "ctrl+r for reasoning",
+        ],
     ];
     let col_w = (width.saturating_sub(2)) / 3;
     (0..3)
@@ -405,8 +559,22 @@ mod tests {
 
     #[test]
     fn input_box_shows_placeholder_and_parks_the_cursor() {
-        let (lines, cursor) = input_box(&Theme::default(), &Editor::new(), InputMode::Default, "Ask anything", 20, 8);
-        assert_eq!(text(&lines), vec!["╭──────────────────╮", "│ › Ask anything   │", "╰──────────────────╯"]);
+        let (lines, cursor) = input_box(
+            &Theme::default(),
+            &Editor::new(),
+            InputMode::Default,
+            "Ask anything",
+            20,
+            8,
+        );
+        assert_eq!(
+            text(&lines),
+            vec![
+                "╭──────────────────╮",
+                "│ › Ask anything   │",
+                "╰──────────────────╯"
+            ]
+        );
         assert_eq!(cursor, (1, 4));
     }
 
@@ -423,7 +591,13 @@ mod tests {
 
     #[test]
     fn picker_scrolls_to_keep_the_selection_visible() {
-        let items: Vec<PickItem> = (0..10).map(|i| PickItem { label: format!("/cmd{i}"), hint: Some("does a thing".into()), hits: vec![] }).collect();
+        let items: Vec<PickItem> = (0..10)
+            .map(|i| PickItem {
+                label: format!("/cmd{i}"),
+                hint: Some("does a thing".into()),
+                hits: vec![],
+            })
+            .collect();
         let lines = picker(&Theme::default(), &items, 7, 40, 4);
         let t = text(&lines);
         assert!(t[3].contains("/cmd7"));
@@ -452,7 +626,10 @@ mod tests {
         let t = text(&lines);
         assert!(t.iter().any(|l| l.contains("› 2. Yes, for this session")));
         assert!(t.iter().any(|l| l.contains("3. No  esc")));
-        assert!(lines[..lines.len() - 1].iter().all(|l| l.width() == 40), "{t:?}");
+        assert!(
+            lines[..lines.len() - 1].iter().all(|l| l.width() == 40),
+            "{t:?}"
+        );
     }
 
     #[test]
@@ -466,7 +643,11 @@ mod tests {
             options: vec!["kimi-k2.6".into(), "qwen3-coder".into(), "glm-4.6".into()],
             hints: vec![None, None, None],
             sections: vec![Some("Best & latest".into()), None, Some("Other".into())],
-            columns: vec![vec!["256k".into(), "$0.60 / $2.50".into()], vec!["1M".into(), "free".into()], vec!["200k".into(), "$0.40 / $1.75".into()]],
+            columns: vec![
+                vec!["256k".into(), "$0.60 / $2.50".into()],
+                vec!["1M".into(), "free".into()],
+                vec!["200k".into(), "$0.40 / $1.75".into()],
+            ],
             states: vec![None, None, Some(false)],
             current: Some(0),
             selected: 1,
@@ -475,17 +656,35 @@ mod tests {
         };
         let t = text(&prompt_box(&Theme::default(), &p, 70, 30));
         assert!(t.iter().any(|l| l.contains("Best & latest")));
-        assert!(t.iter().any(|l| l.contains("› qwen3-coder    1M           free")), "{t:?}");
-        assert!(t.iter().any(|l| l.contains("kimi-k2.6    256k  $0.60 / $2.50 ✓ current")), "{t:?}");
+        assert!(
+            t.iter()
+                .any(|l| l.contains("› qwen3-coder    1M           free")),
+            "{t:?}"
+        );
+        assert!(
+            t.iter()
+                .any(|l| l.contains("kimi-k2.6    256k  $0.60 / $2.50 ✓ current")),
+            "{t:?}"
+        );
         assert!(t.iter().any(|l| l.contains("○ glm-4.6")), "{t:?}");
     }
 
     #[test]
     fn footer_drops_the_right_side_when_narrow() {
         let t = Theme::default();
-        let wide = footer(&t, mode_hint(&t, InputMode::Default), "kimi-k2.6 · 18.4k tokens · $0.04", 80);
+        let wide = footer(
+            &t,
+            mode_hint(&t, InputMode::Default),
+            "kimi-k2.6 · 18.4k tokens · $0.04",
+            80,
+        );
         assert!(wide.plain_text().ends_with("$0.04"));
-        let narrow = footer(&t, mode_hint(&t, InputMode::Default), "kimi-k2.6 · 18.4k tokens · $0.04", 30);
+        let narrow = footer(
+            &t,
+            mode_hint(&t, InputMode::Default),
+            "kimi-k2.6 · 18.4k tokens · $0.04",
+            30,
+        );
         assert_eq!(narrow.plain_text().trim(), "? for shortcuts");
     }
 
@@ -493,8 +692,11 @@ mod tests {
     fn spinner_line_fits_or_drops_its_meta() {
         let t = Theme::default();
         let l = spinner_line(&t, 3, "Reading", 12_000, Some(1234), 80);
-        assert_eq!(l.plain_text(), "⠸ Reading… (12s · ↓ 1.2k tokens · esc to interrupt)");
+        assert_eq!(
+            l.plain_text(),
+            "⠸ Reading… · 12s · ↓ 1.2k tokens · esc to interrupt"
+        );
         let narrow = spinner_line(&t, 3, "Reading", 12_000, Some(1234), 20);
-        assert_eq!(narrow.plain_text(), "⠸ Reading…");
+        assert_eq!(narrow.plain_text(), "⠸ Reading… · 12s");
     }
 }

@@ -16,7 +16,7 @@ use crate::style::{Line, Span, Style};
 use crate::theme::Theme;
 use crate::width::{ellipsize_middle, str_width, truncate, wrap};
 
-pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+pub const SPINNER: [&str; 10] = crate::glyphs::SPINNER;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolStatus {
@@ -102,17 +102,34 @@ pub enum NoticeKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Block {
-    Welcome { title: String, detail: Vec<String> },
-    User { text: String },
-    Assistant { markdown: String },
+    Welcome {
+        title: String,
+        detail: Vec<String>,
+    },
+    User {
+        text: String,
+    },
+    Assistant {
+        markdown: String,
+    },
     /// The model's reasoning before a reply. Drawn only when the user has
     /// turned reasoning on (Ctrl+R); the session skips it otherwise.
-    Reasoning { text: String },
+    Reasoning {
+        text: String,
+    },
     Tool(ToolBlock),
-    Plan { items: Vec<PlanItem>, live: bool },
-    Notice { kind: NoticeKind, text: String },
+    Plan {
+        items: Vec<PlanItem>,
+        live: bool,
+    },
+    Notice {
+        kind: NoticeKind,
+        text: String,
+    },
     /// Pre-styled lines from the host (the generic escape hatch).
-    Custom { lines: Vec<Line> },
+    Custom {
+        lines: Vec<Line>,
+    },
     /// A run of read-only steps (reads, searches, listings) folded into one
     /// row: `✓ Explored 5 files · 3 searches`.
     Group(GroupBlock),
@@ -132,7 +149,8 @@ pub fn explore_kind(name: &str) -> Option<&'static str> {
     let n = name.to_ascii_lowercase();
     Some(match n.as_str() {
         "read" | "view" | "cat" | "open" | "read_file" => "file",
-        "grep" | "glob" | "find" | "search" | "rg" | "codesearch" | "code_search" | "web_search" | "websearch" => "search",
+        "grep" | "glob" | "find" | "search" | "rg" | "codesearch" | "code_search"
+        | "web_search" | "websearch" => "search",
         "ls" | "list" | "list_dir" | "tree" => "folder",
         "web_fetch" | "webfetch" | "fetch" => "page",
         _ if n.starts_with("lsp_") => "lookup",
@@ -168,12 +186,18 @@ pub fn render_block(block: &Block, width: usize, theme: &Theme, ctx: RenderCtx) 
         Block::Welcome { title, detail } => {
             let mut out = vec![Line::new().with(title.clone(), theme.accent().bold())];
             for d in detail {
-                out.extend(wrap(&Line::styled(d.clone(), theme.dim()), width, &Line::new()));
+                out.extend(wrap(
+                    &Line::styled(d.clone(), theme.dim()),
+                    width,
+                    &Line::new(),
+                ));
             }
             out
         }
         Block::User { text } => render_user(text, width, theme),
-        Block::Assistant { markdown } => indent_lines(render_markdown(markdown, width.saturating_sub(2), theme), 2),
+        Block::Assistant { markdown } => {
+            indent_lines(render_markdown(markdown, width.saturating_sub(2), theme), 2)
+        }
         Block::Reasoning { text } => render_reasoning(text, width, theme),
         Block::Tool(t) => render_tool(t, width, theme, ctx),
         Block::Plan { items, live } => render_plan(items, *live, width, theme),
@@ -185,7 +209,11 @@ pub fn render_block(block: &Block, width: usize, theme: &Theme, ctx: RenderCtx) 
 
 fn render_group(g: &GroupBlock, width: usize, theme: &Theme, ctx: RenderCtx) -> Vec<Line> {
     if ctx.expanded || g.tools.len() == 1 {
-        return g.tools.iter().flat_map(|t| render_tool(t, width, theme, ctx)).collect();
+        return g
+            .tools
+            .iter()
+            .flat_map(|t| render_tool(t, width, theme, ctx))
+            .collect();
     }
     let dim = theme.dim();
     let live = !g.closed || g.tools.iter().any(|t| t.status == ToolStatus::Running);
@@ -197,24 +225,39 @@ fn render_group(g: &GroupBlock, width: usize, theme: &Theme, ctx: RenderCtx) -> 
             None => counts.push((kind, 1)),
         }
     }
-    let failed = g.tools.iter().filter(|t| t.status == ToolStatus::Error).count();
+    let failed = g
+        .tools
+        .iter()
+        .filter(|t| t.status == ToolStatus::Error)
+        .count();
     let glyph = if live {
-        Span::styled(SPINNER[ctx.frame % SPINNER.len()], theme.accent())
+        Span::styled(
+            theme.glyphs.spinner[ctx.frame % theme.glyphs.spinner.len()],
+            theme.accent(),
+        )
     } else if failed == g.tools.len() {
-        Span::styled("✗", theme.err())
+        Span::styled(theme.glyphs.error, theme.err())
     } else {
-        Span::styled("✓", theme.ok())
+        Span::styled(theme.glyphs.success, theme.ok())
     };
     let mut head = Line::from_spans(vec![glyph, Span::raw(" ")]);
     head.push(if live { "Exploring" } else { "Explored" }, Style::new());
-    let summary = counts.iter().map(|(k, n)| plural(*n, k)).collect::<Vec<_>>().join(" · ");
+    let summary = counts
+        .iter()
+        .map(|(k, n)| plural(*n, k))
+        .collect::<Vec<_>>()
+        .join(" · ");
     head.push(format!(" {summary}"), dim);
     if failed > 0 {
         head.push(format!(" · {failed} failed"), theme.warn());
     }
     if !live {
         let start = g.tools.iter().filter_map(|t| t.started_at_ms).min();
-        let end = g.tools.iter().filter_map(|t| Some(t.started_at_ms? + t.elapsed_ms? as i64)).max();
+        let end = g
+            .tools
+            .iter()
+            .filter_map(|t| Some(t.started_at_ms? + t.elapsed_ms? as i64))
+            .max();
         if let (Some(s), Some(e)) = (start, end) {
             if e - s >= 1000 {
                 head.push(format!(" · {}", format_elapsed((e - s) as u64)), dim);
@@ -223,16 +266,25 @@ fn render_group(g: &GroupBlock, width: usize, theme: &Theme, ctx: RenderCtx) -> 
     }
     let mut out = vec![one_line(head, width)];
     if live {
-        if let Some(t) = g.tools.iter().rev().find(|t| t.status == ToolStatus::Running).or(g.tools.last()) {
+        if let Some(t) = g
+            .tools
+            .iter()
+            .rev()
+            .find(|t| t.status == ToolStatus::Running)
+            .or(g.tools.last())
+        {
             let text = format!("{} {}", t.name, flat(&t.args));
-            out.push(Line::styled("  └ ", dim).with(ellipsize_middle(&text, width.saturating_sub(4)), dim));
+            out.push(
+                Line::styled("  └ ", dim)
+                    .with(ellipsize_middle(&text, width.saturating_sub(4)), dim),
+            );
         }
     }
     out
 }
 
 /// Args on one row: newlines shown as ⏎.
-fn flat(s: &str) -> String {
+pub(crate) fn flat(s: &str) -> String {
     s.trim().replace('\n', " ⏎ ")
 }
 
@@ -307,11 +359,14 @@ fn render_user(text: &str, width: usize, theme: &Theme) -> Vec<Line> {
 
 fn status_glyph(t: &ToolBlock, theme: &Theme, ctx: RenderCtx) -> Span {
     match t.status {
-        ToolStatus::Running => Span::styled(SPINNER[ctx.frame % SPINNER.len()], theme.accent()),
-        ToolStatus::Ok => Span::styled("✓", theme.ok()),
-        ToolStatus::Error => Span::styled("✗", theme.err()),
-        ToolStatus::Declined => Span::styled("⊘", theme.warn()),
-        ToolStatus::Stopped => Span::styled("■", theme.dim()),
+        ToolStatus::Running => Span::styled(
+            theme.glyphs.spinner[ctx.frame % theme.glyphs.spinner.len()],
+            theme.accent(),
+        ),
+        ToolStatus::Ok => Span::styled(theme.glyphs.success, theme.ok()),
+        ToolStatus::Error => Span::styled(theme.glyphs.error, theme.err()),
+        ToolStatus::Declined => Span::styled(theme.glyphs.declined, theme.warn()),
+        ToolStatus::Stopped => Span::styled(theme.glyphs.code, theme.dim()),
     }
 }
 
@@ -349,12 +404,16 @@ fn render_tool(t: &ToolBlock, width: usize, theme: &Theme, ctx: RenderCtx) -> Ve
     };
     match t.status {
         ToolStatus::Ok | ToolStatus::Running => {
-            let counts = t.diff.as_ref().map(|(_, d)| crate::diff::count_changes(d)).or_else(|| {
-                let s = t.summary.as_deref()?;
-                let tail = s.rsplit(" · ").next()?;
-                let (a, r) = tail.strip_prefix('+')?.split_once(" −")?;
-                Some((a.parse().ok()?, r.parse().ok()?))
-            });
+            let counts = t
+                .diff
+                .as_ref()
+                .map(|(_, d)| crate::diff::count_changes(d))
+                .or_else(|| {
+                    let s = t.summary.as_deref()?;
+                    let tail = s.rsplit(" · ").next()?;
+                    let (a, r) = tail.strip_prefix('+')?.split_once(" −")?;
+                    Some((a.parse().ok()?, r.parse().ok()?))
+                });
             if let Some((a, r)) = counts {
                 suffix.push(Span::styled(" · ", dim));
                 suffix.push(Span::styled(format!("+{a}"), theme.ok()));
@@ -362,8 +421,14 @@ fn render_tool(t: &ToolBlock, width: usize, theme: &Theme, ctx: RenderCtx) -> Ve
                 suffix.push(Span::styled(format!("−{r}"), theme.err()));
             }
         }
-        ToolStatus::Error => add(t.summary.clone().unwrap_or_else(|| "failed".into()), theme.err()),
-        ToolStatus::Declined => add(t.summary.clone().unwrap_or_else(|| "declined".into()), theme.warn()),
+        ToolStatus::Error => add(
+            t.summary.clone().unwrap_or_else(|| "failed".into()),
+            theme.err(),
+        ),
+        ToolStatus::Declined => add(
+            t.summary.clone().unwrap_or_else(|| "declined".into()),
+            theme.warn(),
+        ),
         ToolStatus::Stopped => add("stopped".into(), dim),
     }
     if let Some(ms) = elapsed {
@@ -377,7 +442,8 @@ fn render_tool(t: &ToolBlock, width: usize, theme: &Theme, ctx: RenderCtx) -> Ve
     head.push(t.name.clone(), Style::new());
     let args = flat(&t.args);
     if !args.is_empty() && args_room > 3 {
-        head.push(" ", Style::new()).push(ellipsize_middle(&args, args_room - 1), dim);
+        head.push(" ", Style::new())
+            .push(ellipsize_middle(&args, args_room - 1), dim);
     }
     head.spans.extend(suffix);
     let mut out = vec![one_line(head, width)];
@@ -394,7 +460,10 @@ fn render_tool(t: &ToolBlock, width: usize, theme: &Theme, ctx: RenderCtx) -> Ve
             const TAIL: usize = 6;
             let shown = &output[output.len().saturating_sub(TAIL)..];
             if output.len() > shown.len() {
-                out.push(Line::styled(format!("    … {} earlier lines", output.len() - shown.len()), dim));
+                out.push(Line::styled(
+                    format!("    … {} earlier lines", output.len() - shown.len()),
+                    dim,
+                ));
             }
             for l in shown {
                 out.push(Line::raw("    ").with(truncate(l.trim_end(), room), theme.err()));
@@ -412,7 +481,8 @@ fn render_tool_full(t: &ToolBlock, width: usize, theme: &Theme, ctx: RenderCtx) 
     let mut head = Line::from_spans(vec![status_glyph(t, theme, ctx), Span::raw(" ")]);
     head.push(t.name.clone(), theme.strong());
     if !t.args.is_empty() {
-        head.push(" ", Style::new()).push(t.args.clone(), Style::new());
+        head.push(" ", Style::new())
+            .push(t.args.clone(), Style::new());
     }
     out.extend(wrap(&head, width, &Line::raw("  ")));
 
@@ -432,7 +502,11 @@ fn render_tool_full(t: &ToolBlock, width: usize, theme: &Theme, ctx: RenderCtx) 
             }
         } else {
             for l in output.iter().rev().take(4).rev() {
-                out.extend(wrap(&Line::styled(format!("{out_indent}{l}"), dim), width, &Line::raw(out_indent)));
+                out.extend(wrap(
+                    &Line::styled(format!("{out_indent}{l}"), dim),
+                    width,
+                    &Line::raw(out_indent),
+                ));
             }
         }
         return out;
@@ -457,8 +531,15 @@ fn render_tool_full(t: &ToolBlock, width: usize, theme: &Theme, ctx: RenderCtx) 
 
     let output = trim_trailing_empty(&t.output);
     if !output.is_empty() {
-        let show = if ctx.expanded { output.len() } else { t.preview.min(output.len()) };
-        let highlighted = t.output_lang.as_deref().map(|lang| highlight(&output[..show].join("\n"), lang));
+        let show = if ctx.expanded {
+            output.len()
+        } else {
+            t.preview.min(output.len())
+        };
+        let highlighted = t
+            .output_lang
+            .as_deref()
+            .map(|lang| highlight(&output[..show].join("\n"), lang));
         for (i, l) in output[..show].iter().enumerate() {
             let mut line = Line::raw(out_indent);
             match &highlighted {
@@ -475,8 +556,15 @@ fn render_tool_full(t: &ToolBlock, width: usize, theme: &Theme, ctx: RenderCtx) 
         let rest = output.len() - show;
         if rest > 0 {
             let noun = if rest == 1 { "line" } else { "lines" };
-            let what = if show > 0 { format!("… +{rest} more {noun}") } else { format!("… {rest} {noun}") };
-            out.push(Line::styled(format!("{out_indent}{what} (ctrl+o to expand)"), dim));
+            let what = if show > 0 {
+                format!("… +{rest} more {noun}")
+            } else {
+                format!("… {rest} {noun}")
+            };
+            out.push(Line::styled(
+                format!("{out_indent}{what} (ctrl+o to expand)"),
+                dim,
+            ));
         }
     }
     out
@@ -492,9 +580,19 @@ fn trim_trailing_empty(lines: &[String]) -> &[String] {
 
 pub fn render_diff(path: &str, diff: &[DiffLine], width: usize, theme: &Theme) -> Vec<Line> {
     let lang = lang_for_path(path);
-    let code = diff.iter().map(|d| d.text.as_str()).collect::<Vec<_>>().join("\n");
+    let code = diff
+        .iter()
+        .map(|d| d.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
     let hl = highlight(&code, lang);
-    let num_w = diff.iter().filter_map(|d| d.line_no).max().map(|n| n.to_string().len()).unwrap_or(1).max(3);
+    let num_w = diff
+        .iter()
+        .filter_map(|d| d.line_no)
+        .max()
+        .map(|n| n.to_string().len())
+        .unwrap_or(1)
+        .max(3);
     let mut out = Vec::new();
     for (i, d) in diff.iter().enumerate() {
         let (sign, sign_style, fill) = match d.kind {
@@ -507,7 +605,11 @@ pub fn render_diff(path: &str, diff: &[DiffLine], width: usize, theme: &Theme) -
         line.fill = fill;
         line.push(format!("{num:>num_w$} "), theme.dim());
         line.push(format!("{sign} "), sign_style);
-        line.spans.extend(hl.get(i).cloned().unwrap_or_else(|| vec![Span::raw(d.text.clone())]));
+        line.spans.extend(
+            hl.get(i)
+                .cloned()
+                .unwrap_or_else(|| vec![Span::raw(d.text.clone())]),
+        );
         let mut indent = Line::raw(" ".repeat(4 + num_w + 3));
         indent.fill = fill;
         out.extend(wrap(&line, width, &indent));
@@ -516,19 +618,41 @@ pub fn render_diff(path: &str, diff: &[DiffLine], width: usize, theme: &Theme) -
 }
 
 fn render_plan(items: &[PlanItem], live: bool, width: usize, theme: &Theme) -> Vec<Line> {
-    let done = items.iter().filter(|i| i.status == PlanStatus::Done).count();
+    let done = items
+        .iter()
+        .filter(|i| i.status == PlanStatus::Done)
+        .count();
     let mut head = Line::new();
-    head.push(if live { "◆ " } else { "◇ " }, if live { theme.accent() } else { theme.dim() });
+    head.push(
+        format!(
+            "{} ",
+            if live {
+                theme.glyphs.plan
+            } else {
+                theme.glyphs.radio_off
+            }
+        ),
+        if live { theme.accent() } else { theme.dim() },
+    );
     head.push("Plan", theme.strong());
-    head.push(format!(" · {done} of {} done{}", items.len(), if live { "" } else { " · stopped here" }), theme.dim());
+    head.push(
+        format!(
+            " · {done} of {} done{}",
+            items.len(),
+            if live { "" } else { " · stopped here" }
+        ),
+        theme.dim(),
+    );
     let mut out = vec![head];
     for it in items {
         let (glyph, gstyle, tstyle) = match it.status {
-            PlanStatus::Done => ("✓ ", theme.ok(), theme.dim().strike()),
-            PlanStatus::InProgress => ("› ", theme.accent(), theme.strong()),
-            PlanStatus::Pending => ("○ ", theme.dim(), Style::new()),
+            PlanStatus::Done => (theme.glyphs.success, theme.ok(), theme.dim().strike()),
+            PlanStatus::InProgress => (theme.glyphs.shell, theme.accent(), theme.strong()),
+            PlanStatus::Pending => (theme.glyphs.radio_off, theme.dim(), Style::new()),
         };
-        let line = Line::raw("  ").with(glyph, gstyle).with(it.title.clone(), tstyle);
+        let line = Line::raw("  ")
+            .with(format!("{glyph} "), gstyle)
+            .with(it.title.clone(), tstyle);
         out.extend(wrap(&line, width, &Line::raw("    ")));
     }
     out
@@ -547,7 +671,11 @@ fn render_reasoning(text: &str, width: usize, theme: &Theme) -> Vec<Line> {
     let style = theme.dim().italic();
     let mut out = Vec::new();
     for (i, line) in shown.split('\n').enumerate() {
-        let head = if i == 0 { Line::raw("  ").with("thinking… ", theme.dim()) } else { Line::raw("  ") };
+        let head = if i == 0 {
+            Line::raw("  ").with("thinking… ", theme.dim())
+        } else {
+            Line::raw("  ")
+        };
         out.extend(wrap(&head.with(line, style), width, &Line::raw("  ")));
     }
     out
@@ -566,8 +694,16 @@ fn render_notice(kind: NoticeKind, text: &str, width: usize, theme: &Theme) -> V
     // the glyph.
     let mut out = Vec::new();
     for (i, line) in text.split('\n').enumerate() {
-        let head = if i == 0 { Line::styled(glyph, gstyle) } else { Line::raw(indent.clone()) };
-        out.extend(wrap(&head.with(line, tstyle), width, &Line::raw(indent.clone())));
+        let head = if i == 0 {
+            Line::styled(glyph, gstyle)
+        } else {
+            Line::raw(indent.clone())
+        };
+        out.extend(wrap(
+            &head.with(line, tstyle),
+            width,
+            &Line::raw(indent.clone()),
+        ));
     }
     out
 }
@@ -581,21 +717,42 @@ mod tests {
     }
 
     fn ctx() -> RenderCtx {
-        RenderCtx { frame: 0, now_ms: 10_000, expanded: false }
+        RenderCtx {
+            frame: 0,
+            now_ms: 10_000,
+            expanded: false,
+        }
     }
 
     #[test]
     fn user_prompt_is_a_band_with_a_dim_marker() {
         let t = Theme::default();
-        let lines = render_block(&Block::User { text: "fix @src/a.ts please".into() }, 40, &t, ctx());
+        let lines = render_block(
+            &Block::User {
+                text: "fix @src/a.ts please".into(),
+            },
+            40,
+            &t,
+            ctx(),
+        );
         assert_eq!(text(&lines), vec!["› fix @src/a.ts please"]);
         assert_eq!(lines[0].fill, t.user_band);
-        assert!(lines[0].spans.iter().any(|s| s.text == "@src/a.ts" && s.style.fg == t.accent));
+        assert!(lines[0]
+            .spans
+            .iter()
+            .any(|s| s.text == "@src/a.ts" && s.style.fg == t.accent));
     }
 
     #[test]
     fn assistant_text_is_indented_without_a_label() {
-        let lines = render_block(&Block::Assistant { markdown: "Found it.".into() }, 40, &Theme::default(), ctx());
+        let lines = render_block(
+            &Block::Assistant {
+                markdown: "Found it.".into(),
+            },
+            40,
+            &Theme::default(),
+            ctx(),
+        );
         assert_eq!(text(&lines), vec!["  Found it."]);
     }
 
@@ -608,8 +765,19 @@ mod tests {
         t.elapsed_ms = Some(2400);
         let lines = render_block(&Block::Tool(t.clone()), 60, &Theme::default(), ctx());
         assert_eq!(text(&lines), vec!["✓ Read src/auth/login.ts · 2s"]);
-        let full = render_block(&Block::Tool(t), 60, &Theme::default(), RenderCtx { expanded: true, ..ctx() });
-        assert_eq!(text(&full), vec!["✓ Read src/auth/login.ts", "  └ 142 lines · 2s"]);
+        let full = render_block(
+            &Block::Tool(t),
+            60,
+            &Theme::default(),
+            RenderCtx {
+                expanded: true,
+                ..ctx()
+            },
+        );
+        assert_eq!(
+            text(&full),
+            vec!["✓ Read src/auth/login.ts", "  └ 142 lines · 2s"]
+        );
     }
 
     #[test]
@@ -644,12 +812,36 @@ mod tests {
             t.elapsed_ms = Some(1500);
             t
         };
-        let g = GroupBlock { tools: vec![tool("Read", "a.ts"), tool("Read", "b.ts"), tool("Grep", "foo"), tool("Glob", "*.rs")], closed: true };
-        assert_eq!(text(&render_block(&Block::Group(g.clone()), 60, &Theme::default(), ctx())), vec!["✓ Explored 2 files · 2 searches · 1s"]);
+        let g = GroupBlock {
+            tools: vec![
+                tool("Read", "a.ts"),
+                tool("Read", "b.ts"),
+                tool("Grep", "foo"),
+                tool("Glob", "*.rs"),
+            ],
+            closed: true,
+        };
+        assert_eq!(
+            text(&render_block(
+                &Block::Group(g.clone()),
+                60,
+                &Theme::default(),
+                ctx()
+            )),
+            vec!["✓ Explored 2 files · 2 searches · 1s"]
+        );
         let mut live = g;
         live.closed = false;
         live.tools[3].status = ToolStatus::Running;
-        assert_eq!(text(&render_block(&Block::Group(live), 60, &Theme::default(), ctx())), vec!["⠋ Exploring 2 files · 2 searches", "  └ Glob *.rs"]);
+        assert_eq!(
+            text(&render_block(
+                &Block::Group(live),
+                60,
+                &Theme::default(),
+                ctx()
+            )),
+            vec!["⠋ Exploring 2 files · 2 searches", "  └ Glob *.rs"]
+        );
     }
 
     #[test]
@@ -666,9 +858,22 @@ mod tests {
         t.status = ToolStatus::Ok;
         t.summary = Some("4 matches".into());
         t.output = vec!["a".into(), "b".into(), "c".into(), "d".into()];
-        let collapsed = text(&render_block(&Block::Tool(t.clone()), 60, &Theme::default(), ctx()));
+        let collapsed = text(&render_block(
+            &Block::Tool(t.clone()),
+            60,
+            &Theme::default(),
+            ctx(),
+        ));
         assert_eq!(collapsed, vec!["✓ Search \"issueSession\""]);
-        let expanded = text(&render_block(&Block::Tool(t), 60, &Theme::default(), RenderCtx { expanded: true, ..ctx() }));
+        let expanded = text(&render_block(
+            &Block::Tool(t),
+            60,
+            &Theme::default(),
+            RenderCtx {
+                expanded: true,
+                ..ctx()
+            },
+        ));
         assert_eq!(expanded.len(), 2 + 4);
     }
 
@@ -676,11 +881,22 @@ mod tests {
     fn diffs_show_line_numbers_signs_and_tints() {
         let t = Theme::default();
         let diff = vec![
-            DiffLine { line_no: Some(44), kind: DiffKind::Del, text: "// TODO".into() },
-            DiffLine { line_no: Some(44), kind: DiffKind::Add, text: "rotate()".into() },
+            DiffLine {
+                line_no: Some(44),
+                kind: DiffKind::Del,
+                text: "// TODO".into(),
+            },
+            DiffLine {
+                line_no: Some(44),
+                kind: DiffKind::Add,
+                text: "rotate()".into(),
+            },
         ];
         let lines = render_diff("src/a.ts", &diff, 60, &t);
-        assert_eq!(text(&lines), vec!["     44 - // TODO", "     44 + rotate()"]);
+        assert_eq!(
+            text(&lines),
+            vec!["     44 - // TODO", "     44 + rotate()"]
+        );
         assert_eq!(lines[0].fill, t.diff_del_bg);
         assert_eq!(lines[1].fill, t.diff_add_bg);
     }
@@ -688,24 +904,56 @@ mod tests {
     #[test]
     fn plan_marks_progress() {
         let items = vec![
-            PlanItem { title: "Trace".into(), status: PlanStatus::Done },
-            PlanItem { title: "Rotate".into(), status: PlanStatus::InProgress },
-            PlanItem { title: "Test".into(), status: PlanStatus::Pending },
+            PlanItem {
+                title: "Trace".into(),
+                status: PlanStatus::Done,
+            },
+            PlanItem {
+                title: "Rotate".into(),
+                status: PlanStatus::InProgress,
+            },
+            PlanItem {
+                title: "Test".into(),
+                status: PlanStatus::Pending,
+            },
         ];
-        let lines = render_block(&Block::Plan { items, live: true }, 60, &Theme::default(), ctx());
-        assert_eq!(text(&lines), vec!["◆ Plan · 1 of 3 done", "  ✓ Trace", "  › Rotate", "  ○ Test"]);
+        let lines = render_block(
+            &Block::Plan { items, live: true },
+            60,
+            &Theme::default(),
+            ctx(),
+        );
+        assert_eq!(
+            text(&lines),
+            vec![
+                "◆ Plan · 1 of 3 done",
+                "  ✓ Trace",
+                "  › Rotate",
+                "  ○ Test"
+            ]
+        );
     }
 
     #[test]
     fn notices_keep_line_breaks() {
-        let lines = render_block(&Block::Notice { kind: NoticeKind::Info, text: "Session  $0.01\nToday    $0.48".into() }, 60, &Theme::default(), ctx());
+        let lines = render_block(
+            &Block::Notice {
+                kind: NoticeKind::Info,
+                text: "Session  $0.01\nToday    $0.48".into(),
+            },
+            60,
+            &Theme::default(),
+            ctx(),
+        );
         assert_eq!(text(&lines), vec!["· Session  $0.01", "  Today    $0.48"]);
     }
 
     #[test]
     fn tool_rows_sit_together_but_prose_gets_a_gap() {
         let tool = Block::Tool(ToolBlock::new("Read", "a"));
-        let prose = Block::Assistant { markdown: "x".into() };
+        let prose = Block::Assistant {
+            markdown: "x".into(),
+        };
         assert!(!gap_between(&tool, &tool));
         assert!(gap_between(&prose, &tool));
     }

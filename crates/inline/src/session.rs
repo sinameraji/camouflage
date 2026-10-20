@@ -11,11 +11,12 @@
 //! or `None` when idle, so an idle renderer does no work at all.
 
 use crate::ansi::parse_ansi;
-use crate::blocks::{explore_kind, GroupBlock, 
-    gap_between, render_block, Block, NoticeKind, PlanItem, PlanStatus, RenderCtx, ToolBlock, ToolStatus,
+use crate::blocks::{
+    explore_kind, gap_between, render_block, Block, GroupBlock, NoticeKind, PlanItem, PlanStatus,
+    RenderCtx, ToolBlock, ToolStatus,
 };
 use crate::chrome::{self, InputMode, PickItem, PromptView};
-use crate::compact::{self, CompactState, TrailKind};
+use crate::compact::CompactState;
 use crate::diff::{count_changes, diff_texts, parse_unified};
 use crate::editor::{EditKey, EditOutcome, Editor};
 use crate::form::{FormOutcome, FormState};
@@ -41,18 +42,29 @@ const TOOL_TAIL_LINES: usize = 400;
 pub enum Key {
     Text(String),
     Paste(String),
-    Enter { shift: bool, alt: bool },
+    Enter {
+        shift: bool,
+        alt: bool,
+    },
     Esc,
     Tab,
     BackTab,
     Up,
     Down,
-    Left { word: bool },
-    Right { word: bool },
+    Left {
+        word: bool,
+    },
+    Right {
+        word: bool,
+    },
     Home,
     End,
-    Backspace { word: bool },
-    Delete { word: bool },
+    Backspace {
+        word: bool,
+    },
+    Delete {
+        word: bool,
+    },
     PageUp,
     PageDown,
     /// Ctrl + a letter, lowercase.
@@ -73,9 +85,19 @@ struct Entry {
 }
 
 enum PromptKind {
-    Permission { request_id: String },
-    Select { id: String, values: Vec<String>, allow_cancel: bool, filterable: bool },
-    Confirm { id: String, allow_cancel: bool },
+    Permission {
+        request_id: String,
+    },
+    Select {
+        id: String,
+        values: Vec<String>,
+        allow_cancel: bool,
+        filterable: bool,
+    },
+    Confirm {
+        id: String,
+        allow_cancel: bool,
+    },
 }
 
 struct Prompt {
@@ -223,7 +245,10 @@ impl Session {
         self.height = height.max(6);
         if let Some(p) = self.prompt.as_mut() {
             if let Some((path, d)) = &p.diff {
-                p.diff_lines = Some((self.width, chrome::diff_preview(&self.theme, path, d, self.width)));
+                p.diff_lines = Some((
+                    self.width,
+                    chrome::diff_preview(&self.theme, path, d, self.width),
+                ));
             }
         }
     }
@@ -235,7 +260,10 @@ impl Session {
     /// Events for the host produced since the last call.
     /// Queue an outbound event the app produced (not the session itself).
     pub fn push_outbound(&mut self, event_type: EventType, payload: Value) {
-        self.outbound.push(Outbound { event_type, payload });
+        self.outbound.push(Outbound {
+            event_type,
+            payload,
+        });
     }
 
     pub fn take_outbound(&mut self) -> Vec<Outbound> {
@@ -260,14 +288,26 @@ impl Session {
                 if let Some(name) = p.get("assistant_label").and_then(Value::as_str) {
                     self.app_name = name.to_string();
                 }
-                if let Some(c) = p.get("accent").and_then(Value::as_str).and_then(parse_color) {
+                if let Some(c) = p
+                    .get("accent")
+                    .and_then(Value::as_str)
+                    .and_then(parse_color)
+                {
                     self.theme.accent = c;
                 }
-                let title = p.get("title").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| self.app_name.clone());
+                let title = p
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| self.app_name.clone());
                 let detail: Vec<String> = p
                     .get("detail")
                     .and_then(Value::as_array)
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 if !title.is_empty() || !detail.is_empty() {
                     self.push_done(Block::Welcome { title, detail });
@@ -275,10 +315,18 @@ impl Session {
             }
             EventType::Splash => {
                 let mut lines = parse_ansi(&s("text"));
-                while lines.first().map(|l| l.plain_text().trim().is_empty()).unwrap_or(false) {
+                while lines
+                    .first()
+                    .map(|l| l.plain_text().trim().is_empty())
+                    .unwrap_or(false)
+                {
                     lines.remove(0);
                 }
-                while lines.last().map(|l| l.plain_text().trim().is_empty()).unwrap_or(false) {
+                while lines
+                    .last()
+                    .map(|l| l.plain_text().trim().is_empty())
+                    .unwrap_or(false)
+                {
                     lines.pop();
                 }
                 if !lines.is_empty() {
@@ -289,14 +337,17 @@ impl Session {
                 let text = s("text");
                 if let Some(i) = self.echoes.iter().position(|e| e.trim() == text.trim()) {
                     self.echoes.drain(..=i);
-                    self.compact.begin_turn(now);
                     return;
                 }
-                self.push_done(Block::User { text: text.clone() });
-                self.compact.user_message(&text, now, &self.theme);
+                self.push_done(Block::User { text });
             }
             EventType::AssistantStreamStarted => {
-                let id = self.push(Block::Assistant { markdown: String::new() }, false);
+                let id = self.push(
+                    Block::Assistant {
+                        markdown: String::new(),
+                    },
+                    false,
+                );
                 self.streams.insert(s("stream_id"), id);
                 self.became_busy(now);
             }
@@ -314,23 +365,31 @@ impl Session {
                 let reply = self.streams.get(&sid).copied();
                 let pos = match reply {
                     Some(rid) => match self.entries.iter().position(|e| e.id == rid) {
-                        Some(i) if matches!(&self.entries[i].block, Block::Assistant { markdown } if markdown.is_empty()) => i,
+                        Some(i) if matches!(&self.entries[i].block, Block::Assistant { markdown } if markdown.is_empty()) => {
+                            i
+                        }
                         _ => return,
                     },
                     None => self.entries.len(),
                 };
                 let id = self.next_id;
                 self.next_id += 1;
-                self.entries.insert(pos, Entry { id, block: Block::Reasoning { text: token }, done: false });
+                self.entries.insert(
+                    pos,
+                    Entry {
+                        id,
+                        block: Block::Reasoning { text: token },
+                        done: false,
+                    },
+                );
                 self.reasoning.insert(sid, id);
                 self.became_busy(now);
             }
             EventType::AssistantTokenDelta => {
                 let token = s("token");
                 if !token.trim().is_empty() {
+                    self.became_busy(now);
                     self.close_group();
-                    // Track token bursts for the compact pulse wave amplitude.
-                    self.compact.tokens(token.chars().count() as u64, now);
                 }
                 if let Some(rid) = self.reasoning.remove(&s("stream_id")) {
                     self.finish(rid);
@@ -341,7 +400,12 @@ impl Session {
                     Some(id) => *id,
                     None => {
                         // Delta without a start: open the stream implicitly.
-                        let id = self.push(Block::Assistant { markdown: String::new() }, false);
+                        let id = self.push(
+                            Block::Assistant {
+                                markdown: String::new(),
+                            },
+                            false,
+                        );
                         self.streams.insert(sid, id);
                         id
                     }
@@ -375,12 +439,8 @@ impl Session {
                 let tid = s("tool_id");
                 self.became_busy(now);
 
-                // Feed the compact region: classify the tool and add a bead.
-                let kind = TrailKind::from_tool(&t.name);
-                // Only add to trail for non-explore tools (reads/searches are quiet).
-                if explore_kind(&t.name).is_none() {
-                    self.compact.tool(kind, &t.args, true, now, &self.theme, None, 0, 0);
-                }
+                // Every tool, including reads and searches, contributes one bead.
+                self.compact.tool_started(&tid, &t.name, &t.args, now);
 
                 if explore_kind(&t.name).is_none() {
                     let id = self.push(Block::Tool(t), false);
@@ -395,7 +455,13 @@ impl Session {
                         return;
                     }
                 }
-                let gid = self.push(Block::Group(GroupBlock { tools: vec![t], closed: false }), false);
+                let gid = self.push(
+                    Block::Group(GroupBlock {
+                        tools: vec![t],
+                        closed: false,
+                    }),
+                    false,
+                );
                 self.open_group = Some(gid);
                 self.tools.insert(tid, (gid, Some(0)));
             }
@@ -408,7 +474,9 @@ impl Session {
                 }
             }
             EventType::ToolExecutionFinished => {
-                let Some((id, idx)) = self.tools.remove(&s("tool_id")) else { return };
+                let Some((id, idx)) = self.tools.remove(&s("tool_id")) else {
+                    return;
+                };
                 let exit = p.get("exit_code").and_then(Value::as_i64);
                 let status = match p.get("status").and_then(Value::as_str) {
                     Some("error" | "err") => ToolStatus::Error,
@@ -420,9 +488,9 @@ impl Session {
                 };
                 let ok = status != ToolStatus::Error;
 
-                // Collect compact region data before mutating the tool.
-                let compact_info = self.tool_compact_info(id, idx);
-                let mut code_preview = None;
+                let mut compact_path = None;
+                let mut compact_has_diff = false;
+                let mut compact_failure = None;
 
                 if let Some(t) = self.tool_mut(id, idx) {
                     t.status = status;
@@ -439,8 +507,15 @@ impl Session {
                         t.output.clear();
                         append_output(&mut t.output, out);
                     }
-                    t.preview = p.get("preview").and_then(Value::as_u64).map(|n| n as usize).unwrap_or(if status == ToolStatus::Error { 12 } else { 0 });
-                    t.output_lang = p.get("output_lang").and_then(Value::as_str).map(str::to_string);
+                    t.preview = p
+                        .get("preview")
+                        .and_then(Value::as_u64)
+                        .map(|n| n as usize)
+                        .unwrap_or(if status == ToolStatus::Error { 12 } else { 0 });
+                    t.output_lang = p
+                        .get("output_lang")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
                     if let Some(d) = p.get("diff") {
                         t.diff = parse_diff_payload(d);
                         if t.summary.is_none() {
@@ -450,21 +525,19 @@ impl Session {
                             }
                         }
                     }
-                    code_preview = t.diff.clone();
+                    compact_path = t.diff.as_ref().map(|(path, _)| path.clone());
+                    compact_has_diff = t.diff.is_some();
+                    compact_failure = t.summary.clone();
                 }
 
-                if let Some((path, diff)) = code_preview {
-                    self.compact.code_preview(&path, &diff, now);
-                }
-
-                // Feed the compact region outside the mutable borrow.
-                if let Some((kind, name, path, added, removed)) = compact_info {
-                    if kind == TrailKind::Edit {
-                        self.compact.tool(kind, &name, ok, now, &self.theme, path.as_deref(), added, removed);
-                    } else if !ok {
-                        self.compact.tool(TrailKind::Error, &name, ok, now, &self.theme, None, 0, 0);
-                    }
-                }
+                self.compact.tool_finished(
+                    &s("tool_id"),
+                    ok,
+                    compact_failure.as_deref(),
+                    compact_path.as_deref(),
+                    compact_has_diff,
+                    now,
+                );
 
                 match idx {
                     None => self.finish(id),
@@ -473,9 +546,16 @@ impl Session {
             }
             EventType::PatchProposed => {
                 let path = s("path");
-                let lines = p.get("diff").and_then(Value::as_str).map(parse_unified).unwrap_or_default();
+                let lines = p
+                    .get("diff")
+                    .and_then(Value::as_str)
+                    .map(parse_unified)
+                    .unwrap_or_default();
                 let (a, r) = if lines.is_empty() {
-                    (p.get("added").and_then(Value::as_u64).unwrap_or(0) as usize, p.get("removed").and_then(Value::as_u64).unwrap_or(0) as usize)
+                    (
+                        p.get("added").and_then(Value::as_u64).unwrap_or(0) as usize,
+                        p.get("removed").and_then(Value::as_u64).unwrap_or(0) as usize,
+                    )
                 } else {
                     count_changes(&lines)
                 };
@@ -483,7 +563,6 @@ impl Session {
                 t.status = ToolStatus::Ok;
                 t.summary = Some(format!("Proposed · +{a} −{r}"));
                 if !lines.is_empty() {
-                    self.compact.code_preview(&path, &lines, now);
                     t.diff = Some((path, lines));
                 }
                 self.push_done(Block::Tool(t));
@@ -493,21 +572,42 @@ impl Session {
                 let action = s("action");
                 let detail = s("detail");
                 let diff = p.get("diff").and_then(parse_diff_payload);
-                let title = if action.is_empty() { format!("Allow {tool}?") } else { capitalize(&action) };
-                let subtitle = if !detail.is_empty() { Some(detail) } else { diff.as_ref().map(|(path, _)| path.clone()) }
-                    .filter(|sub| !title.contains(sub.as_str()));
+                let title = if action.is_empty() {
+                    format!("Allow {tool}?")
+                } else {
+                    capitalize(&action)
+                };
+                let subtitle = if !detail.is_empty() {
+                    Some(detail)
+                } else {
+                    diff.as_ref().map(|(path, _)| path.clone())
+                }
+                .filter(|sub| !title.contains(sub.as_str()));
                 let app = self.app_name.clone();
                 self.prompt = Some(Prompt {
-                    kind: PromptKind::Permission { request_id: s("request_id") },
+                    kind: PromptKind::Permission {
+                        request_id: s("request_id"),
+                    },
                     title,
                     subtitle,
-                    diff_lines: diff.as_ref().map(|(path, d)| (self.width, chrome::diff_preview(&self.theme, path, d, self.width))),
+                    diff_lines: diff.as_ref().map(|(path, d)| {
+                        (
+                            self.width,
+                            chrome::diff_preview(&self.theme, path, d, self.width),
+                        )
+                    }),
                     diff,
-                    question: Some(format!("Do you want to allow this {}?", if tool.is_empty() { "action" } else { &tool })),
+                    question: Some(format!(
+                        "Do you want to allow this {}?",
+                        if tool.is_empty() { "action" } else { &tool }
+                    )),
                     options: vec![
                         "Yes".into(),
                         "Yes, and don't ask again this session".into(),
-                        format!("No, and tell {} what to do differently", if app.is_empty() { "the agent" } else { &app }),
+                        format!(
+                            "No, and tell {} what to do differently",
+                            if app.is_empty() { "the agent" } else { &app }
+                        ),
                     ],
                     hints: Vec::new(),
                     sections: Vec::new(),
@@ -520,24 +620,46 @@ impl Session {
                 });
             }
             EventType::ShowSelectList => {
-                let opts: Vec<&Value> = p.get("options").and_then(Value::as_array).map(|a| a.iter().collect()).unwrap_or_default();
-                let field = |o: &Value, k: &str| o.get(k).and_then(Value::as_str).map(str::to_string);
-                let values: Vec<String> = opts.iter().map(|o| field(o, "value").unwrap_or_default()).collect();
+                let opts: Vec<&Value> = p
+                    .get("options")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().collect())
+                    .unwrap_or_default();
+                let field =
+                    |o: &Value, k: &str| o.get(k).and_then(Value::as_str).map(str::to_string);
+                let values: Vec<String> = opts
+                    .iter()
+                    .map(|o| field(o, "value").unwrap_or_default())
+                    .collect();
                 let default = p.get("default").and_then(Value::as_str);
-                let selected = default.and_then(|d| values.iter().position(|v| v == d)).unwrap_or(0);
+                let selected = default
+                    .and_then(|d| values.iter().position(|v| v == d))
+                    .unwrap_or(0);
                 self.prompt = Some(Prompt {
                     kind: PromptKind::Select {
                         id: s("id"),
                         values,
-                        allow_cancel: p.get("allow_cancel").and_then(Value::as_bool).unwrap_or(true),
-                        filterable: p.get("allow_filter").and_then(Value::as_bool).unwrap_or(true),
+                        allow_cancel: p
+                            .get("allow_cancel")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(true),
+                        filterable: p
+                            .get("allow_filter")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(true),
                     },
                     title: s("prompt"),
-                    subtitle: p.get("subtitle").and_then(Value::as_str).map(str::to_string),
+                    subtitle: p
+                        .get("subtitle")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
                     diff: None,
                     diff_lines: None,
                     question: None,
-                    options: opts.iter().map(|o| field(o, "label").unwrap_or_default()).collect(),
+                    options: opts
+                        .iter()
+                        .map(|o| field(o, "label").unwrap_or_default())
+                        .collect(),
                     hints: opts.iter().map(|o| field(o, "description")).collect(),
                     sections: opts.iter().map(|o| field(o, "section")).collect(),
                     columns: opts
@@ -545,23 +667,51 @@ impl Session {
                         .map(|o| {
                             o.get("columns")
                                 .and_then(Value::as_array)
-                                .map(|c| c.iter().map(|v| v.as_str().unwrap_or("").to_string()).collect())
+                                .map(|c| {
+                                    c.iter()
+                                        .map(|v| v.as_str().unwrap_or("").to_string())
+                                        .collect()
+                                })
                                 .unwrap_or_default()
                         })
                         .collect(),
-                    states: opts.iter().map(|o| o.get("state").and_then(Value::as_str).map(|v| v == "on")).collect(),
-                    keywords: opts.iter().map(|o| field(o, "keywords").unwrap_or_default()).collect(),
+                    states: opts
+                        .iter()
+                        .map(|o| o.get("state").and_then(Value::as_str).map(|v| v == "on"))
+                        .collect(),
+                    keywords: opts
+                        .iter()
+                        .map(|o| field(o, "keywords").unwrap_or_default())
+                        .collect(),
                     current: default.map(|_| selected),
                     selected,
                     filter: String::new(),
                 });
             }
             EventType::ShowConfirm => {
-                let yes = p.get("yes_label").and_then(Value::as_str).unwrap_or("Yes").to_string();
-                let no = p.get("no_label").and_then(Value::as_str).unwrap_or("No").to_string();
-                let selected = if p.get("default").and_then(Value::as_str) == Some("no") { 1 } else { 0 };
+                let yes = p
+                    .get("yes_label")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Yes")
+                    .to_string();
+                let no = p
+                    .get("no_label")
+                    .and_then(Value::as_str)
+                    .unwrap_or("No")
+                    .to_string();
+                let selected = if p.get("default").and_then(Value::as_str) == Some("no") {
+                    1
+                } else {
+                    0
+                };
                 self.prompt = Some(Prompt {
-                    kind: PromptKind::Confirm { id: s("id"), allow_cancel: p.get("allow_cancel").and_then(Value::as_bool).unwrap_or(true) },
+                    kind: PromptKind::Confirm {
+                        id: s("id"),
+                        allow_cancel: p
+                            .get("allow_cancel")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(true),
+                    },
                     title: s("prompt"),
                     subtitle: None,
                     diff: None,
@@ -578,21 +728,39 @@ impl Session {
                     filter: String::new(),
                 });
             }
-            EventType::ShowTable => self.push_done(Block::Assistant { markdown: table_markdown(p) }),
-            EventType::ShowKeyValueView => self.push_done(Block::Assistant { markdown: kv_markdown(p) }),
+            EventType::ShowTable => self.push_done(Block::Assistant {
+                markdown: table_markdown(p),
+            }),
+            EventType::ShowKeyValueView => self.push_done(Block::Assistant {
+                markdown: kv_markdown(p),
+            }),
             EventType::ShowForm => {
                 self.form = Some(FormState::from_payload(p));
             }
             EventType::ShowWizard => {
-                let steps = p.get("steps").and_then(Value::as_array).cloned().unwrap_or_default();
+                let steps = p
+                    .get("steps")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
                 if steps.is_empty() {
-                    self.outbound.push(Outbound { event_type: EventType::WizardCompleted, payload: json!({ "id": s("id"), "results": {} }) });
+                    self.outbound.push(Outbound {
+                        event_type: EventType::WizardCompleted,
+                        payload: json!({ "id": s("id"), "results": {} }),
+                    });
                     return;
                 }
                 self.wizard = Some(Wizard {
                     id: s("id"),
-                    title: p.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
-                    allow_cancel: p.get("allow_cancel").and_then(Value::as_bool).unwrap_or(true),
+                    title: p
+                        .get("title")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    allow_cancel: p
+                        .get("allow_cancel")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(true),
                     steps,
                     at: 0,
                     results: serde_json::Map::new(),
@@ -601,7 +769,11 @@ impl Session {
             }
             EventType::RuntimeError => {
                 let mut text = s("message");
-                if let Some(label) = p.get("cta").and_then(|c| c.get("label")).and_then(Value::as_str) {
+                if let Some(label) = p
+                    .get("cta")
+                    .and_then(|c| c.get("label"))
+                    .and_then(Value::as_str)
+                {
                     text.push_str(&format!(" · {label}"));
                 }
                 let kind = match p.get("severity").and_then(Value::as_str) {
@@ -612,7 +784,10 @@ impl Session {
                 self.push_done(Block::Notice { kind, text });
             }
             EventType::SessionCompacted => {
-                self.push_done(Block::Notice { kind: NoticeKind::Info, text: "Conversation compacted".into() });
+                self.push_done(Block::Notice {
+                    kind: NoticeKind::Info,
+                    text: "Conversation compacted".into(),
+                });
             }
             EventType::ShowToast => {
                 let style = match p.get("kind").and_then(Value::as_str) {
@@ -621,7 +796,11 @@ impl Session {
                     Some("success") => self.theme.ok(),
                     _ => self.theme.accent(),
                 };
-                let ttl = p.get("ttl_ms").and_then(Value::as_i64).unwrap_or(3500).clamp(500, 15_000);
+                let ttl = p
+                    .get("ttl_ms")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(3500)
+                    .clamp(500, 15_000);
                 self.foot = Some((s("text"), style, now + ttl));
             }
             EventType::StatusUpdate => {
@@ -641,7 +820,9 @@ impl Session {
                 }
                 self.mode = match self.segments.get("mode").map(String::as_str) {
                     Some("plan") => InputMode::Plan,
-                    Some("auto" | "accept" | "accept-edits" | "accept_edits") => InputMode::AcceptEdits,
+                    Some("auto" | "accept" | "accept-edits" | "accept_edits") => {
+                        InputMode::AcceptEdits
+                    }
                     _ => InputMode::Default,
                 };
                 let busy = matches!(
@@ -663,7 +844,11 @@ impl Session {
                     .map(|a| {
                         a.iter()
                             .map(|t| PlanItem {
-                                title: t.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
+                                title: t
+                                    .get("title")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_string(),
                                 status: match t.get("status").and_then(Value::as_str) {
                                     Some("completed") => PlanStatus::Done,
                                     Some("in_progress") => PlanStatus::InProgress,
@@ -673,7 +858,11 @@ impl Session {
                             .collect()
                     })
                     .unwrap_or_default();
-                self.plan = if items.is_empty() { None } else { Some(items.clone()) };
+                self.plan = if items.is_empty() {
+                    None
+                } else {
+                    Some(items.clone())
+                };
                 // Feed the compact region's plan.
                 if !items.is_empty() {
                     self.compact.plan(&items);
@@ -687,7 +876,10 @@ impl Session {
                     }
                     Some("error") => {
                         self.tasks.remove(&id);
-                        self.push_done(Block::Notice { kind: NoticeKind::Warn, text: format!("{} failed", s("label")) });
+                        self.push_done(Block::Notice {
+                            kind: NoticeKind::Warn,
+                            text: format!("{} failed", s("label")),
+                        });
                     }
                     _ => {
                         self.tasks.remove(&id);
@@ -702,9 +894,18 @@ impl Session {
                         a.iter()
                             .map(|c| {
                                 (
-                                    c.get("name").and_then(Value::as_str).unwrap_or("").trim_start_matches('/').to_string(),
-                                    c.get("description").and_then(Value::as_str).unwrap_or("").to_string(),
-                                    c.get("args_hint").and_then(Value::as_str).map(str::to_string),
+                                    c.get("name")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("")
+                                        .trim_start_matches('/')
+                                        .to_string(),
+                                    c.get("description")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    c.get("args_hint")
+                                        .and_then(Value::as_str)
+                                        .map(str::to_string),
                                 )
                             })
                             .collect()
@@ -715,7 +916,13 @@ impl Session {
                 let tokens: Vec<String> = p
                     .get("candidates")
                     .and_then(Value::as_array)
-                    .map(|a| a.iter().filter_map(|c| c.get("token").and_then(Value::as_str).map(str::to_string)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|c| {
+                                c.get("token").and_then(Value::as_str).map(str::to_string)
+                            })
+                            .collect()
+                    })
                     .unwrap_or_default();
                 match p.get("for_query").and_then(Value::as_str) {
                     Some(dir) => self.path_mentions = Some((dir.to_string(), tokens)),
@@ -728,14 +935,23 @@ impl Session {
                     self.announce(change, &item);
                     // Feed the compact region for agent activities.
                     if item.kind == crate::activity::Kind::Agent {
-                        let agent_n = item.id.chars().filter(|c| c.is_ascii_digit()).collect::<String>();
+                        let agent_n = item
+                            .id
+                            .chars()
+                            .filter(|c| c.is_ascii_digit())
+                            .collect::<String>();
                         let n: u32 = agent_n.parse().unwrap_or(1);
                         match change {
                             crate::activity::Transition::Started => {
                                 self.compact.agent_start(n, &item.title, now);
                             }
-                            crate::activity::Transition::Finished | crate::activity::Transition::Stopped => {
-                                self.compact.agent_done(n, item.kind == crate::activity::Kind::Agent, now);
+                            crate::activity::Transition::Finished
+                            | crate::activity::Transition::Stopped => {
+                                self.compact.agent_done(
+                                    n,
+                                    item.kind == crate::activity::Kind::Agent,
+                                    now,
+                                );
                             }
                             _ => {}
                         }
@@ -780,12 +996,18 @@ impl Session {
                 FormOutcome::Submitted(values) => {
                     let id = form.id.clone();
                     self.form = None;
-                    self.outbound.push(Outbound { event_type: EventType::FormResponse, payload: json!({ "id": id, "values": values }) });
+                    self.outbound.push(Outbound {
+                        event_type: EventType::FormResponse,
+                        payload: json!({ "id": id, "values": values }),
+                    });
                 }
                 FormOutcome::Cancelled => {
                     let id = form.id.clone();
                     self.form = None;
-                    self.outbound.push(Outbound { event_type: EventType::FormResponse, payload: json!({ "id": id, "cancelled": true }) });
+                    self.outbound.push(Outbound {
+                        event_type: EventType::FormResponse,
+                        payload: json!({ "id": id, "cancelled": true }),
+                    });
                 }
             }
             return;
@@ -795,7 +1017,10 @@ impl Session {
             return;
         }
         if let Some(mut view) = self.browser.take() {
-            let page = crate::activity::log_rows(self.height, view.item_id().and_then(|id| self.activity.get(id)));
+            let page = crate::activity::log_rows(
+                self.height,
+                view.item_id().and_then(|id| self.activity.get(id)),
+            );
             let outcomes = view.key(&key, &self.activity, page);
             self.browser = Some(view);
             for o in outcomes {
@@ -803,14 +1028,20 @@ impl Session {
                     crate::activity::Outcome::Close => self.browser = None,
                     crate::activity::Outcome::Stop(id) => {
                         self.activity.request_stop(&id);
-                        self.outbound.push(Outbound { event_type: EventType::ActivityStopRequested, payload: json!({ "id": id }) });
+                        self.outbound.push(Outbound {
+                            event_type: EventType::ActivityStopRequested,
+                            payload: json!({ "id": id }),
+                        });
                     }
                     crate::activity::Outcome::ViewChanged(view, id) => {
                         let mut payload = json!({ "view": view });
                         if let Some(id) = id {
                             payload["id"] = json!(id);
                         }
-                        self.outbound.push(Outbound { event_type: EventType::ActivityViewChanged, payload });
+                        self.outbound.push(Outbound {
+                            event_type: EventType::ActivityViewChanged,
+                            payload,
+                        });
                     }
                 }
             }
@@ -826,7 +1057,11 @@ impl Session {
                     self.editor.clear();
                 } else if self.is_busy() {
                     self.interrupt(now);
-                } else if self.ctrl_c_at.map(|t| now - t < CTRL_C_WINDOW_MS).unwrap_or(false) {
+                } else if self
+                    .ctrl_c_at
+                    .map(|t| now - t < CTRL_C_WINDOW_MS)
+                    .unwrap_or(false)
+                {
                     self.exit = true;
                 } else {
                     self.ctrl_c_at = Some(now);
@@ -846,12 +1081,22 @@ impl Session {
                 return;
             }
             Key::BackTab => {
-                self.outbound.push(Outbound { event_type: EventType::ModeChangeRequested, payload: json!({ "direction": "next" }) });
+                self.outbound.push(Outbound {
+                    event_type: EventType::ModeChangeRequested,
+                    payload: json!({ "direction": "next" }),
+                });
                 return;
             }
             Key::Ctrl('o') => {
                 self.expanded = !self.expanded;
-                self.flash(if self.expanded { "Showing full tool output" } else { "Tool output collapsed" }, now);
+                self.flash(
+                    if self.expanded {
+                        "Showing full tool output"
+                    } else {
+                        "Tool output collapsed"
+                    },
+                    now,
+                );
                 return;
             }
             Key::Ctrl('b') if self.editor.is_empty() => {
@@ -864,7 +1109,14 @@ impl Session {
             }
             Key::Ctrl('r') => {
                 self.show_reasoning = !self.show_reasoning;
-                self.flash(if self.show_reasoning { "Showing reasoning" } else { "Reasoning hidden" }, now);
+                self.flash(
+                    if self.show_reasoning {
+                        "Showing reasoning"
+                    } else {
+                        "Reasoning hidden"
+                    },
+                    now,
+                );
                 return;
             }
             Key::Ctrl('l') => return,
@@ -882,7 +1134,11 @@ impl Session {
                     self.pick_sel = (self.pick_sel + 1) % n;
                     return;
                 }
-                Key::Tab | Key::Enter { shift: false, alt: false } => {
+                Key::Tab
+                | Key::Enter {
+                    shift: false,
+                    alt: false,
+                } => {
                     let submit = matches!(key, Key::Enter { .. });
                     self.accept_pick(submit);
                     return;
@@ -894,7 +1150,9 @@ impl Session {
         let edit = match key {
             Key::Text(t) => EditKey::Text(t),
             Key::Paste(t) => EditKey::Paste(t),
-            Key::Enter { shift, alt } => EditKey::Enter { newline: shift || alt },
+            Key::Enter { shift, alt } => EditKey::Enter {
+                newline: shift || alt,
+            },
             Key::Ctrl('j') => EditKey::Enter { newline: true },
             Key::Backspace { word } => EditKey::Backspace { word },
             Key::Ctrl('w') => EditKey::Backspace { word: true },
@@ -930,17 +1188,26 @@ impl Session {
             self.echoes.pop_front();
         }
         self.push(Block::User { text: display }, true);
-        self.outbound.push(Outbound { event_type: EventType::UserInputSubmitted, payload: json!({ "text": text }) });
+        self.outbound.push(Outbound {
+            event_type: EventType::UserInputSubmitted,
+            payload: json!({ "text": text }),
+        });
     }
 
     fn prompt_key(&mut self, key: Key, now: i64) {
-        let Some(p) = self.prompt.as_mut() else { return };
+        let Some(p) = self.prompt.as_mut() else {
+            return;
+        };
         let visible = visible_options(p);
         let n = visible.len().max(1);
         let pos = visible.iter().position(|&i| i == p.selected).unwrap_or(0);
         match key {
-            Key::Up | Key::Ctrl('p') => p.selected = *visible.get((pos + n - 1) % n).unwrap_or(&p.selected),
-            Key::Down | Key::Tab | Key::Ctrl('n') => p.selected = *visible.get((pos + 1) % n).unwrap_or(&p.selected),
+            Key::Up | Key::Ctrl('p') => {
+                p.selected = *visible.get((pos + n - 1) % n).unwrap_or(&p.selected)
+            }
+            Key::Down | Key::Tab | Key::Ctrl('n') => {
+                p.selected = *visible.get((pos + 1) % n).unwrap_or(&p.selected)
+            }
             Key::Enter { .. } => {
                 if visible.contains(&p.selected) {
                     let i = p.selected;
@@ -949,12 +1216,26 @@ impl Session {
             }
             Key::Esc | Key::Ctrl('c') => self.resolve_prompt(None, now),
             Key::Text(t) => {
-                let filterable = matches!(p.kind, PromptKind::Select { filterable: true, .. });
-                let digit = t.chars().next().and_then(|c| c.to_digit(10)).map(|d| d as usize);
+                let filterable = matches!(
+                    p.kind,
+                    PromptKind::Select {
+                        filterable: true,
+                        ..
+                    }
+                );
+                let digit = t
+                    .chars()
+                    .next()
+                    .and_then(|c| c.to_digit(10))
+                    .map(|d| d as usize);
                 let yn = t.to_ascii_lowercase();
                 if matches!(p.kind, PromptKind::Confirm { .. }) && (yn == "y" || yn == "n") {
                     self.resolve_prompt(Some(if yn == "y" { 0 } else { 1 }), now);
-                } else if !filterable && digit.map(|d| d >= 1 && d <= p.options.len()).unwrap_or(false) {
+                } else if !filterable
+                    && digit
+                        .map(|d| d >= 1 && d <= p.options.len())
+                        .unwrap_or(false)
+                {
                     self.resolve_prompt(Some(digit.unwrap() - 1), now);
                 } else if filterable {
                     p.filter.push_str(&t);
@@ -987,27 +1268,51 @@ impl Session {
                     self.interrupt(now);
                 }
             }
-            PromptKind::Select { id, values, allow_cancel, .. } => {
+            PromptKind::Select {
+                id,
+                values,
+                allow_cancel,
+                ..
+            } => {
                 let payload = match choice {
-                    Some(i) => json!({ "id": id, "value": values.get(i).cloned().unwrap_or_default() }),
+                    Some(i) => {
+                        json!({ "id": id, "value": values.get(i).cloned().unwrap_or_default() })
+                    }
                     None if allow_cancel => json!({ "id": id, "cancelled": true }),
                     None => {
-                        self.prompt = Some(Prompt { kind: PromptKind::Select { id, values, allow_cancel, filterable: true }, ..p });
+                        self.prompt = Some(Prompt {
+                            kind: PromptKind::Select {
+                                id,
+                                values,
+                                allow_cancel,
+                                filterable: true,
+                            },
+                            ..p
+                        });
                         return;
                     }
                 };
-                self.outbound.push(Outbound { event_type: EventType::SelectListResponse, payload });
+                self.outbound.push(Outbound {
+                    event_type: EventType::SelectListResponse,
+                    payload,
+                });
             }
             PromptKind::Confirm { id, allow_cancel } => {
                 let payload = match choice {
                     Some(i) => json!({ "id": id, "value": i == 0 }),
                     None if allow_cancel => json!({ "id": id, "cancelled": true }),
                     None => {
-                        self.prompt = Some(Prompt { kind: PromptKind::Confirm { id, allow_cancel }, ..p });
+                        self.prompt = Some(Prompt {
+                            kind: PromptKind::Confirm { id, allow_cancel },
+                            ..p
+                        });
                         return;
                     }
                 };
-                self.outbound.push(Outbound { event_type: EventType::ConfirmResponse, payload });
+                self.outbound.push(Outbound {
+                    event_type: EventType::ConfirmResponse,
+                    payload,
+                });
             }
         }
     }
@@ -1015,7 +1320,10 @@ impl Session {
     /// Esc / Ctrl+C during a turn: tell the host, and settle the screen now
     /// so the user sees the stop immediately.
     fn interrupt(&mut self, now: i64) {
-        self.outbound.push(Outbound { event_type: EventType::CancelRequested, payload: json!({}) });
+        self.outbound.push(Outbound {
+            event_type: EventType::CancelRequested,
+            payload: json!({}),
+        });
         self.settle(now, true);
     }
 
@@ -1036,7 +1344,11 @@ impl Session {
         for e in self.entries.iter_mut() {
             if let Block::Group(g) = &mut e.block {
                 g.closed = true;
-                for t in g.tools.iter_mut().filter(|t| t.status == ToolStatus::Running) {
+                for t in g
+                    .tools
+                    .iter_mut()
+                    .filter(|t| t.status == ToolStatus::Running)
+                {
                     t.status = ToolStatus::Stopped;
                     t.elapsed_ms = t.started_at_ms.map(|st| (now - st).max(0) as u64);
                 }
@@ -1048,19 +1360,30 @@ impl Session {
         self.phase_busy = false;
         if let Some(plan) = self.plan.take() {
             if interrupted && plan.iter().any(|i| i.status != PlanStatus::Done) {
-                self.push_done(Block::Plan { items: plan, live: false });
+                self.push_done(Block::Plan {
+                    items: plan,
+                    live: false,
+                });
             }
         }
-        // Finalize the compact region.
-        if !interrupted && self.compact.phase != crate::compact::Phase::Idle {
-            self.compact.done(now, &self.theme);
-        }
+        // Compact state is turn-local and never survives settlement.
+        self.compact.clear();
         if interrupted && (was_busy || any) {
-            let app = if self.app_name.is_empty() { "the agent".to_string() } else { self.app_name.clone() };
-            self.push_done(Block::Notice { kind: NoticeKind::Interrupted, text: format!("Interrupted · what should {app} do instead?") });
+            let app = if self.app_name.is_empty() {
+                "the agent".to_string()
+            } else {
+                self.app_name.clone()
+            };
+            self.push_done(Block::Notice {
+                kind: NoticeKind::Interrupted,
+                text: format!("Interrupted · what should {app} do instead?"),
+            });
         }
         self.busy_since = None;
-        self.prompt = self.prompt.take().filter(|p| !matches!(p.kind, PromptKind::Permission { .. }));
+        self.prompt = self
+            .prompt
+            .take()
+            .filter(|p| !matches!(p.kind, PromptKind::Permission { .. }));
     }
 
     // ----- output -------------------------------------------------------
@@ -1108,53 +1431,77 @@ impl Session {
             if matches!(&e.block, Block::Assistant { markdown } if markdown.trim().is_empty()) {
                 continue;
             }
-            // Skip tool rows and groups when busy: the compact region replaces them.
-            if busy && matches!(e.block, Block::Tool(_) | Block::Group(_)) {
+            // Compact rows replace tool rows unless Ctrl+O expanded the live view.
+            if busy && !self.expanded && matches!(e.block, Block::Tool(_) | Block::Group(_)) {
                 continue;
             }
-            if prev.as_ref().map(|p| gap_between(p, &e.block)).unwrap_or(false) {
+            if prev
+                .as_ref()
+                .map(|p| gap_between(p, &e.block))
+                .unwrap_or(false)
+            {
                 lines.push(Line::new());
             }
             let mut rendered = render_block(&e.block, self.width, t, ctx);
             if let Block::Assistant { .. } = e.block {
                 if let Some(last) = rendered.last_mut() {
-                    last.push("▍", t.accent());
+                    last.push(t.glyphs.caret, t.accent());
                 } else {
-                    rendered.push(Line::raw("  ").with("▍", t.accent()));
+                    rendered.push(Line::raw("  ").with(t.glyphs.caret, t.accent()));
                 }
             }
             lines.extend(rendered);
             prev = Some(e.block.clone());
         }
 
-        // When busy, append the compact region instead of plan + spinner.
-        if busy && self.compact.phase != crate::compact::Phase::Idle {
-            if !lines.is_empty() && lines.last().map_or(false, |l| l.plain_text().trim().is_empty()) {
-                lines.pop(); // Remove trailing blank line before compact region.
+        // One shared live renderer: compact rows plus the common status spinner.
+        if busy {
+            if !lines.is_empty()
+                && lines
+                    .last()
+                    .is_some_and(|l| l.plain_text().trim().is_empty())
+            {
+                lines.pop();
             }
-            let compact_lines = compact::render_compact(&self.compact, now, self.width, t);
-            lines.extend(compact_lines);
-            if self.prompt.is_none() && self.height >= 18 {
-                let glimpse = compact::render_code_glimpse(&self.compact, now, self.width, t);
-                if !glimpse.is_empty() {
-                    lines.push(Line::new());
-                    lines.extend(glimpse);
-                }
-            }
-        } else if busy && self.prompt.is_none() {
-            // Traditional plan + spinner when compact is not active.
-            if let Some(plan) = &self.plan {
-                lines.push(Line::new());
-                lines.extend(render_block(&Block::Plan { items: plan.clone(), live: true }, self.width, t, ctx));
-            }
-            lines.push(Line::new());
-            let elapsed = self.busy_since.map(|b| (now - b).max(0) as u64).unwrap_or(0);
-            let tokens = (self.streamed_chars - self.streamed_at_busy) / 4;
-            lines.push(chrome::spinner_line(t, ctx.frame, &self.verb(), elapsed, Some(tokens), self.width));
+            lines.extend(self.compact.render(ctx, self.width, t));
+            let elapsed = self
+                .busy_since
+                .map(|b| (now - b).max(0) as u64)
+                .unwrap_or(0);
+            let tokens = self.streamed_chars.saturating_sub(self.streamed_at_busy) / 4;
+            let agents = self
+                .compact
+                .agents
+                .iter()
+                .filter(|a| a.finished_at.is_none())
+                .count();
+            let verb = self
+                .compact
+                .latest
+                .as_ref()
+                .filter(|a| now - a.at < 4000)
+                .map(|a| a.text.clone())
+                .or_else(|| (agents > 0).then(|| format!("Waiting on {agents} agents")))
+                .unwrap_or_else(|| self.verb());
+            lines.push(chrome::spinner_line(
+                t,
+                ctx.frame,
+                &verb,
+                elapsed,
+                Some(tokens),
+                self.width,
+            ));
         } else if !self.tasks.is_empty() {
             lines.push(Line::new());
             let label = self.tasks.values().cloned().collect::<Vec<_>>().join(" · ");
-            lines.push(Line::styled(crate::blocks::SPINNER[ctx.frame % 10], t.accent()).with(" ", Style::new()).with(label, t.dim()));
+            lines.push(
+                Line::styled(
+                    t.glyphs.spinner[ctx.frame % t.glyphs.spinner.len()],
+                    t.accent(),
+                )
+                .with(" ", Style::new())
+                .with(label, t.dim()),
+            );
         }
         lines.push(Line::new());
 
@@ -1165,20 +1512,54 @@ impl Session {
             lines.extend(boxed);
         } else if let Some(p) = &self.prompt {
             let view = prompt_view(p, self.height);
-            lines.extend(chrome::prompt_box(t, &view, self.width, self.height.saturating_sub(2)));
+            lines.extend(chrome::prompt_box(
+                t,
+                &view,
+                self.width,
+                self.height.saturating_sub(2),
+            ));
         } else if let Some(view) = &self.browser {
-            lines.extend(crate::activity::render(&self.activity, view, t, self.width, self.height.saturating_sub(2), now));
+            lines.extend(crate::activity::render(
+                &self.activity,
+                view,
+                t,
+                self.width,
+                self.height.saturating_sub(2),
+                now,
+            ));
         } else {
-            let (boxed, (cr, cc)) = chrome::input_box(t, &self.editor, self.mode, &self.placeholder(), self.width, 8);
+            let (boxed, (cr, cc)) = chrome::input_box(
+                t,
+                &self.editor,
+                self.mode,
+                &self.placeholder(),
+                self.width,
+                8,
+            );
             cursor = Some((lines.len() + cr, cc));
             lines.extend(boxed);
             if let Some(items) = self.picker() {
-                lines.extend(chrome::picker(t, &items, self.pick_sel.min(items.len() - 1), self.width, 8));
+                lines.extend(chrome::picker(
+                    t,
+                    &items,
+                    self.pick_sel.min(items.len() - 1),
+                    self.width,
+                    8,
+                ));
             } else if self.editor.text() == "?" {
                 lines.extend(chrome::shortcuts(t, self.width));
-                lines.push(chrome::footer(t, Vec::new(), &self.footer_right(), self.width));
+                lines.push(chrome::footer(
+                    t,
+                    Vec::new(),
+                    &self.footer_right(),
+                    self.width,
+                ));
             } else {
-                let right = if self.status_until.is_some_and(|u| u > now) && !self.is_busy() { self.footer_right() } else { String::new() };
+                let right = if self.status_until.is_some_and(|u| u > now) && !self.is_busy() {
+                    self.footer_right()
+                } else {
+                    String::new()
+                };
                 lines.push(chrome::footer(t, self.footer_left(now), &right, self.width));
             }
         }
@@ -1199,8 +1580,19 @@ impl Session {
         let mut want = |t: i64| next = Some(next.map_or(t, |n: i64| n.min(t)));
         // Waiting on the user (a prompt is open) is idle: nothing animates.
         if (self.is_busy() && self.prompt.is_none()) || !self.tasks.is_empty() {
-            let step = if self.focused { FRAME_MS } else { UNFOCUSED_FRAME_MS };
-            want(now + step - now.rem_euclid(step));
+            if !self.focused {
+                if let Some(since) = self.busy_since {
+                    let elapsed = now.saturating_sub(since).max(0);
+                    want(since + (elapsed / 1000 + 1) * 1000);
+                } else {
+                    want(now + UNFOCUSED_FRAME_MS - now.rem_euclid(UNFOCUSED_FRAME_MS));
+                }
+            } else if let Some(since) = self.busy_since {
+                let elapsed = now.saturating_sub(since).max(0);
+                want(since + (elapsed / FRAME_MS + 1) * FRAME_MS);
+            } else {
+                want(now + FRAME_MS - now.rem_euclid(FRAME_MS));
+            }
         }
         // The browser shows elapsed times: tick once a second while it's
         // open and something is still running. Closed, nothing ticks.
@@ -1227,28 +1619,21 @@ impl Session {
         self.phase_busy || self.entries.iter().any(|e| !e.done)
     }
 
-    /// Extract compact region info from a tool before mutating it.
-    fn tool_compact_info(&self, id: u64, idx: Option<usize>) -> Option<(TrailKind, String, Option<String>, u32, u32)> {
-        let entry = self.entries.iter().find(|e| e.id == id)?;
-        let tool = match (&entry.block, idx) {
-            (Block::Tool(t), None) => t,
-            (Block::Group(g), Some(i)) => g.tools.get(i)?,
-            _ => return None,
-        };
-        let kind = TrailKind::from_tool(&tool.name);
-        let (path, added, removed) = if let Some((ref p, ref lines)) = tool.diff {
-            let (a, r) = count_changes(lines);
-            (Some(p.clone()), a as u32, r as u32)
-        } else {
-            (None, 0, 0)
-        };
-        Some((kind, tool.name.clone(), path, added, removed))
-    }
-
     // ----- helpers ------------------------------------------------------
 
     fn ctx(&self, now: i64) -> RenderCtx {
-        RenderCtx { frame: (now / FRAME_MS).max(0) as usize, now_ms: now, expanded: self.expanded }
+        let frame = if !self.focused {
+            0
+        } else if let Some(since) = self.busy_since {
+            crate::anim::frame_for(now, since)
+        } else {
+            (now / FRAME_MS).max(0) as u64
+        };
+        RenderCtx {
+            frame: frame as usize,
+            now_ms: now,
+            expanded: self.expanded,
+        }
     }
 
     fn input_text_width(&self) -> usize {
@@ -1257,7 +1642,10 @@ impl Session {
 
     fn push(&mut self, block: Block, done: bool) -> u64 {
         // Anything but (possibly empty) reply text ends a run of reads.
-        if !matches!(block, Block::Assistant { .. } | Block::Reasoning { .. } | Block::Group(_)) {
+        if !matches!(
+            block,
+            Block::Assistant { .. } | Block::Reasoning { .. } | Block::Group(_)
+        ) {
             self.close_group();
         }
         let id = self.next_id;
@@ -1271,7 +1659,11 @@ impl Session {
     }
 
     fn block_mut(&mut self, id: u64) -> Option<&mut Block> {
-        self.entries.iter_mut().rev().find(|e| e.id == id).map(|e| &mut e.block)
+        self.entries
+            .iter_mut()
+            .rev()
+            .find(|e| e.id == id)
+            .map(|e| &mut e.block)
     }
 
     fn tool_mut(&mut self, id: u64, idx: Option<usize>) -> Option<&mut ToolBlock> {
@@ -1310,6 +1702,7 @@ impl Session {
         if self.busy_since.is_none() {
             self.busy_since = Some(now);
             self.streamed_at_busy = self.streamed_chars;
+            self.compact.begin(now);
         }
     }
 
@@ -1320,12 +1713,18 @@ impl Session {
     /// Move completed paragraphs of the leading streaming reply into their
     /// own finished block, so a long answer never outgrows the live region.
     fn split_streaming_paragraphs(&mut self) {
-        let Some(first) = self.entries.first() else { return };
+        let Some(first) = self.entries.first() else {
+            return;
+        };
         if first.done {
             return;
         }
-        let Block::Assistant { markdown } = &first.block else { return };
-        let Some(at) = paragraph_split(markdown) else { return };
+        let Block::Assistant { markdown } = &first.block else {
+            return;
+        };
+        let Some(at) = paragraph_split(markdown) else {
+            return;
+        };
         let head = markdown[..at].trim_end().to_string();
         let tail = markdown[at..].trim_start_matches('\n').to_string();
         if head.is_empty() {
@@ -1333,13 +1732,27 @@ impl Session {
         }
         let consumed = markdown[..markdown.len() - tail.len()].to_string();
         let stream_id = first.id;
-        self.printed_prefix.entry(stream_id).or_default().push_str(&consumed);
-        if let Some(Entry { block: Block::Assistant { markdown }, .. }) = self.entries.first_mut() {
+        self.printed_prefix
+            .entry(stream_id)
+            .or_default()
+            .push_str(&consumed);
+        if let Some(Entry {
+            block: Block::Assistant { markdown },
+            ..
+        }) = self.entries.first_mut()
+        {
             *markdown = tail;
         }
         let id = self.next_id;
         self.next_id += 1;
-        self.entries.insert(0, Entry { id, block: Block::Assistant { markdown: head }, done: true });
+        self.entries.insert(
+            0,
+            Entry {
+                id,
+                block: Block::Assistant { markdown: head },
+                done: true,
+            },
+        );
     }
 
     fn verb(&self) -> String {
@@ -1349,13 +1762,23 @@ impl Session {
         if let Some(v) = self.segments.get("activity") {
             return v.clone();
         }
-        if let Some(Block::Tool(t)) = self.entries.iter().rev().find(|e| !e.done && matches!(e.block, Block::Tool(_))).map(|e| &e.block) {
+        if let Some(Block::Tool(t)) = self
+            .entries
+            .iter()
+            .rev()
+            .find(|e| !e.done && matches!(e.block, Block::Tool(_)))
+            .map(|e| &e.block)
+        {
             return format!("Running {}", t.name);
         }
         if self.entries.iter().any(|e| matches!(&e.block, Block::Group(g) if g.tools.iter().any(|t| t.status == ToolStatus::Running))) {
             return "Exploring".into();
         }
-        if self.entries.iter().any(|e| !e.done && matches!(e.block, Block::Assistant { .. })) {
+        if self
+            .entries
+            .iter()
+            .any(|e| !e.done && matches!(e.block, Block::Assistant { .. }))
+        {
             return "Writing".into();
         }
         "Thinking".into()
@@ -1365,12 +1788,23 @@ impl Session {
         if self.is_busy() {
             "Type ahead · esc to interrupt".into()
         } else {
-            format!("Ask {} anything · / for commands", if self.app_name.is_empty() { "the agent" } else { &self.app_name })
+            format!(
+                "Ask {} anything · / for commands",
+                if self.app_name.is_empty() {
+                    "the agent"
+                } else {
+                    &self.app_name
+                }
+            )
         }
     }
 
     fn footer_left(&self, now: i64) -> Vec<Span> {
-        if self.ctrl_c_at.map(|t| now - t < CTRL_C_WINDOW_MS).unwrap_or(false) {
+        if self
+            .ctrl_c_at
+            .map(|t| now - t < CTRL_C_WINDOW_MS)
+            .unwrap_or(false)
+        {
             return vec![Span::styled("Press Ctrl+C again to exit", self.theme.dim())];
         }
         if let Some((text, style, until)) = &self.foot {
@@ -1395,7 +1829,10 @@ impl Session {
     fn open_browser(&mut self) {
         if self.browser.is_none() {
             self.browser = Some(crate::activity::View::List { sel: 0 });
-            self.outbound.push(Outbound { event_type: EventType::ActivityViewChanged, payload: json!({ "view": "list" }) });
+            self.outbound.push(Outbound {
+                event_type: EventType::ActivityViewChanged,
+                payload: json!({ "view": "list" }),
+            });
         }
     }
 
@@ -1406,7 +1843,10 @@ impl Session {
             if let Some(id) = view.item_id() {
                 if self.activity.get(id).is_none() {
                     self.browser = Some(crate::activity::View::List { sel: 0 });
-                    self.outbound.push(Outbound { event_type: EventType::ActivityViewChanged, payload: json!({ "view": "list" }) });
+                    self.outbound.push(Outbound {
+                        event_type: EventType::ActivityViewChanged,
+                        payload: json!({ "view": "list" }),
+                    });
                 }
             }
         }
@@ -1417,12 +1857,29 @@ impl Session {
     fn announce(&mut self, change: crate::activity::Transition, item: &crate::activity::Item) {
         use crate::activity::Transition::*;
         let noun = item.kind.noun();
-        let detail = item.summary.as_ref().map(|s| format!(" · {s}")).unwrap_or_default();
+        let detail = item
+            .summary
+            .as_ref()
+            .map(|s| format!(" · {s}"))
+            .unwrap_or_default();
         let (kind, text) = match change {
             Started => (NoticeKind::Info, format!("Started {noun} · {}", item.title)),
-            Finished => (NoticeKind::Success, format!("{} finished · {}", capitalize(noun), item.title)),
-            Failed => (NoticeKind::Error, format!("{} failed · {}{detail}", capitalize(noun), item.title)),
-            NeedsAttention => (NoticeKind::Warn, format!("{} needs attention · {}{detail}", capitalize(noun), item.title)),
+            Finished => (
+                NoticeKind::Success,
+                format!("{} finished · {}", capitalize(noun), item.title),
+            ),
+            Failed => (
+                NoticeKind::Error,
+                format!("{} failed · {}{detail}", capitalize(noun), item.title),
+            ),
+            NeedsAttention => (
+                NoticeKind::Warn,
+                format!(
+                    "{} needs attention · {}{detail}",
+                    capitalize(noun),
+                    item.title
+                ),
+            ),
             Stopped => (NoticeKind::Info, format!("Stopped {noun} · {}", item.title)),
         };
         self.push_done(Block::Notice { kind, text });
@@ -1431,7 +1888,10 @@ impl Session {
     fn footer_right(&self) -> String {
         const SKIP: [&str; 5] = ["mode", "phase", "elapsed", "warn", "activity"];
         const ORDER: [&str; 4] = ["model", "tokens", "cost", "branch"];
-        let mut parts: Vec<&str> = ORDER.iter().filter_map(|k| self.segments.get(*k).map(String::as_str)).collect();
+        let mut parts: Vec<&str> = ORDER
+            .iter()
+            .filter_map(|k| self.segments.get(*k).map(String::as_str))
+            .collect();
         for (k, v) in &self.segments {
             if !SKIP.contains(&k.as_str()) && !ORDER.contains(&k.as_str()) {
                 parts.push(v);
@@ -1451,12 +1911,19 @@ impl Session {
             }
             // An exact name goes first, so `/mode` Enter runs /mode even
             // when /model was registered before it.
-            let mut matches: Vec<_> = self.commands.iter().filter(|(n, _, _)| n.starts_with(q)).collect();
+            let mut matches: Vec<_> = self
+                .commands
+                .iter()
+                .filter(|(n, _, _)| n.starts_with(q))
+                .collect();
             matches.sort_by_key(|(n, _, _)| n != q);
             let items: Vec<PickItem> = matches
                 .into_iter()
                 .map(|(n, d, h)| PickItem {
-                    label: format!("/{n}{}", h.as_ref().map(|h| format!(" {h}")).unwrap_or_default()),
+                    label: format!(
+                        "/{n}{}",
+                        h.as_ref().map(|h| format!(" {h}")).unwrap_or_default()
+                    ),
                     hint: (!d.is_empty()).then(|| d.clone()),
                     hits: Vec::new(),
                 })
@@ -1476,7 +1943,14 @@ impl Session {
                     let name = t.strip_prefix(dir.as_str()).unwrap_or(t);
                     fuzzy(name, rest).map(|(score, hits)| {
                         let offset = t.len() - name.len();
-                        (score, PickItem { label: t.clone(), hint: None, hits: hits.into_iter().map(|h| h + offset).collect() })
+                        (
+                            score,
+                            PickItem {
+                                label: t.clone(),
+                                hint: None,
+                                hits: hits.into_iter().map(|h| h + offset).collect(),
+                            },
+                        )
                     })
                 })
                 .take(200)
@@ -1491,7 +1965,18 @@ impl Session {
         let mut scored: Vec<(usize, PickItem)> = self
             .mentions
             .iter()
-            .filter_map(|m| fuzzy(m, &q).map(|(score, hits)| (score, PickItem { label: m.clone(), hint: None, hits })))
+            .filter_map(|m| {
+                fuzzy(m, &q).map(|(score, hits)| {
+                    (
+                        score,
+                        PickItem {
+                            label: m.clone(),
+                            hint: None,
+                            hits,
+                        },
+                    )
+                })
+            })
             .collect();
         scored.sort_by_key(|(s, i)| (*s, i.label.len()));
         let items: Vec<PickItem> = scored.into_iter().take(8).map(|(_, i)| i).collect();
@@ -1502,11 +1987,18 @@ impl Session {
         let Some(items) = self.picker() else { return };
         let item = &items[self.pick_sel.min(items.len() - 1)];
         if self.editor.text().starts_with('/') {
-            let name = item.label.split_whitespace().next().unwrap_or("").to_string();
+            let name = item
+                .label
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_string();
             // A hint in brackets (`[list|<id>]`) means the arguments are
             // optional: Enter runs the command bare, as Ink does.
             let needs_args = self.commands.iter().any(|(n, _, h)| {
-                format!("/{n}") == name && h.as_deref().is_some_and(|h| !h.trim().is_empty() && !h.trim_start().starts_with('['))
+                format!("/{n}") == name
+                    && h.as_deref()
+                        .is_some_and(|h| !h.trim().is_empty() && !h.trim_start().starts_with('['))
             });
             if submit && !needs_args {
                 self.editor.clear();
@@ -1519,7 +2011,11 @@ impl Session {
             let at = text[..self.editor.cursor()].rfind('@').unwrap_or(0);
             // Picking a folder steps into it: no trailing space, and the
             // picker stays open on that folder's entries.
-            let insert = if item.label.ends_with('/') { format!("@{}", item.label) } else { format!("@{} ", item.label) };
+            let insert = if item.label.ends_with('/') {
+                format!("@{}", item.label)
+            } else {
+                format!("@{} ", item.label)
+            };
             self.editor.replace_before_cursor(at, &insert);
             self.refresh_mention_query();
         }
@@ -1532,7 +2028,9 @@ impl Session {
         let before = &text[..self.editor.cursor()];
         let at = before.rfind('@')?;
         let q = &before[at + 1..];
-        if q.contains(char::is_whitespace) || (at > 0 && !before[..at].ends_with(char::is_whitespace)) {
+        if q.contains(char::is_whitespace)
+            || (at > 0 && !before[..at].ends_with(char::is_whitespace))
+        {
             return None;
         }
         Some(q.to_string())
@@ -1541,13 +2039,18 @@ impl Session {
     /// Ask the host for a directory's entries when a path mention enters a
     /// directory we haven't listed yet.
     fn refresh_mention_query(&mut self) {
-        let Some(q) = self.mention_partial() else { return };
+        let Some(q) = self.mention_partial() else {
+            return;
+        };
         let Some(dir) = path_dir(&q) else { return };
         if self.mention_query_sent.as_deref() == Some(dir.as_str()) {
             return;
         }
         self.mention_query_sent = Some(dir);
-        self.outbound.push(Outbound { event_type: EventType::MentionQuery, payload: json!({ "query": q }) });
+        self.outbound.push(Outbound {
+            event_type: EventType::MentionQuery,
+            payload: json!({ "query": q }),
+        });
     }
 }
 
@@ -1567,7 +2070,16 @@ impl Session {
     fn show_wizard_step(&mut self, now: i64) {
         let Some(w) = &self.wizard else { return };
         let step = w.steps[w.at].clone();
-        let progress = format!("{}Step {} of {}", if w.title.is_empty() { String::new() } else { format!("{} · ", w.title) }, w.at + 1, w.steps.len());
+        let progress = format!(
+            "{}Step {} of {}",
+            if w.title.is_empty() {
+                String::new()
+            } else {
+                format!("{} · ", w.title)
+            },
+            w.at + 1,
+            w.steps.len()
+        );
         let allow_cancel = w.allow_cancel;
         let mut payload = step.clone();
         if let Some(obj) = payload.as_object_mut() {
@@ -1588,7 +2100,14 @@ impl Session {
             _ => {
                 let title = step.get("title").and_then(Value::as_str).unwrap_or("");
                 if let Some(obj) = payload.as_object_mut() {
-                    obj.insert("title".into(), json!(if title.is_empty() { progress } else { format!("{title}  ({progress})") }));
+                    obj.insert(
+                        "title".into(),
+                        json!(if title.is_empty() {
+                            progress
+                        } else {
+                            format!("{title}  ({progress})")
+                        }),
+                    );
                 }
                 EventType::ShowForm
             }
@@ -1613,11 +2132,22 @@ impl Session {
         }
         let mut i = 0;
         while i < self.outbound.len() {
-            let Some(w) = self.wizard.as_mut() else { return };
-            let step_id = w.steps[w.at].get("id").and_then(Value::as_str).unwrap_or("").to_string();
+            let Some(w) = self.wizard.as_mut() else {
+                return;
+            };
+            let step_id = w.steps[w.at]
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             let o = &self.outbound[i];
-            let is_answer = matches!(o.event_type, EventType::SelectListResponse | EventType::ConfirmResponse | EventType::FormResponse)
-                && o.payload.get("id").and_then(Value::as_str) == Some(step_id.as_str());
+            let is_answer = matches!(
+                o.event_type,
+                EventType::SelectListResponse
+                    | EventType::ConfirmResponse
+                    | EventType::FormResponse
+            ) && o.payload.get("id").and_then(Value::as_str)
+                == Some(step_id.as_str());
             if !is_answer {
                 i += 1;
                 continue;
@@ -1626,16 +2156,27 @@ impl Session {
             if o.payload.get("cancelled").and_then(Value::as_bool) == Some(true) {
                 let (id, at) = (w.id.clone(), w.at);
                 self.wizard = None;
-                self.outbound.push(Outbound { event_type: EventType::WizardCancelled, payload: json!({ "id": id, "at_step": at }) });
+                self.outbound.push(Outbound {
+                    event_type: EventType::WizardCancelled,
+                    payload: json!({ "id": id, "at_step": at }),
+                });
                 return;
             }
-            let value = o.payload.get("value").or_else(|| o.payload.get("values")).cloned().unwrap_or(Value::Null);
+            let value = o
+                .payload
+                .get("value")
+                .or_else(|| o.payload.get("values"))
+                .cloned()
+                .unwrap_or(Value::Null);
             w.results.insert(step_id, value);
             w.at += 1;
             if w.at >= w.steps.len() {
                 let (id, results) = (w.id.clone(), std::mem::take(&mut w.results));
                 self.wizard = None;
-                self.outbound.push(Outbound { event_type: EventType::WizardCompleted, payload: json!({ "id": id, "results": results }) });
+                self.outbound.push(Outbound {
+                    event_type: EventType::WizardCompleted,
+                    payload: json!({ "id": id, "results": results }),
+                });
                 return;
             }
             self.show_wizard_step(now);
@@ -1647,7 +2188,12 @@ impl Session {
 /// entries should be listed, e.g. "../src/" for "../src/ma". Bare `~`, `.`
 /// and `..` (and a trailing `/..`) mean that directory itself.
 fn path_dir(q: &str) -> Option<String> {
-    let is_path = q.starts_with('/') || q.starts_with('~') || q.starts_with("./") || q.starts_with("../") || q == "." || q == "..";
+    let is_path = q.starts_with('/')
+        || q.starts_with('~')
+        || q.starts_with("./")
+        || q.starts_with("../")
+        || q == "."
+        || q == "..";
     if !is_path {
         return None;
     }
@@ -1687,7 +2233,9 @@ fn prompt_view(p: &Prompt, height: usize) -> PromptView {
     // Window long lists around the selection.
     let room = height.saturating_sub(10).clamp(3, 14);
     let pos = visible.iter().position(|&i| i == p.selected).unwrap_or(0);
-    let start = pos.saturating_sub(room / 2).min(visible.len().saturating_sub(room));
+    let start = pos
+        .saturating_sub(room / 2)
+        .min(visible.len().saturating_sub(room));
     let mut shown: Vec<usize> = visible.iter().copied().skip(start).take(room).collect();
     // Section headers take rows too; trim from the far end of the selection.
     let header_rows = |rows: &[usize]| -> usize {
@@ -1715,32 +2263,73 @@ fn prompt_view(p: &Prompt, height: usize) -> PromptView {
     let mut last: Option<String> = None;
     for &i in &shown {
         let sec = p.sections.get(i).cloned().flatten();
-        sections.push(if !filtering && sec.is_some() && sec != last { sec.clone() } else { None });
+        sections.push(if !filtering && sec.is_some() && sec != last {
+            sec.clone()
+        } else {
+            None
+        });
         last = sec;
     }
     let mut subtitle = p.subtitle.clone();
-    let is_select = matches!(p.kind, PromptKind::Select { filterable: true, .. });
+    let is_select = matches!(
+        p.kind,
+        PromptKind::Select {
+            filterable: true,
+            ..
+        }
+    );
     if filtering || (is_select && p.options.len() > room) {
-        let shown_count = if filtering { visible.len() } else { p.options.len() };
-        let search = if filtering { format!("Search: {}", p.filter) } else { "Type to search".to_string() };
+        let shown_count = if filtering {
+            visible.len()
+        } else {
+            p.options.len()
+        };
+        let search = if filtering {
+            format!("Search: {}", p.filter)
+        } else {
+            "Type to search".to_string()
+        };
         subtitle = Some(format!("{search}  ·  {shown_count} of {}", p.options.len()));
     }
     let (esc_is_last, footer) = match p.kind {
-        PromptKind::Permission { .. } => (true, "↑↓ to choose · enter to confirm · esc to interrupt".to_string()),
-        PromptKind::Select { filterable: true, .. } => (false, "↑↓ to choose · type to search · enter to select · esc to cancel".to_string()),
-        _ => (false, "↑↓ to choose · enter to select · esc to cancel".to_string()),
+        PromptKind::Permission { .. } => (
+            true,
+            "↑↓ to choose · enter to confirm · esc to interrupt".to_string(),
+        ),
+        PromptKind::Select {
+            filterable: true, ..
+        } => (
+            false,
+            "↑↓ to choose · type to search · enter to select · esc to cancel".to_string(),
+        ),
+        _ => (
+            false,
+            "↑↓ to choose · enter to select · esc to cancel".to_string(),
+        ),
     };
     PromptView {
         title: p.title.clone(),
         subtitle,
         diff_lines: p.diff_lines.as_ref().map(|(_, l)| l.clone()),
         question: p.question.clone(),
-        numbered: matches!(p.kind, PromptKind::Permission { .. } | PromptKind::Confirm { .. }) || p.options.len() <= 9,
+        numbered: matches!(
+            p.kind,
+            PromptKind::Permission { .. } | PromptKind::Confirm { .. }
+        ) || p.options.len() <= 9,
         options: shown.iter().map(|&i| p.options[i].clone()).collect(),
-        hints: shown.iter().map(|&i| p.hints.get(i).cloned().flatten()).collect(),
+        hints: shown
+            .iter()
+            .map(|&i| p.hints.get(i).cloned().flatten())
+            .collect(),
         sections,
-        columns: shown.iter().map(|&i| p.columns.get(i).cloned().unwrap_or_default()).collect(),
-        states: shown.iter().map(|&i| p.states.get(i).copied().flatten()).collect(),
+        columns: shown
+            .iter()
+            .map(|&i| p.columns.get(i).cloned().unwrap_or_default())
+            .collect(),
+        states: shown
+            .iter()
+            .map(|&i| p.states.get(i).copied().flatten())
+            .collect(),
         current: p.current.and_then(|c| shown.iter().position(|&i| i == c)),
         selected: shown.iter().position(|&i| i == p.selected).unwrap_or(0),
         esc_is_last,
@@ -1789,14 +2378,25 @@ fn append_output(out: &mut Vec<String>, chunk: &str) {
 }
 
 fn parse_diff_payload(d: &Value) -> Option<(String, Vec<crate::blocks::DiffLine>)> {
-    let path = d.get("path").and_then(Value::as_str).unwrap_or("").to_string();
-    if let Some(u) = d.get("unified").and_then(Value::as_str).or_else(|| d.as_str()) {
+    let path = d
+        .get("path")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if let Some(u) = d
+        .get("unified")
+        .and_then(Value::as_str)
+        .or_else(|| d.as_str())
+    {
         return Some((path, parse_unified(u)));
     }
     let before = d.get("before").and_then(Value::as_str);
     let after = d.get("after").and_then(Value::as_str);
     if before.is_some() || after.is_some() {
-        return Some((path, diff_texts(before.unwrap_or(""), after.unwrap_or(""), 2)));
+        return Some((
+            path,
+            diff_texts(before.unwrap_or(""), after.unwrap_or(""), 2),
+        ));
     }
     None
 }
@@ -1808,8 +2408,16 @@ fn table_markdown(p: &Value) -> String {
         .map(|a| {
             a.iter()
                 .map(|c| {
-                    let name = c.get("name").and_then(Value::as_str).unwrap_or("").to_string();
-                    let label = c.get("label").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| name.clone());
+                    let name = c
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let label = c
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| name.clone());
                     (name, label)
                 })
                 .collect()
@@ -1819,9 +2427,20 @@ fn table_markdown(p: &Value) -> String {
     if let Some(t) = p.get("title").and_then(Value::as_str) {
         md.push_str(&format!("**{}**\n\n", escape_cell(t)));
     }
-    md.push_str(&format!("| {} |\n", cols.iter().map(|c| escape_cell(&c.1)).collect::<Vec<_>>().join(" | ")));
+    md.push_str(&format!(
+        "| {} |\n",
+        cols.iter()
+            .map(|c| escape_cell(&c.1))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    ));
     md.push_str(&format!("|{}\n", "---|".repeat(cols.len().max(1))));
-    for row in p.get("rows").and_then(Value::as_array).into_iter().flatten() {
+    for row in p
+        .get("rows")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         let cells: Vec<String> = cols
             .iter()
             .map(|(name, _)| match row.get(name) {
@@ -1840,10 +2459,19 @@ fn kv_markdown(p: &Value) -> String {
     if let Some(t) = p.get("title").and_then(Value::as_str) {
         md.push_str(&format!("**{}**\n\n", escape_cell(t)));
     }
-    for item in p.get("items").and_then(Value::as_array).into_iter().flatten() {
+    for item in p
+        .get("items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         let label = item.get("label").and_then(Value::as_str).unwrap_or("");
         let value = item.get("value").and_then(Value::as_str).unwrap_or("");
-        md.push_str(&format!("- **{}** {}\n", escape_cell(label), escape_cell(value)));
+        md.push_str(&format!(
+            "- **{}** {}\n",
+            escape_cell(label),
+            escape_cell(value)
+        ));
     }
     md
 }
@@ -1909,7 +2537,15 @@ mod tests {
     use super::*;
     /// Build an event without the store's bookkeeping.
     fn ev(t: EventType, payload: serde_json::Value) -> Event {
-        Event { id: Default::default(), session_id: Default::default(), seq: 0, timestamp_ms: 0, schema_version: 1, event_type: t, payload }
+        Event {
+            id: Default::default(),
+            session_id: Default::default(),
+            seq: 0,
+            timestamp_ms: 0,
+            schema_version: 1,
+            event_type: t,
+            payload,
+        }
     }
 
     fn session() -> Session {
@@ -1921,7 +2557,11 @@ mod tests {
     }
 
     fn live_text(s: &Session, now: i64) -> Vec<String> {
-        s.live_frame(now).lines.iter().map(|l| l.plain_text()).collect()
+        s.live_frame(now)
+            .lines
+            .iter()
+            .map(|l| l.plain_text())
+            .collect()
     }
 
     fn type_str(s: &mut Session, t: &str) {
@@ -1933,65 +2573,124 @@ mod tests {
     #[test]
     fn a_turn_prints_blocks_once_and_drops_them() {
         let mut s = session();
-        s.apply(&ev(EventType::UserMessageCreated, json!({"text": "fix it"})), 0);
-        s.apply(&ev(EventType::ToolExecutionStarted, json!({"tool_id": "t1", "tool": "Bash", "command": "make"})), 0);
+        s.apply(
+            &ev(EventType::UserMessageCreated, json!({"text": "fix it"})),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({"tool_id": "t1", "tool": "Bash", "command": "make"}),
+            ),
+            0,
+        );
         assert_eq!(history_text(&mut s, 0), vec!["› fix it"]);
         // Compact region shows trail beads instead of per-tool lines
         let live = live_text(&s, 0);
-        assert!(live.iter().any(|l| l.contains("▲")), "compact trail should show bash bead");
-        s.apply(&ev(EventType::ToolExecutionFinished, json!({"tool_id": "t1", "exit_code": 0, "summary": "142 lines"})), 500);
+        assert!(
+            live.iter().any(|l| l.contains("›")),
+            "compact trail should show bash bead"
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionFinished,
+                json!({"tool_id": "t1", "exit_code": 0, "summary": "142 lines"}),
+            ),
+            500,
+        );
         assert_eq!(history_text(&mut s, 500), vec!["", "✓ Bash make"]);
         assert_eq!(s.held_blocks(), 0);
         assert!(history_text(&mut s, 600).is_empty());
     }
 
     #[test]
-    fn active_turn_shows_recent_edit_code_as_a_rotating_glimpse() {
-        let mut s = session();
-        s.apply(&ev(EventType::UserMessageCreated, json!({"text": "change the value"})), 0);
-        s.apply(&ev(EventType::AssistantStreamStarted, json!({"stream_id": "turn"})), 50);
-        s.apply(&ev(EventType::ToolExecutionStarted, json!({"tool_id": "edit", "tool": "Write", "command": "src/lib.rs"})), 100);
-        s.apply(&ev(EventType::ToolExecutionFinished, json!({
-            "tool_id": "edit",
-            "exit_code": 0,
-            "diff": {"path": "src/lib.rs", "before": "fn answer() {\n    41\n}\n", "after": "fn answer() {\n    const value = 42;\n}\n"}
-        })), 500);
-
-        let frame = s.live_frame(500);
-        let shown: Vec<String> = frame.lines.iter().map(|line| line.plain_text()).collect();
-        assert!(shown.iter().any(|line| line.contains("Code glimpse · src/lib.rs")), "{shown:?}");
-        assert!(shown.iter().any(|line| line.contains("const value = 42")), "{shown:?}");
-        assert!(!live_text(&s, 7_500).iter().any(|line| line.contains("Code glimpse")), "glimpses should pause before rotating back");
-    }
-
-    #[test]
     fn reads_fold_until_something_else_happens() {
         let mut s = session();
         let start = |s: &mut Session, id: &str, tool: &str, cmd: &str| {
-            s.apply(&ev(EventType::ToolExecutionStarted, json!({"tool_id": id, "tool": tool, "command": cmd})), 0);
-            s.apply(&ev(EventType::ToolExecutionFinished, json!({"tool_id": id, "exit_code": 0})), 0);
+            s.apply(
+                &ev(
+                    EventType::ToolExecutionStarted,
+                    json!({"tool_id": id, "tool": tool, "command": cmd}),
+                ),
+                0,
+            );
+            s.apply(
+                &ev(
+                    EventType::ToolExecutionFinished,
+                    json!({"tool_id": id, "exit_code": 0}),
+                ),
+                0,
+            );
         };
         start(&mut s, "1", "Read", "a.ts");
         // An empty model step between reads doesn't split the group.
-        s.apply(&ev(EventType::AssistantStreamStarted, json!({"stream_id": "x"})), 0);
-        s.apply(&ev(EventType::AssistantMessageCompleted, json!({"stream_id": "x"})), 0);
+        s.apply(
+            &ev(EventType::AssistantStreamStarted, json!({"stream_id": "x"})),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantMessageCompleted,
+                json!({"stream_id": "x"}),
+            ),
+            0,
+        );
         start(&mut s, "2", "Grep", "foo");
         start(&mut s, "3", "Read", "b.ts");
-        assert!(history_text(&mut s, 0).is_empty(), "the group stays open for more reads");
+        assert!(
+            history_text(&mut s, 0).is_empty(),
+            "the group stays open for more reads"
+        );
         // Compact region shows trail beads instead of per-tool lines
         let live = live_text(&s, 0);
-        assert!(live.iter().any(|l| l.contains("·")), "compact trail should be visible");
-        s.apply(&ev(EventType::ToolExecutionStarted, json!({"tool_id": "4", "tool": "Bash", "command": "make"})), 0);
-        assert_eq!(history_text(&mut s, 0), vec!["✓ Explored 2 files · 1 search"]);
+        assert!(
+            live.iter().any(|l| l.contains("·")),
+            "compact trail should be visible"
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({"tool_id": "4", "tool": "Bash", "command": "make"}),
+            ),
+            0,
+        );
+        assert_eq!(
+            history_text(&mut s, 0),
+            vec!["✓ Explored 2 files · 1 search"]
+        );
     }
 
     #[test]
     fn turn_end_closes_an_open_group() {
         let mut s = session();
-        s.apply(&ev(EventType::StatusUpdate, json!({"segments": {"phase": "thinking"}})), 0);
-        s.apply(&ev(EventType::ToolExecutionStarted, json!({"tool_id": "1", "tool": "Read", "command": "a.ts"})), 0);
-        s.apply(&ev(EventType::ToolExecutionFinished, json!({"tool_id": "1", "exit_code": 0})), 0);
-        s.apply(&ev(EventType::StatusUpdate, json!({"segments": {"phase": "idle"}})), 0);
+        s.apply(
+            &ev(
+                EventType::StatusUpdate,
+                json!({"segments": {"phase": "thinking"}}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({"tool_id": "1", "tool": "Read", "command": "a.ts"}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionFinished,
+                json!({"tool_id": "1", "exit_code": 0}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::StatusUpdate,
+                json!({"segments": {"phase": "idle"}}),
+            ),
+            0,
+        );
         assert_eq!(history_text(&mut s, 0), vec!["✓ Read a.ts"]);
         assert!(!s.is_busy());
     }
@@ -1999,7 +2698,13 @@ mod tests {
     #[test]
     fn footer_status_fades_after_a_change() {
         let mut s = session();
-        s.apply(&ev(EventType::StatusUpdate, json!({"segments": {"model": "kimi-k2.6", "cost": "$0.04"}})), 0);
+        s.apply(
+            &ev(
+                EventType::StatusUpdate,
+                json!({"segments": {"model": "kimi-k2.6", "cost": "$0.04"}}),
+            ),
+            0,
+        );
         let footer = |s: &Session, now| live_text(s, now).last().cloned().unwrap();
         assert!(footer(&s, 100).contains("kimi-k2.6"));
         assert_eq!(s.next_wakeup(100), Some(FOOTER_SHOW_MS));
@@ -2010,9 +2715,24 @@ mod tests {
     }
 
     fn reasoning_turn(s: &mut Session) {
-        s.apply(&ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})), 0);
-        s.apply(&ev(EventType::AssistantReasoningDelta, json!({"stream_id": "s", "token": "Check the "})), 0);
-        s.apply(&ev(EventType::AssistantReasoningDelta, json!({"stream_id": "s", "token": "config first."})), 0);
+        s.apply(
+            &ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantReasoningDelta,
+                json!({"stream_id": "s", "token": "Check the "}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantReasoningDelta,
+                json!({"stream_id": "s", "token": "config first."}),
+            ),
+            0,
+        );
     }
 
     #[test]
@@ -2020,8 +2740,20 @@ mod tests {
         let mut s = session();
         reasoning_turn(&mut s);
         assert!(!live_text(&s, 0).iter().any(|l| l.contains("thinking…")));
-        s.apply(&ev(EventType::AssistantTokenDelta, json!({"stream_id": "s", "token": "Done."})), 0);
-        s.apply(&ev(EventType::AssistantMessageCompleted, json!({"stream_id": "s"})), 0);
+        s.apply(
+            &ev(
+                EventType::AssistantTokenDelta,
+                json!({"stream_id": "s", "token": "Done."}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantMessageCompleted,
+                json!({"stream_id": "s"}),
+            ),
+            0,
+        );
         assert_eq!(history_text(&mut s, 0), vec!["  Done."]);
         assert_eq!(s.held_blocks(), 0);
     }
@@ -2031,14 +2763,37 @@ mod tests {
         let mut s = session();
         s.key(Key::Ctrl('r'), 0);
         reasoning_turn(&mut s);
-        assert!(live_text(&s, 0).iter().any(|l| l == "  thinking… Check the config first."));
-        s.apply(&ev(EventType::AssistantTokenDelta, json!({"stream_id": "s", "token": "Done."})), 0);
+        assert!(live_text(&s, 0)
+            .iter()
+            .any(|l| l == "  thinking… Check the config first."));
+        s.apply(
+            &ev(
+                EventType::AssistantTokenDelta,
+                json!({"stream_id": "s", "token": "Done."}),
+            ),
+            0,
+        );
         // Reasoning after the reply started is dropped, not shown mid-reply.
-        s.apply(&ev(EventType::AssistantReasoningDelta, json!({"stream_id": "s", "token": "late"})), 0);
-        s.apply(&ev(EventType::AssistantMessageCompleted, json!({"stream_id": "s"})), 0);
+        s.apply(
+            &ev(
+                EventType::AssistantReasoningDelta,
+                json!({"stream_id": "s", "token": "late"}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantMessageCompleted,
+                json!({"stream_id": "s"}),
+            ),
+            0,
+        );
         let mut out = history_text(&mut s, 0);
         out.extend(history_text(&mut s, 0));
-        assert_eq!(out, vec!["  thinking… Check the config first.", "", "  Done."]);
+        assert_eq!(
+            out,
+            vec!["  thinking… Check the config first.", "", "  Done."]
+        );
         assert_eq!(s.held_blocks(), 0);
     }
 
@@ -2046,8 +2801,20 @@ mod tests {
     fn long_reasoning_is_cut_like_ink() {
         let mut s = session();
         s.key(Key::Ctrl('r'), 0);
-        s.apply(&ev(EventType::AssistantReasoningDelta, json!({"stream_id": "s", "token": "x".repeat(1000)})), 0);
-        s.apply(&ev(EventType::AssistantMessageCompleted, json!({"stream_id": "s"})), 0);
+        s.apply(
+            &ev(
+                EventType::AssistantReasoningDelta,
+                json!({"stream_id": "s", "token": "x".repeat(1000)}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantMessageCompleted,
+                json!({"stream_id": "s"}),
+            ),
+            0,
+        );
         let shown: String = history_text(&mut s, 0).concat();
         assert_eq!(shown.matches('x').count(), 400);
         assert!(shown.ends_with('…'));
@@ -2056,11 +2823,32 @@ mod tests {
     #[test]
     fn final_text_does_not_reprint_streamed_paragraphs() {
         let mut s = session();
-        s.apply(&ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})), 0);
-        s.apply(&ev(EventType::AssistantTokenDelta, json!({"stream_id": "s", "token": "One.\n\nTwo.\n\nThr"})), 0);
+        s.apply(
+            &ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantTokenDelta,
+                json!({"stream_id": "s", "token": "One.\n\nTwo.\n\nThr"}),
+            ),
+            0,
+        );
         let mut out = history_text(&mut s, 0);
-        s.apply(&ev(EventType::AssistantTokenDelta, json!({"stream_id": "s", "token": "ee."})), 0);
-        s.apply(&ev(EventType::AssistantMessageCompleted, json!({"stream_id": "s", "text": "One.\n\nTwo.\n\nThree."})), 0);
+        s.apply(
+            &ev(
+                EventType::AssistantTokenDelta,
+                json!({"stream_id": "s", "token": "ee."}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantMessageCompleted,
+                json!({"stream_id": "s", "text": "One.\n\nTwo.\n\nThree."}),
+            ),
+            0,
+        );
         out.extend(history_text(&mut s, 0));
         let text: Vec<_> = out.into_iter().filter(|l| !l.is_empty()).collect();
         assert_eq!(text, vec!["  One.", "  Two.", "  Three."]);
@@ -2070,7 +2858,10 @@ mod tests {
     #[test]
     fn unfocused_busy_ticks_once_a_second() {
         let mut s = session();
-        s.apply(&ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})), 0);
+        s.apply(
+            &ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})),
+            0,
+        );
         assert_eq!(s.next_wakeup(10), Some(FRAME_MS));
         s.focused = false;
         assert_eq!(s.next_wakeup(10), Some(UNFOCUSED_FRAME_MS));
@@ -2079,27 +2870,60 @@ mod tests {
     #[test]
     fn an_empty_reply_draws_no_cursor() {
         let mut s = session();
-        s.apply(&ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})), 0);
+        s.apply(
+            &ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})),
+            0,
+        );
         assert!(!live_text(&s, 0).iter().any(|l| l.contains('▍')));
-        s.apply(&ev(EventType::AssistantTokenDelta, json!({"stream_id": "s", "token": "Hi"})), 0);
+        s.apply(
+            &ev(
+                EventType::AssistantTokenDelta,
+                json!({"stream_id": "s", "token": "Hi"}),
+            ),
+            0,
+        );
         assert!(live_text(&s, 0).iter().any(|l| l.contains("Hi▍")));
     }
 
     fn with_activity() -> Session {
         let mut s = session();
-        s.apply(&ev(EventType::UserMessageCreated, json!({"text": "start the dev server"})), 0);
+        s.apply(
+            &ev(
+                EventType::UserMessageCreated,
+                json!({"text": "start the dev server"}),
+            ),
+            0,
+        );
         s.apply(&ev(EventType::ActivityUpdate, json!({"id": "j1", "kind": "job", "title": "npm run dev", "status": "running", "stoppable": true, "started_at_ms": 0})), 0);
-        s.apply(&ev(EventType::ActivityUpdate, json!({"id": "a1", "kind": "agent", "title": "research", "status": "running"})), 0);
+        s.apply(
+            &ev(
+                EventType::ActivityUpdate,
+                json!({"id": "a1", "kind": "agent", "title": "research", "status": "running"}),
+            ),
+            0,
+        );
         s
     }
 
     #[test]
     fn activity_badge_and_start_notices_without_any_timers() {
         let mut s = with_activity();
-        assert_eq!(history_text(&mut s, 0), vec!["› start the dev server", "", "· Started job · npm run dev", "· Started agent · research"]);
+        assert_eq!(
+            history_text(&mut s, 0),
+            vec![
+                "› start the dev server",
+                "",
+                "· Started job · npm run dev",
+                "· Started agent · research"
+            ]
+        );
         let footer = live_text(&s, 0).last().cloned().unwrap();
         assert!(footer.contains("◆ 1 job · 1 agent · ctrl+b"), "{footer}");
-        assert_eq!(s.next_wakeup(10), None, "a running job alone never wakes the renderer");
+        assert_eq!(
+            s.next_wakeup(10),
+            None,
+            "a running job alone never wakes the renderer"
+        );
     }
 
     #[test]
@@ -2108,16 +2932,44 @@ mod tests {
         history_text(&mut s, 0);
         let before = live_text(&s, 0);
         s.key(Key::Ctrl('b'), 0);
-        assert_eq!(s.take_outbound(), vec![Outbound { event_type: EventType::ActivityViewChanged, payload: json!({"view": "list"}) }]);
+        assert_eq!(
+            s.take_outbound(),
+            vec![Outbound {
+                event_type: EventType::ActivityViewChanged,
+                payload: json!({"view": "list"})
+            }]
+        );
         let open = live_text(&s, 0);
-        assert!(open.iter().any(|l| l.contains("Background activity")), "{open:?}");
-        assert!(!open.iter().any(|l| l.contains("Ask autopilot anything")), "the browser replaces the input box");
-        assert_eq!(s.next_wakeup(10), Some(1000), "elapsed times tick once a second while open");
-        s.key(Key::Enter { shift: false, alt: false }, 0);
-        assert_eq!(s.take_outbound()[0].payload, json!({"view": "detail", "id": "a1"}));
+        assert!(
+            open.iter().any(|l| l.contains("Background activity")),
+            "{open:?}"
+        );
+        assert!(
+            !open.iter().any(|l| l.contains("Ask autopilot anything")),
+            "the browser replaces the input box"
+        );
+        assert_eq!(
+            s.next_wakeup(10),
+            Some(1000),
+            "elapsed times tick once a second while open"
+        );
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            0,
+        );
+        assert_eq!(
+            s.take_outbound()[0].payload,
+            json!({"view": "detail", "id": "a1"})
+        );
         s.key(Key::Esc, 0);
         s.key(Key::Esc, 0);
-        assert_eq!(s.take_outbound().last().unwrap().payload, json!({"view": "closed"}));
+        assert_eq!(
+            s.take_outbound().last().unwrap().payload,
+            json!({"view": "closed"})
+        );
         assert_eq!(live_text(&s, 0), before);
         assert!(history_text(&mut s, 0).is_empty(), "nothing was printed");
     }
@@ -2129,12 +2981,26 @@ mod tests {
         s.key(Key::Ctrl('b'), 0);
         s.key(Key::Down, 0);
         s.key(Key::Text("s".into()), 0);
-        assert!(live_text(&s, 0).iter().any(|l| l.contains("Stop job npm run dev?")));
+        assert!(live_text(&s, 0)
+            .iter()
+            .any(|l| l.contains("Stop job npm run dev?")));
         s.take_outbound();
         s.key(Key::Text("y".into()), 0);
-        assert_eq!(s.take_outbound(), vec![Outbound { event_type: EventType::ActivityStopRequested, payload: json!({"id": "j1"}) }]);
+        assert_eq!(
+            s.take_outbound(),
+            vec![Outbound {
+                event_type: EventType::ActivityStopRequested,
+                payload: json!({"id": "j1"})
+            }]
+        );
         assert!(live_text(&s, 0).iter().any(|l| l.contains("stopping…")));
-        s.apply(&ev(EventType::ActivityUpdate, json!({"id": "j1", "status": "stopped"})), 0);
+        s.apply(
+            &ev(
+                EventType::ActivityUpdate,
+                json!({"id": "j1", "status": "stopped"}),
+            ),
+            0,
+        );
         assert!(history_text(&mut s, 0).contains(&"· Stopped job · npm run dev".to_string()));
     }
 
@@ -2142,27 +3008,66 @@ mod tests {
     fn attention_failures_and_removals_show_up_without_opening_the_browser() {
         let mut s = with_activity();
         history_text(&mut s, 0);
-        s.apply(&ev(EventType::ActivityUpdate, json!({"id": "a1", "status": "needs_attention", "summary": "approve a deploy"})), 0);
-        s.apply(&ev(EventType::ActivityUpdate, json!({"id": "j1", "status": "failed", "summary": "exit 1"})), 0);
-        assert_eq!(history_text(&mut s, 0), vec!["! Agent needs attention · research · approve a deploy", "✗ Job failed · npm run dev · exit 1"]);
-        assert!(live_text(&s, 0).last().unwrap().contains("1 agent · 1 needs attention"));
+        s.apply(
+            &ev(
+                EventType::ActivityUpdate,
+                json!({"id": "a1", "status": "needs_attention", "summary": "approve a deploy"}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::ActivityUpdate,
+                json!({"id": "j1", "status": "failed", "summary": "exit 1"}),
+            ),
+            0,
+        );
+        assert_eq!(
+            history_text(&mut s, 0),
+            vec![
+                "! Agent needs attention · research · approve a deploy",
+                "✗ Job failed · npm run dev · exit 1"
+            ]
+        );
+        assert!(live_text(&s, 0)
+            .last()
+            .unwrap()
+            .contains("1 agent · 1 needs attention"));
         // Details of an item the host removes fall back to the list.
         s.key(Key::Ctrl('b'), 0);
-        s.key(Key::Enter { shift: false, alt: false }, 0);
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            0,
+        );
         s.take_outbound();
         s.apply(&ev(EventType::ActivityRemoved, json!({"id": "a1"})), 0);
         assert_eq!(s.take_outbound()[0].payload, json!({"view": "list"}));
         s.apply(&ev(EventType::ActivitySnapshot, json!({"items": []})), 0);
-        assert!(!live_text(&s, 0).iter().any(|l| l.contains("◆")), "a snapshot clears stale items");
+        assert!(
+            !live_text(&s, 0).iter().any(|l| l.contains("◆")),
+            "a snapshot clears stale items"
+        );
     }
 
     #[test]
     fn idle_needs_no_wakeups_and_busy_ticks() {
         let mut s = session();
         assert_eq!(s.next_wakeup(1000), None);
-        s.apply(&ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})), 1000);
-        assert_eq!(s.next_wakeup(1000), Some(1040));
-        s.apply(&ev(EventType::AssistantMessageCompleted, json!({"stream_id": "s"})), 1100);
+        s.apply(
+            &ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})),
+            1000,
+        );
+        assert_eq!(s.next_wakeup(1000), Some(1080));
+        s.apply(
+            &ev(
+                EventType::AssistantMessageCompleted,
+                json!({"stream_id": "s"}),
+            ),
+            1100,
+        );
         s.take_history(1100);
         assert_eq!(s.next_wakeup(1100), None);
     }
@@ -2170,49 +3075,142 @@ mod tests {
     #[test]
     fn streaming_replies_print_finished_paragraphs() {
         let mut s = session();
-        s.apply(&ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})), 0);
-        s.apply(&ev(EventType::AssistantTokenDelta, json!({"stream_id": "s", "token": "First paragraph.\n\nSecond"})), 0);
+        s.apply(
+            &ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantTokenDelta,
+                json!({"stream_id": "s", "token": "First paragraph.\n\nSecond"}),
+            ),
+            0,
+        );
         assert_eq!(history_text(&mut s, 0), vec!["  First paragraph."]);
         let live = live_text(&s, 0);
         assert!(live.iter().any(|l| l == "  Second▍"), "{live:?}");
-        s.apply(&ev(EventType::AssistantTokenDelta, json!({"stream_id": "s", "token": " half.\n```\ncode\n\nmore\n"})), 0);
-        assert!(history_text(&mut s, 0).is_empty(), "never split inside a code fence");
+        s.apply(
+            &ev(
+                EventType::AssistantTokenDelta,
+                json!({"stream_id": "s", "token": " half.\n```\ncode\n\nmore\n"}),
+            ),
+            0,
+        );
+        assert!(
+            history_text(&mut s, 0).is_empty(),
+            "never split inside a code fence"
+        );
     }
 
     #[test]
     fn submitting_echoes_once_and_tells_the_host() {
         let mut s = session();
         type_str(&mut s, "The build fails");
-        s.key(Key::Enter { shift: false, alt: false }, 0);
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            0,
+        );
         let out = s.take_outbound();
-        assert_eq!(out, vec![Outbound { event_type: EventType::UserInputSubmitted, payload: json!({"text": "The build fails"}) }]);
-        s.apply(&ev(EventType::UserMessageCreated, json!({"text": "The build fails"})), 0);
+        assert_eq!(
+            out,
+            vec![Outbound {
+                event_type: EventType::UserInputSubmitted,
+                payload: json!({"text": "The build fails"})
+            }]
+        );
+        s.apply(
+            &ev(
+                EventType::UserMessageCreated,
+                json!({"text": "The build fails"}),
+            ),
+            0,
+        );
         assert_eq!(history_text(&mut s, 0), vec!["› The build fails"]);
     }
 
     #[test]
     fn echoed_prompt_starts_a_fresh_compact_turn() {
         let mut s = session();
-        s.apply(&ev(EventType::UserMessageCreated, json!({"text": "first"})), 0);
-        s.apply(&ev(EventType::StatusUpdate, json!({"segments": {"phase": "thinking"}})), 1);
-        s.apply(&ev(EventType::AssistantStreamStarted, json!({"stream_id": "first"})), 2);
-        s.apply(&ev(EventType::AssistantTokenDelta, json!({"stream_id": "first", "token": "done"})), 3);
-        s.apply(&ev(EventType::StatusUpdate, json!({"segments": {"phase": "idle"}})), 4);
+        s.apply(
+            &ev(EventType::UserMessageCreated, json!({"text": "first"})),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::StatusUpdate,
+                json!({"segments": {"phase": "thinking"}}),
+            ),
+            1,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantStreamStarted,
+                json!({"stream_id": "first"}),
+            ),
+            2,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantTokenDelta,
+                json!({"stream_id": "first", "token": "done"}),
+            ),
+            3,
+        );
+        s.apply(
+            &ev(
+                EventType::StatusUpdate,
+                json!({"segments": {"phase": "idle"}}),
+            ),
+            4,
+        );
 
         type_str(&mut s, "second");
-        s.key(Key::Enter { shift: false, alt: false }, 4000);
-        s.apply(&ev(EventType::UserMessageCreated, json!({"text": "second"})), 4001);
-        s.apply(&ev(EventType::StatusUpdate, json!({"segments": {"phase": "thinking"}})), 4002);
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            4000,
+        );
+        s.apply(
+            &ev(EventType::UserMessageCreated, json!({"text": "second"})),
+            4001,
+        );
+        s.apply(
+            &ev(
+                EventType::StatusUpdate,
+                json!({"segments": {"phase": "thinking"}}),
+            ),
+            4002,
+        );
 
         let live = live_text(&s, 7000);
-        assert!(live.iter().any(|line| line.contains("thinking…")), "{live:?}");
+        assert!(
+            live.iter().any(|line| line.contains("Thinking…")),
+            "{live:?}"
+        );
     }
 
     #[test]
     fn esc_interrupts_and_settles_everything() {
         let mut s = session();
-        s.apply(&ev(EventType::StatusUpdate, json!({"segments": {"phase": "thinking"}})), 0);
-        s.apply(&ev(EventType::ToolExecutionStarted, json!({"tool_id": "t", "tool": "Bash", "command": "npm test"})), 0);
+        s.apply(
+            &ev(
+                EventType::StatusUpdate,
+                json!({"segments": {"phase": "thinking"}}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({"tool_id": "t", "tool": "Bash", "command": "npm test"}),
+            ),
+            0,
+        );
         s.key(Key::Esc, 100);
         assert_eq!(s.take_outbound()[0].event_type, EventType::CancelRequested);
         assert!(!s.is_busy());
@@ -2233,16 +3231,37 @@ mod tests {
         assert!(live.iter().any(|l| l.contains("› 1. Yes")), "{live:?}");
         assert!(live.iter().any(|l| l.contains("+ c")), "{live:?}");
         s.key(Key::Down, 0);
-        s.key(Key::Enter { shift: false, alt: false }, 0);
-        assert_eq!(s.take_outbound()[0].payload, json!({"request_id": "r1", "choice": "allow_session", "feedback": ""}));
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            0,
+        );
+        assert_eq!(
+            s.take_outbound()[0].payload,
+            json!({"request_id": "r1", "choice": "allow_session", "feedback": ""})
+        );
     }
 
     #[test]
     fn waiting_on_a_prompt_needs_no_wakeups() {
         let mut s = session();
-        s.apply(&ev(EventType::StatusUpdate, json!({"segments": {"phase": "tool"}})), 0);
+        s.apply(
+            &ev(
+                EventType::StatusUpdate,
+                json!({"segments": {"phase": "tool"}}),
+            ),
+            0,
+        );
         assert!(s.next_wakeup(0).is_some());
-        s.apply(&ev(EventType::PermissionRequested, json!({"request_id": "r", "tool": "bash", "action": "run npm test"})), 0);
+        s.apply(
+            &ev(
+                EventType::PermissionRequested,
+                json!({"request_id": "r", "tool": "bash", "action": "run npm test"}),
+            ),
+            0,
+        );
         assert_eq!(s.next_wakeup(0), None);
     }
 
@@ -2256,8 +3275,17 @@ mod tests {
             0,
         );
         type_str(&mut s, "qw");
-        s.key(Key::Enter { shift: false, alt: false }, 0);
-        assert_eq!(s.take_outbound()[0].payload, json!({"id": "m", "value": "q"}));
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            0,
+        );
+        assert_eq!(
+            s.take_outbound()[0].payload,
+            json!({"id": "m", "value": "q"})
+        );
     }
 
     #[test]
@@ -2277,37 +3305,80 @@ mod tests {
         // Fuzzy, and the description counts: "480" only appears there.
         type_str(&mut s, "480");
         let live = live_text(&s, 0);
-        assert!(!live.iter().any(|l| l.contains("Best & latest")), "headers hide while searching");
-        s.key(Key::Enter { shift: false, alt: false }, 0);
-        assert_eq!(s.take_outbound()[0].payload, json!({"id": "m", "value": "q"}));
+        assert!(
+            !live.iter().any(|l| l.contains("Best & latest")),
+            "headers hide while searching"
+        );
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            0,
+        );
+        assert_eq!(
+            s.take_outbound()[0].payload,
+            json!({"id": "m", "value": "q"})
+        );
     }
 
     #[test]
     fn forms_collect_fields_and_check_required_ones() {
         let mut s = session();
         s.apply(
-            &ev(EventType::ShowForm, json!({"id": "f", "title": "New skill", "fields": [
-                {"name": "name", "label": "Name", "required": true},
-                {"name": "key", "label": "API key", "kind": "password"}
-            ]})),
+            &ev(
+                EventType::ShowForm,
+                json!({"id": "f", "title": "New skill", "fields": [
+                    {"name": "name", "label": "Name", "required": true},
+                    {"name": "key", "label": "API key", "kind": "password"}
+                ]}),
+            ),
             0,
         );
         // Enter on the first field moves on; submitting with Name empty refuses.
-        s.key(Key::Enter { shift: false, alt: false }, 0);
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            0,
+        );
         type_str(&mut s, "sk-123");
         let live = live_text(&s, 0).join("\n");
-        assert!(live.contains("••••••") && !live.contains("sk-123"), "password is masked");
-        s.key(Key::Enter { shift: false, alt: false }, 0);
+        assert!(
+            live.contains("••••••") && !live.contains("sk-123"),
+            "password is masked"
+        );
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            0,
+        );
         assert!(s.take_outbound().is_empty());
-        assert!(live_text(&s, 0).iter().any(|l| l.contains("Name is required")));
+        assert!(live_text(&s, 0)
+            .iter()
+            .any(|l| l.contains("Name is required")));
         type_str(&mut s, "deploy-checks");
         s.key(Key::Tab, 0);
-        s.key(Key::Enter { shift: false, alt: false }, 0);
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            0,
+        );
         assert_eq!(
             s.take_outbound()[0].payload,
             json!({"id": "f", "values": {"name": "deploy-checks", "key": "sk-123"}})
         );
-        assert!(live_text(&s, 0).iter().any(|l| l.contains("›") && l.contains("Ask")), "the input box is back");
+        assert!(
+            live_text(&s, 0)
+                .iter()
+                .any(|l| l.contains("›") && l.contains("Ask")),
+            "the input box is back"
+        );
     }
 
     #[test]
@@ -2323,45 +3394,99 @@ mod tests {
         );
         assert!(live_text(&s, 0).iter().any(|l| l.contains("Step 1 of 3")));
         type_str(&mut s, "deploy");
-        s.key(Key::Enter { shift: false, alt: false }, 0);
-        assert!(s.take_outbound().is_empty(), "step answers stay inside the wizard");
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            0,
+        );
+        assert!(
+            s.take_outbound().is_empty(),
+            "step answers stay inside the wizard"
+        );
         assert!(live_text(&s, 0).iter().any(|l| l.contains("Step 2 of 3")));
         s.key(Key::Down, 0);
-        s.key(Key::Enter { shift: false, alt: false }, 0);
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            0,
+        );
         s.key(Key::Text("y".into()), 0);
         assert_eq!(
             s.take_outbound(),
-            vec![Outbound { event_type: EventType::WizardCompleted, payload: json!({"id": "w", "results": {"basics": {"name": "deploy"}, "scope": "global", "ok": true}}) }]
+            vec![Outbound {
+                event_type: EventType::WizardCompleted,
+                payload: json!({"id": "w", "results": {"basics": {"name": "deploy"}, "scope": "global", "ok": true}})
+            }]
         );
     }
 
     #[test]
     fn cancelling_a_wizard_reports_the_step() {
         let mut s = session();
-        s.apply(&ev(EventType::ShowWizard, json!({"id": "w", "steps": [
-            {"kind": "confirm", "id": "a", "prompt": "First?"},
-            {"kind": "confirm", "id": "b", "prompt": "Second?"}
-        ]})), 0);
+        s.apply(
+            &ev(
+                EventType::ShowWizard,
+                json!({"id": "w", "steps": [
+                    {"kind": "confirm", "id": "a", "prompt": "First?"},
+                    {"kind": "confirm", "id": "b", "prompt": "Second?"}
+                ]}),
+            ),
+            0,
+        );
         s.key(Key::Text("y".into()), 0);
         s.key(Key::Esc, 0);
-        assert_eq!(s.take_outbound(), vec![Outbound { event_type: EventType::WizardCancelled, payload: json!({"id": "w", "at_step": 1}) }]);
+        assert_eq!(
+            s.take_outbound(),
+            vec![Outbound {
+                event_type: EventType::WizardCancelled,
+                payload: json!({"id": "w", "at_step": 1})
+            }]
+        );
     }
 
     #[test]
     fn multiline_fields_take_newlines_and_tab_submits() {
         let mut s = session();
-        s.apply(&ev(EventType::ShowForm, json!({"id": "f", "fields": [
-            {"name": "name", "label": "Name"},
-            {"name": "template", "label": "Template", "kind": "multiline"}
-        ]})), 0);
+        s.apply(
+            &ev(
+                EventType::ShowForm,
+                json!({"id": "f", "fields": [
+                    {"name": "name", "label": "Name"},
+                    {"name": "template", "label": "Template", "kind": "multiline"}
+                ]}),
+            ),
+            0,
+        );
         type_str(&mut s, "review");
-        s.key(Key::Enter { shift: false, alt: false }, 0);
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            0,
+        );
         type_str(&mut s, "Review $ARGUMENTS");
-        s.key(Key::Enter { shift: false, alt: false }, 0);
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            0,
+        );
         type_str(&mut s, "Be strict.");
-        assert!(s.take_outbound().is_empty(), "Enter adds a line in a multi-line field");
+        assert!(
+            s.take_outbound().is_empty(),
+            "Enter adds a line in a multi-line field"
+        );
         let live = live_text(&s, 0).join("\n");
-        assert!(live.contains("Review $ARGUMENTS") && live.contains("Be strict."), "{live}");
+        assert!(
+            live.contains("Review $ARGUMENTS") && live.contains("Be strict."),
+            "{live}"
+        );
         s.key(Key::Tab, 0);
         assert_eq!(
             s.take_outbound()[0].payload,
@@ -2372,9 +3497,18 @@ mod tests {
     #[test]
     fn esc_cancels_a_form() {
         let mut s = session();
-        s.apply(&ev(EventType::ShowForm, json!({"id": "f", "fields": [{"name": "q", "label": "Search"}]})), 0);
+        s.apply(
+            &ev(
+                EventType::ShowForm,
+                json!({"id": "f", "fields": [{"name": "q", "label": "Search"}]}),
+            ),
+            0,
+        );
         s.key(Key::Esc, 0);
-        assert_eq!(s.take_outbound()[0].payload, json!({"id": "f", "cancelled": true}));
+        assert_eq!(
+            s.take_outbound()[0].payload,
+            json!({"id": "f", "cancelled": true})
+        );
     }
 
     #[test]
@@ -2383,27 +3517,57 @@ mod tests {
         s.apply(&ev(EventType::SlashCommandsRegistered, json!({"commands": [{"name": "compact", "description": "Summarize"}, {"name": "model", "args_hint": "<id>"}]})), 0);
         type_str(&mut s, "/co");
         assert!(live_text(&s, 0).iter().any(|l| l.contains("/compact")));
-        s.key(Key::Enter { shift: false, alt: false }, 0);
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            0,
+        );
         assert_eq!(s.take_outbound()[0].payload, json!({"text": "/compact"}));
     }
 
     #[test]
     fn slash_picker_runs_optional_args_and_fills_required_ones() {
         let mut s = session();
-        s.apply(&ev(EventType::SlashCommandsRegistered, json!({"commands": [
-            {"name": "hooks", "args_hint": "[list|enable <id>]"},
-            {"name": "remote", "args_hint": "<prompt>"},
-            {"name": "model", "args_hint": "[<id>]"},
-            {"name": "mode"},
-        ]})), 0);
+        s.apply(
+            &ev(
+                EventType::SlashCommandsRegistered,
+                json!({"commands": [
+                    {"name": "hooks", "args_hint": "[list|enable <id>]"},
+                    {"name": "remote", "args_hint": "<prompt>"},
+                    {"name": "model", "args_hint": "[<id>]"},
+                    {"name": "mode"},
+                ]}),
+            ),
+            0,
+        );
         type_str(&mut s, "/mode");
-        s.key(Key::Enter { shift: false, alt: false }, 0);
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            0,
+        );
         assert_eq!(s.take_outbound()[0].payload, json!({"text": "/mode"}));
         type_str(&mut s, "/hoo");
-        s.key(Key::Enter { shift: false, alt: false }, 0);
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            0,
+        );
         assert_eq!(s.take_outbound()[0].payload, json!({"text": "/hooks"}));
         type_str(&mut s, "/rem");
-        s.key(Key::Enter { shift: false, alt: false }, 0);
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            0,
+        );
         assert!(s.take_outbound().is_empty());
         assert_eq!(s.editor.text(), "/remote ");
     }
@@ -2413,7 +3577,9 @@ mod tests {
         let mut s = session();
         s.key(Key::Ctrl('c'), 0);
         assert!(!s.exit);
-        assert!(live_text(&s, 10).iter().any(|l| l.contains("Press Ctrl+C again")));
+        assert!(live_text(&s, 10)
+            .iter()
+            .any(|l| l.contains("Press Ctrl+C again")));
         s.key(Key::Ctrl('c'), 500);
         assert!(s.exit);
     }
@@ -2429,10 +3595,19 @@ mod tests {
     #[test]
     fn status_segments_fill_the_footer_and_mode() {
         let mut s = session();
-        s.apply(&ev(EventType::StatusUpdate, json!({"segments": {"mode": "plan", "model": "kimi-k2.6", "cost": "$0.04"}})), 0);
+        s.apply(
+            &ev(
+                EventType::StatusUpdate,
+                json!({"segments": {"mode": "plan", "model": "kimi-k2.6", "cost": "$0.04"}}),
+            ),
+            0,
+        );
         let live = live_text(&s, 0);
         let footer = live.last().unwrap();
-        assert!(footer.contains("plan mode on") && footer.ends_with("kimi-k2.6 · $0.04"), "{footer}");
+        assert!(
+            footer.contains("plan mode on") && footer.ends_with("kimi-k2.6 · $0.04"),
+            "{footer}"
+        );
     }
 
     #[test]
@@ -2448,9 +3623,21 @@ mod tests {
     fn empty_replies_print_nothing() {
         let mut s = session();
         s.apply(&ev(EventType::UserMessageCreated, json!({"text": "hi"})), 0);
-        s.apply(&ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})), 0);
-        s.apply(&ev(EventType::AssistantMessageCompleted, json!({"stream_id": "s"})), 0);
-        s.apply(&ev(EventType::RuntimeError, json!({"message": "network error"})), 0);
+        s.apply(
+            &ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantMessageCompleted,
+                json!({"stream_id": "s"}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(EventType::RuntimeError, json!({"message": "network error"})),
+            0,
+        );
         assert_eq!(history_text(&mut s, 0), vec!["› hi", "", "✗ network error"]);
     }
 
@@ -2458,32 +3645,79 @@ mod tests {
     fn echoed_prompts_print_once_even_after_they_scroll_out() {
         let mut s = session();
         type_str(&mut s, "hello there");
-        s.key(Key::Enter { shift: false, alt: false }, 0);
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            0,
+        );
         assert_eq!(history_text(&mut s, 0), vec!["› hello there"]);
-        s.apply(&ev(EventType::UserMessageCreated, json!({"text": "hello there"})), 0);
-        assert!(history_text(&mut s, 0).is_empty(), "the host's copy is not printed again");
-        s.apply(&ev(EventType::UserMessageCreated, json!({"text": "a resumed message"})), 0);
+        s.apply(
+            &ev(
+                EventType::UserMessageCreated,
+                json!({"text": "hello there"}),
+            ),
+            0,
+        );
+        assert!(
+            history_text(&mut s, 0).is_empty(),
+            "the host's copy is not printed again"
+        );
+        s.apply(
+            &ev(
+                EventType::UserMessageCreated,
+                json!({"text": "a resumed message"}),
+            ),
+            0,
+        );
         assert_eq!(history_text(&mut s, 0), vec!["", "› a resumed message"]);
     }
 
     #[test]
     fn path_mentions_ask_the_host_and_step_into_folders() {
         let mut s = session();
-        s.apply(&ev(EventType::MentionCandidatesRegistered, json!({"candidates": [{"token": "src/a.ts"}]})), 0);
+        s.apply(
+            &ev(
+                EventType::MentionCandidatesRegistered,
+                json!({"candidates": [{"token": "src/a.ts"}]}),
+            ),
+            0,
+        );
         type_str(&mut s, "look at @../");
         // Typed one key at a time: "." lists ./, ".." lists ../, and "../"
         // reuses that listing instead of asking again.
-        let dirs: Vec<String> = s.take_outbound().iter().map(|o| path_dir(o.payload["query"].as_str().unwrap()).unwrap()).collect();
+        let dirs: Vec<String> = s
+            .take_outbound()
+            .iter()
+            .map(|o| path_dir(o.payload["query"].as_str().unwrap()).unwrap())
+            .collect();
         assert_eq!(dirs, vec!["./", "../"]);
-        s.apply(&ev(EventType::MentionCandidatesRegistered, json!({"for_query": "../", "candidates": [
-            {"token": "../camouflage/", "kind": "dir"}, {"token": "../notes.md"}
-        ]})), 0);
+        s.apply(
+            &ev(
+                EventType::MentionCandidatesRegistered,
+                json!({"for_query": "../", "candidates": [
+                    {"token": "../camouflage/", "kind": "dir"}, {"token": "../notes.md"}
+                ]}),
+            ),
+            0,
+        );
         type_str(&mut s, "cam");
-        assert!(live_text(&s, 0).iter().any(|l| l.contains("../camouflage/")));
+        assert!(live_text(&s, 0)
+            .iter()
+            .any(|l| l.contains("../camouflage/")));
         s.key(Key::Tab, 0);
         // Stepped into the folder: no trailing space, and the host is asked again.
-        assert!(live_text(&s, 0).iter().any(|l| l.contains("@../camouflage/")));
-        assert_eq!(s.take_outbound(), vec![Outbound { event_type: EventType::MentionQuery, payload: json!({"query": "../camouflage/"}) }]);
+        assert!(live_text(&s, 0)
+            .iter()
+            .any(|l| l.contains("@../camouflage/")));
+        assert_eq!(
+            s.take_outbound(),
+            vec![Outbound {
+                event_type: EventType::MentionQuery,
+                payload: json!({"query": "../camouflage/"})
+            }]
+        );
     }
 
     #[test]
@@ -2499,12 +3733,183 @@ mod tests {
     #[test]
     fn frame_never_exceeds_the_screen() {
         let mut s = Session::new("a", Theme::default(), 40, 12);
-        s.apply(&ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})), 0);
+        s.apply(
+            &ev(EventType::AssistantStreamStarted, json!({"stream_id": "s"})),
+            0,
+        );
         let long = "word ".repeat(400);
-        s.apply(&ev(EventType::AssistantTokenDelta, json!({"stream_id": "s", "token": long})), 0);
+        s.apply(
+            &ev(
+                EventType::AssistantTokenDelta,
+                json!({"stream_id": "s", "token": long}),
+            ),
+            0,
+        );
         let frame = s.live_frame(0);
         assert!(frame.lines.len() <= 11);
         let (r, _) = frame.cursor.unwrap();
         assert!(frame.lines[r].plain_text().contains('›'));
+    }
+
+    #[test]
+    fn typed_turn_clock_and_compact_state_follow_busy_lifecycle() {
+        let now = 1_760_000_000_000_i64;
+        let mut s = session();
+        type_str(&mut s, "first typed prompt");
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            now,
+        );
+        s.apply(
+            &ev(
+                EventType::StatusUpdate,
+                json!({"segments": {"phase": "thinking"}}),
+            ),
+            now,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantStreamStarted,
+                json!({"stream_id": "first"}),
+            ),
+            now + 1,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantTokenDelta,
+                json!({"stream_id": "first", "token": "abcdefgh"}),
+            ),
+            now + 10,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({"tool_id": "edit-1", "tool": "Edit", "command": "Edit src/a.rs"}),
+            ),
+            now + 100,
+        );
+        s.apply(&ev(EventType::ToolExecutionFinished, json!({"tool_id": "edit-1", "exit_code": 0, "diff": {"path": "src/a.rs", "before": "old", "after": "new"}})), now + 200);
+        assert_eq!(s.compact.beads.len(), 1);
+        assert_eq!(s.compact.files, 1);
+        let at_start = live_text(&s, now + 200);
+        assert!(
+            at_start.iter().any(|line| line.contains("0s")),
+            "{at_start:?}"
+        );
+        assert!(
+            !at_start.iter().any(|line| line.contains("29333333m")),
+            "{at_start:?}"
+        );
+        let at_one_second = live_text(&s, now + 1_000);
+        assert!(
+            at_one_second.iter().any(|line| line.contains("1s")),
+            "{at_one_second:?}"
+        );
+
+        s.apply(
+            &ev(
+                EventType::AssistantMessageCompleted,
+                json!({"stream_id": "first", "text": "done"}),
+            ),
+            now + 1_100,
+        );
+        s.apply(
+            &ev(
+                EventType::StatusUpdate,
+                json!({"segments": {"phase": "idle"}}),
+            ),
+            now + 1_200,
+        );
+        type_str(&mut s, "second typed prompt");
+        s.key(
+            Key::Enter {
+                shift: false,
+                alt: false,
+            },
+            now + 2_000,
+        );
+        // Deliberately no UserMessageCreated echo for either typed prompt.
+        s.apply(
+            &ev(
+                EventType::StatusUpdate,
+                json!({"segments": {"phase": "thinking"}}),
+            ),
+            now + 2_001,
+        );
+        assert!(s.compact.beads.is_empty());
+        assert_eq!(s.compact.files, 0);
+        assert!(s.compact.latest.is_none());
+        assert_eq!(s.streamed_chars, s.streamed_at_busy);
+        let second = live_text(&s, now + 2_001);
+        assert!(second.iter().any(|line| line.contains("0s")), "{second:?}");
+        assert!(
+            second.iter().any(|line| line.contains("0 tokens")),
+            "{second:?}"
+        );
+    }
+
+    #[test]
+    fn tools_make_one_bead_and_reads_failures_and_expanded_rows_are_visible() {
+        let mut s = session();
+        s.apply(
+            &ev(
+                EventType::StatusUpdate,
+                json!({"segments": {"phase": "thinking"}}),
+            ),
+            1_000,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({"tool_id": "e", "tool": "Edit", "command": "Edit src/a.rs"}),
+            ),
+            1_100,
+        );
+        s.apply(&ev(EventType::ToolExecutionFinished, json!({"tool_id": "e", "exit_code": 0, "diff": {"path": "src/a.rs", "before": "a", "after": "b"}})), 1_200);
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({"tool_id": "b", "tool": "Bash", "command": "npm test"}),
+            ),
+            1_300,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionFinished,
+                json!({"tool_id": "b", "exit_code": 1}),
+            ),
+            1_400,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({"tool_id": "r", "tool": "Read", "command": "Read src/readme.md"}),
+            ),
+            1_500,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionFinished,
+                json!({"tool_id": "r", "exit_code": 0}),
+            ),
+            1_600,
+        );
+        assert_eq!(s.compact.beads.len(), 3);
+        assert_eq!(s.compact.beads[0].kind, crate::compact::TrailKind::Edit);
+        assert_eq!(s.compact.files, 1);
+        assert_eq!(s.compact.beads[1].kind, crate::compact::TrailKind::Error);
+        assert!(!s.compact.beads[1].ok);
+        assert_eq!(s.compact.beads[2].kind, crate::compact::TrailKind::Read);
+        assert!(live_text(&s, 1_700)
+            .iter()
+            .any(|line| line.contains("Read src/readme.md")));
+        s.key(Key::Ctrl('o'), 1_700);
+        assert!(s.expanded);
+        assert!(live_text(&s, 1_700)
+            .iter()
+            .any(|line| line.contains("Read src/readme.md")));
     }
 }
