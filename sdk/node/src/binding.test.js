@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mount, selectList, confirm, permission, suspendTerminal, resumeTerminal } from "./index.js";
+import { resolveDefaultBin } from "./binding.js";
 
 const FAKE = join(dirname(fileURLToPath(import.meta.url)), "__fake-renderer.js");
 
@@ -31,6 +32,22 @@ test("mount() rejects when the binary is missing", async () => {
     () => mount({ bin: "/this/does/not/exist/camouflage-xxxxxx", skipDefaultArgs: true }),
     /could not find renderer binary|ENOENT/,
   );
+});
+
+test("default renderer resolution refuses PATH fallback when repair fails", async () => {
+  let attempts = 0;
+  const tempBin = join(dirname(fileURLToPath(import.meta.url)), "__missing-default-renderer");
+  await assert.rejects(
+    () => resolveDefaultBin({
+      localBin: tempBin,
+      loadInstaller: async () => ({
+        INSTALL_ERROR_PATH: "/tmp/camouflage-install-error.txt",
+        installBinary: async () => { attempts++; return false; },
+      }),
+    }),
+    /bundled renderer is missing.*will not be used.*Install diagnostics/s,
+  );
+  assert.equal(attempts, 1);
 });
 
 test("emit() writes one line per call; outbound events round-trip", async () => {

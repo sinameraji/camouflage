@@ -108,8 +108,14 @@ impl Editor {
 
     /// Replace `[from, cursor)` with `text`, e.g. finishing an `@mention`.
     pub fn replace_before_cursor(&mut self, from: usize, text: &str) {
-        self.snapshot(false);
         let from = from.min(self.cur);
+        // This method accepts a byte offset, but callers may derive it from
+        // externally supplied text. Ignore offsets inside a UTF-8 scalar rather
+        // than allowing String::replace_range to panic.
+        if !self.buf.is_char_boundary(from) {
+            return;
+        }
+        self.snapshot(false);
         self.buf.replace_range(from..self.cur, text);
         self.cur = from + text.len();
     }
@@ -473,6 +479,14 @@ mod tests {
         e.handle(Left { word: false }, 80);
         e.handle(Backspace { word: false }, 80);
         assert_eq!(e.text(), "café  日", "the emoji with its skin tone is one grapheme");
+    }
+
+    #[test]
+    fn replace_before_cursor_ignores_non_character_boundary() {
+        let mut e = Editor::new();
+        e.set_text("café");
+        e.replace_before_cursor(4, "x"); // byte offset 4 is inside the final `é`
+        assert_eq!(e.text(), "café");
     }
 
     #[test]

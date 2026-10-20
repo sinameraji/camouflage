@@ -18,7 +18,34 @@ import { encode, validate } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const LOCAL_BIN = join(__dirname, "..", "bin", process.platform === "win32" ? "camouflage-tui.exe" : "camouflage-tui");
-const DEFAULT_BIN = existsSync(LOCAL_BIN) ? LOCAL_BIN : "camouflage-tui";
+let rendererInstallPromise = null;
+
+/** Resolve only the package-local renderer; never silently run an unchecked PATH binary. */
+export async function resolveDefaultBin({
+  localBin = LOCAL_BIN,
+  loadInstaller = () => import("../scripts/install.js"),
+} = {}) {
+  if (existsSync(localBin)) return localBin;
+
+  const installer = await loadInstaller();
+  if (!rendererInstallPromise) {
+    rendererInstallPromise = installer.installBinary().finally(() => {
+      rendererInstallPromise = null;
+    });
+  }
+  await rendererInstallPromise;
+  if (existsSync(localBin)) return localBin;
+
+  let diagnostic = "No install failure details were saved.";
+  try {
+    diagnostic = readFileSync(installer.INSTALL_ERROR_PATH, "utf8").trim();
+  } catch {}
+  throw new Error(
+    `camouflage: bundled renderer is missing at ${localBin}; an automatic repair was attempted but failed. ` +
+    `A renderer found on PATH will not be used because its version cannot be trusted. ` +
+    `Install diagnostics: ${installer.INSTALL_ERROR_PATH}. ${diagnostic}`,
+  );
+}
 
 /**
  * Best-effort detection of the host application's name, used as the header
@@ -186,8 +213,8 @@ function waitForExit(child, softTimeoutMs) {
  * Spawn the Camouflage renderer and return a CamouflageHandle.
  *
  * @param {object} [opts]
- * @param {string} [opts.bin]      Executable name or path. Defaults to
- *                                 "camouflage-tui" (PATH lookup).
+ * @param {string} [opts.bin]      Executable name or path. Defaults to the
+ *                                 package-local binary, repaired if missing.
  * @param {string} [opts.appTitle] Brand shown in the renderer header. When
  *                                 omitted, auto-detected from the host's
  *                                 package.json `name` (falling back to the
@@ -206,7 +233,7 @@ function waitForExit(child, softTimeoutMs) {
  * @returns {Promise<CamouflageHandle>} Resolves once the child has spawned.
  */
 export async function mount(opts = {}) {
-  const bin = opts.bin || DEFAULT_BIN;
+  const bin = opts.bin || await resolveDefaultBin();
   // Two integration modes:
   //
   // Default (programmatic, e.g. tests, daemons, anything not user-facing):

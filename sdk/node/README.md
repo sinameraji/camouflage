@@ -8,7 +8,7 @@ If you're building an LLM-powered CLI tool and need streaming chat UI, tool exec
 npm install camouflage-tui
 ```
 
-The `postinstall` script downloads a pre-built native binary for your platform (macOS, Linux). No Rust toolchain required.
+The `postinstall` script downloads a pre-built native binary for your platform (macOS, Linux). No Rust toolchain required. It retries transient failures; if the binary is still unavailable, the SDK retries on `mount()` and reports the saved diagnostics instead of silently running a possibly stale `camouflage-tui` from `PATH`.
 
 ## Quick start
 
@@ -42,11 +42,11 @@ await cam.close();
 ### `mount(opts?) => Promise<CamouflageHandle>`
 
 Spawns the renderer and resolves once the child has spawned. Rejects with
-a friendly error if the binary can't be found.
+a friendly error if the package-local binary can't be found or repaired.
 
 ```ts
 interface MountOptions {
-  bin?: string;              // default: bundled binary, then PATH lookup
+  bin?: string;              // default: package-local binary (repaired if missing)
   args?: string[];           // extra args after --stdin-events --emit-responses
   env?: NodeJS.ProcessEnv;   // merged with process.env
   inheritStderr?: boolean;   // default true; false → "stderr" event
