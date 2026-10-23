@@ -18,6 +18,13 @@
 //! `--token` / `CAMOUFLAGE_BROADCAST_TOKEN` sets one, and is only printed to
 //! stderr. See `camouflage_headless::broadcast_auth`.
 //!
+//! The token is only checked once a peer has sent a complete handshake, so
+//! the unauthenticated phase is bounded: a peer gets `--handshake-timeout-ms`
+//! (default 5 s) to finish it, and at most `MAX_PENDING_HANDSHAKES` peers
+//! can be mid-handshake at once (further connections wait in the listen
+//! backlog). Silent connections therefore can't exhaust file descriptors and
+//! lock out viewers that hold the token.
+//!
 //! Wire format: one event per websocket text frame, identical NDJSON to what
 //! `camouflage-tui --stdin-events` consumes on stdin. Clients can either
 //! parse them directly or wrap a `RenderModel` in JS/WASM (Slice F).
@@ -31,9 +38,10 @@ use anyhow::{bail, Context, Result};
 use camouflage_headless::broadcast_auth;
 use clap::Parser;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpListener;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, OwnedSemaphorePermit, RwLock, Semaphore};
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -55,7 +63,18 @@ struct Args {
     /// startup and printed to stderr.
     #[arg(long, env = broadcast_auth::TOKEN_ENV, hide_env_values = true)]
     token: Option<String>,
+    /// How long an unauthenticated peer may take to complete the websocket
+    /// handshake before it is disconnected.
+    #[arg(long, default_value_t = 5_000, hide = true)]
+    handshake_timeout_ms: u64,
 }
+
+/// Cap on connections that have been accepted but not yet completed (and
+/// authenticated) the websocket handshake.
+const MAX_PENDING_HANDSHAKES: usize = 64;
+
+/// Pause after a failed accept() (e.g. EMFILE) so the loop doesn't spin.
+const ACCEPT_ERROR_BACKOFF: Duration = Duration::from_millis(100);
 
 type Replay = Arc<RwLock<Vec<String>>>;
 
@@ -107,12 +126,23 @@ async fn main() -> Result<()> {
     // Accept loop
     let accept_tx = tx.clone();
     let accept_replay = replay.clone();
+    let handshake_timeout = Duration::from_millis(args.handshake_timeout_ms);
+    let pending = Arc::new(Semaphore::new(MAX_PENDING_HANDSHAKES));
     tokio::spawn(async move {
         loop {
+            // Take a handshake slot before accepting, so that once the cap is
+            // reached new peers wait in the kernel backlog rather than each
+            // holding a file descriptor.
+            let permit = pending
+                .clone()
+                .acquire_owned()
+                .await
+                .expect("semaphore is never closed");
             let (stream, peer) = match listener.accept().await {
                 Ok(x) => x,
                 Err(e) => {
                     eprintln!("camouflage-broadcast: accept error: {e}");
+                    tokio::time::sleep(ACCEPT_ERROR_BACKOFF).await;
                     continue;
                 }
             };
@@ -120,7 +150,9 @@ async fn main() -> Result<()> {
             let rep = accept_replay.clone();
             let token = token.clone();
             tokio::spawn(async move {
-                if let Err(e) = handle_client(stream, peer, rx, rep, &token).await {
+                let client =
+                    handle_client(stream, peer, rx, rep, &token, handshake_timeout, permit);
+                if let Err(e) = client.await {
                     eprintln!("camouflage-broadcast: client {peer} ended: {e}");
                 }
             });
@@ -155,6 +187,8 @@ async fn handle_client(
     mut rx: broadcast::Receiver<String>,
     replay: Replay,
     token: &str,
+    handshake_timeout: Duration,
+    handshake_permit: OwnedSemaphorePermit,
 ) -> Result<()> {
     // The large `Err` type is fixed by tungstenite's `Callback` signature.
     #[allow(clippy::result_large_err)]
@@ -172,9 +206,14 @@ async fn handle_client(
         }
         result
     };
-    let ws = tokio_tungstenite::accept_hdr_async(stream, check)
-        .await
-        .with_context(|| format!("ws handshake with {peer}"))?;
+    let ws = tokio::time::timeout(
+        handshake_timeout,
+        tokio_tungstenite::accept_hdr_async(stream, check),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("ws handshake with {peer} timed out"))?
+    .with_context(|| format!("ws handshake with {peer}"))?;
+    drop(handshake_permit);
     eprintln!("camouflage-broadcast: client connected: {peer}");
     let (mut sink, mut src) = futures_split(ws);
 

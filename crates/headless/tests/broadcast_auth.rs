@@ -1,8 +1,10 @@
 //! End-to-end check of `camouflage-broadcast`'s access token over a real
 //! loopback socket: clients without the token are refused with 401 and get
 //! none of the replay buffer; clients with it get the replayed events.
+//! Peers that never complete the handshake are disconnected and can't lock
+//! out clients that have the token.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
@@ -27,7 +29,11 @@ impl Drop for Server {
 /// Start the binary on an ephemeral port, feed it one event, and return the
 /// bound address parsed from its startup banner.
 fn start_server() -> Server {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_camouflage-broadcast"))
+    start_server_with(Command::new(env!("CARGO_BIN_EXE_camouflage-broadcast")))
+}
+
+fn start_server_with(mut command: Command) -> Server {
+    let mut child = command
         .args(["--port", "0", "--token", TOKEN])
         .env_remove("CAMOUFLAGE_BROADCAST_TOKEN")
         .stdin(Stdio::piped())
@@ -139,4 +145,60 @@ async fn replays_to_clients_with_the_token() {
         .unwrap()
         .unwrap();
     assert_eq!(msg, Message::Text(EVENT.into()));
+}
+
+#[test]
+fn disconnects_peers_that_never_finish_the_handshake() {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_camouflage-broadcast"));
+    command.args(["--handshake-timeout-ms", "300"]);
+    let server = start_server_with(command);
+    let mut silent = std::net::TcpStream::connect(&server.addr).unwrap();
+    silent
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut buf = [0u8; 64];
+    match silent.read(&mut buf) {
+        Ok(0) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {}
+        other => panic!("silent peer was not disconnected: {other:?}"),
+    }
+}
+
+/// With a low file-descriptor limit, silent connections used to hold every
+/// descriptor forever (and spin the accept loop on EMFILE), so a client with
+/// the token could never connect.
+#[cfg(unix)]
+#[tokio::test]
+async fn silent_peers_do_not_lock_out_clients_with_the_token() {
+    let mut command = Command::new("/bin/sh");
+    command.args([
+        "-c",
+        r#"ulimit -n 40 && exec "$0" "$@""#,
+        env!("CARGO_BIN_EXE_camouflage-broadcast"),
+        "--handshake-timeout-ms",
+        "300",
+    ]);
+    let server = start_server_with(command);
+    // More silent connections than the server has descriptors for.
+    let silent: Vec<_> = (0..100)
+        .map(|_| std::net::TcpStream::connect(&server.addr).unwrap())
+        .collect();
+
+    let req = format!("ws://{}/?token={TOKEN}", server.addr)
+        .into_client_request()
+        .unwrap();
+    let (mut ws, _) = tokio::time::timeout(
+        Duration::from_secs(10),
+        tokio_tungstenite::connect_async(req),
+    )
+    .await
+    .expect("authorized connect timed out")
+    .expect("authorized connect");
+    let msg = tokio::time::timeout(Duration::from_secs(10), ws.next())
+        .await
+        .expect("replayed event")
+        .unwrap()
+        .unwrap();
+    assert_eq!(msg, Message::Text(EVENT.into()));
+    drop(silent);
 }
