@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.8.2](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.8.1...camouflage-tui-v2.8.2) (2026-10-23)
+
+
+### Bug Fixes
+
+* **broadcast:** require an access token to connect ([1c98c2b](https://github.com/sinameraji/camouflage/commit/1c98c2b3803f47f1ff963d40d3353b7ce4bf0d57))
+* **broadcast:** require an access token to connect ([96d9e3c](https://github.com/sinameraji/camouflage/commit/96d9e3c63b9161e2d212faa82909a64f4afc94c1))
+* **sdk:** verify the renderer binary's SHA-256 before installing it ([3de5b36](https://github.com/sinameraji/camouflage/commit/3de5b36bddecb08487b9c9456883c46cdf545819))
+* **sdk:** verify the renderer binary's SHA-256 before installing it ([8170ca3](https://github.com/sinameraji/camouflage/commit/8170ca359fb41ab2ae07a1fecd42608b9af42142))
+* **viewer:** render status, task and permission fields as text ([931231b](https://github.com/sinameraji/camouflage/commit/931231bffdf48b0c9ff8818e9cedd8903afe67f6))
+* **viewer:** render status, task and permission fields as text ([1091a51](https://github.com/sinameraji/camouflage/commit/1091a51f407e6ad1e63db5eb3fdbcc80af0fb1c3))
+
 ## [2.8.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.8.0...camouflage-tui-v2.8.1) (2026-10-20)
 
 
