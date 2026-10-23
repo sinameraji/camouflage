@@ -5,6 +5,11 @@
  *
  * Failed downloads are non-fatal during npm postinstall, but are retried and
  * persisted so mount() can report the cause and retry later at runtime.
+ *
+ * The archive's SHA-256 must match the digest this package version ships in
+ * checksums.json (see integrity.js) before anything is extracted; downloads
+ * only follow redirects to GitHub hosts. Set CAMOUFLAGE_SKIP_VERIFY=1 to
+ * install without a digest check (e.g. from a git checkout).
  */
 
 import { createWriteStream, mkdirSync, chmodSync, existsSync, unlinkSync, writeFileSync, readFileSync } from "node:fs";
@@ -13,20 +18,22 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { get as httpsGet } from "node:https";
+import {
+  PLATFORM_MAP,
+  SKIP_VERIFY_ENV,
+  IntegrityError,
+  archiveName,
+  expectedDigest,
+  isAllowedDownloadUrl,
+  loadChecksums,
+  verifyArchive,
+} from "./integrity.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BIN_DIR = join(__dirname, "..", "bin");
 const EXE = process.platform === "win32" ? ".exe" : "";
 const BIN_PATH = join(BIN_DIR, `camouflage-tui${EXE}`);
 export const INSTALL_ERROR_PATH = join(homedir(), ".camouflage", "install-error.txt");
-
-const PLATFORM_MAP = {
-  "darwin-x64": "x86_64-apple-darwin",
-  "darwin-arm64": "aarch64-apple-darwin",
-  "linux-x64": "x86_64-unknown-linux-gnu",
-  "linux-arm64": "aarch64-unknown-linux-gnu",
-  "win32-x64": "x86_64-pc-windows-msvc",
-};
 
 const REPO = "sinameraji/camouflage";
 const DEFAULT_RETRIES = 3;
@@ -46,6 +53,8 @@ export async function installBinary({
   backoffMs = DEFAULT_BACKOFF_MS,
   request = download,
   extract = extractArchive,
+  checksums = loadChecksums,
+  env = process.env,
   pause = delay,
   log = (message) => process.stdout.write(`${message}\n`),
   reportWarning = warn,
@@ -65,7 +74,23 @@ export async function installBinary({
       version = pkg.version;
     }
 
-    const archive = `camouflage-tui-${target}.tar.gz`;
+    const archive = archiveName(target);
+    const expected = expectedDigest(
+      typeof checksums === "function" ? checksums() : checksums,
+      version,
+      archive,
+    );
+    const skipVerify = env[SKIP_VERIFY_ENV] === "1";
+    if (!expected && !skipVerify) {
+      throw new IntegrityError(
+        `no SHA-256 digest for ${archive} in this package's checksums.json (version ${version}); ` +
+        `refusing to install an unverified binary. ` +
+        `Set ${SKIP_VERIFY_ENV}=1 to install it without verification, or pass { bin } to mount().`,
+      );
+    }
+    if (!expected) {
+      log(`camouflage-tui: WARNING: ${SKIP_VERIFY_ENV}=1 is set; installing the renderer without verifying its SHA-256.`);
+    }
     // release-please uses the component-prefixed tag; keep the legacy tag as
     // a fallback for versions published before component-prefixed releases.
     const tags = [`camouflage-tui-v${version}`, `v${version}`];
@@ -80,6 +105,7 @@ export async function installBinary({
         try {
           log(`camouflage-tui: downloading ${target} binary (${tag}, attempt ${attempt}/${retries})...`);
           await request(url, tmpPath);
+          if (expected) verifyArchive(tmpPath, expected, `${tag}/${archive}`);
           await extract(tmpPath, binDir);
           unlinkIfExists(tmpPath);
           chmodSync(binPath, 0o755);
@@ -87,9 +113,11 @@ export async function installBinary({
           log(`camouflage-tui: installed to ${binPath}`);
           return true;
         } catch (err) {
-          errors.push(`${tag} attempt ${attempt}: ${errorMessage(err)}`);
           unlinkIfExists(tmpPath);
           unlinkIfExists(binPath);
+          // A digest mismatch is not a transient failure: stop here.
+          if (err instanceof IntegrityError) throw err;
+          errors.push(`${tag} attempt ${attempt}: ${errorMessage(err)}`);
           if (attempt < retries) await pause(backoffMs * (2 ** (attempt - 1)));
         }
       }
@@ -99,7 +127,7 @@ export async function installBinary({
   } catch (err) {
     const message = errorMessage(err);
     persistFailure(failurePath, message);
-    reportWarning(`Download failed: ${message}`);
+    reportWarning(`Renderer install failed: ${message}`);
     return false;
   }
 }
@@ -108,14 +136,23 @@ function extractArchive(archivePath, destination) {
   execFileSync("tar", ["xzf", archivePath, "-C", destination], { stdio: "pipe" });
 }
 
-function download(url, dest, redirects = 0) {
+export function download(url, dest, redirects = 0, get = httpsGet) {
   if (redirects > 5) return Promise.reject(new Error("Too many redirects"));
+  if (!isAllowedDownloadUrl(url)) {
+    return Promise.reject(new Error(`Refusing to download from ${url}: not a GitHub release host`));
+  }
 
   return new Promise((resolve, reject) => {
-    const req = httpsGet(url, { headers: { "User-Agent": "camouflage-tui-postinstall" } }, (res) => {
+    const req = get(url, { headers: { "User-Agent": "camouflage-tui-postinstall" } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume();
-        return resolve(download(res.headers.location, dest, redirects + 1));
+        let next;
+        try {
+          next = new URL(res.headers.location, url).toString();
+        } catch {
+          return reject(new Error(`Bad redirect from ${url}: ${res.headers.location}`));
+        }
+        return resolve(download(next, dest, redirects + 1, get));
       }
       if (res.statusCode !== 200) {
         res.resume();
@@ -161,7 +198,8 @@ function warn(message) {
   process.stderr.write(
     `\ncamouflage-tui: ${message}\n` +
     `Install diagnostics: ${INSTALL_ERROR_PATH}\n` +
-    `To install manually, build from source:\n` +
+    `To use your own renderer, pass { bin: "/path/to/camouflage-tui" } to mount(),\n` +
+    `or build from source:\n` +
     `  cargo install --path crates/tui --root ~/.local\n` +
     `  # or: cargo install --git https://github.com/${REPO} camouflage-tui\n\n`,
   );

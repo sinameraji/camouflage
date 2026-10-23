@@ -13,7 +13,24 @@ pre-built native binary built from the Rust crates in this workspace.
 - **release.yml** triggers on the `camouflage-tui-v*` tag, builds the binary
   for each platform, and attaches the tarballs to the GitHub Release.
 - **postinstall** (`sdk/node/scripts/install.js`) downloads the binary for the
-  tag matching the installed package version.
+  tag matching the installed package version, and refuses it unless its
+  SHA-256 matches the package's `checksums.json`.
+
+## Binary checksums
+
+The `publish` job in `release-please.yml` writes `sdk/node/checksums.json`
+(SHA-256 of every platform archive) from the same run's build artifacts,
+right before `npm publish`, so the digests are part of the provenance-signed
+package. The file is gitignored and never committed. If an archive is
+missing, the job fails and nothing is published.
+
+Don't rebuild binaries for a version that is already on npm (the Release
+workflow's manual dispatch): builds aren't reproducible, so the new archives
+won't match the published digests and installs of that version will fail.
+Cut a new patch release instead. The manual npm-publish recovery path
+(`workflow_dispatch` on `release-please.yml`) takes the digests from the
+archives attached to the existing release, so check those are the ones you
+built.
 
 ## What counts
 

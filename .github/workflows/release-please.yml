@@ -61,6 +61,15 @@ jobs:
   # The version is read from package.json at the tag. Publishing is
   # idempotent: an already-published version is skipped. Pre-releases go
   # to the "beta" dist-tag, stable releases to "latest".
+  #
+  # Integrity: the package ships checksums.json, the SHA-256 of every
+  # platform archive, and install.js refuses a download that doesn't match.
+  # On the normal (push) path the digests come from this run's build
+  # artifacts, not from the GitHub release, whose assets can be replaced
+  # later; because the file is written before `npm publish`, npm provenance
+  # covers it. Rebuilding binaries for an already-published version (the
+  # Release workflow's manual dispatch) yields different archives and breaks
+  # installs of that version, so cut a new release instead.
   publish:
     needs: [release-please, build-binaries]
     if: >-
@@ -81,6 +90,25 @@ jobs:
           node-version: 22
           registry-url: "https://registry.npmjs.org"
       - run: npm install -g npm@latest
+      - name: Download this run's binary archives
+        if: ${{ github.event_name == 'push' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: camouflage-tui-*
+          path: release-archives
+          merge-multiple: true
+      # Recovery publish: no build ran in this workflow run, so take the
+      # archives attached to the existing release.
+      - name: Download the release's binary archives
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'camouflage-tui-*.tar.gz' --dir release-archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+      # Fails if any platform's archive is missing.
+      - name: Record archive checksums in the package
+        run: node scripts/integrity.js write ../../release-archives checksums.json
+        working-directory: sdk/node
       - run: |
           VERSION="$(node -p "require('./package.json').version")"
           NAME="$(node -p "require('./package.json').name")"

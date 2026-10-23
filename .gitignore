@@ -4,3 +4,5 @@
 *.db-shm
 .DS_Store
 tests/visual/out/
+# Written by the release workflow right before npm publish.
+sdk/node/checksums.json

@@ -23,6 +23,7 @@
     "src/",
     "bin/",
     "scripts/",
+    "checksums.json",
     "README.md"
   ],
   "scripts": {
