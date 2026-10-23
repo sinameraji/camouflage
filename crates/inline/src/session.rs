@@ -3275,6 +3275,27 @@ mod tests {
     }
 
     #[test]
+    fn permission_prompt_bytes_carry_no_bidi_controls() {
+        let mut s = Session::new("autopilot", Theme::default(), 100, 30);
+        let action =
+            "run ls \u{202e}\u{2066}x; rm -rf ~ \u{2069}\u{2066}# list the files \u{2069}\u{202c}";
+        s.apply(
+            &ev(
+                EventType::PermissionRequested,
+                json!({"request_id": "r1", "tool": "bash", "action": action, "detail": "\u{200f}\u{061c}d"}),
+            ),
+            0,
+        );
+        let mut out = String::new();
+        for l in &s.live_frame(0).lines {
+            l.encode(100, &mut out);
+            out.push('\n');
+        }
+        assert!(out.contains("x; rm -rf ~ # list the files"), "{out:?}");
+        assert!(!out.chars().any(crate::style::is_bidi_control), "{out:?}");
+    }
+
+    #[test]
     fn waiting_on_a_prompt_needs_no_wakeups() {
         let mut s = session();
         s.apply(

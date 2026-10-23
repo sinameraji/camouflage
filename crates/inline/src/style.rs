@@ -205,10 +205,12 @@ impl Line {
             }
             for ch in span.text.chars() {
                 // Never emit raw control characters: they would move the
-                // cursor and break line accounting.
+                // cursor and break line accounting. Bidi format controls
+                // are dropped too, so untrusted text (e.g. a permission
+                // prompt's action) can't be shown in reordered visual order.
                 if ch == '\t' {
                     out.push_str("    ");
-                } else if !ch.is_control() {
+                } else if !ch.is_control() && !is_bidi_control(ch) {
                     out.push(ch);
                 }
             }
@@ -229,5 +231,52 @@ impl Line {
         if !current.is_plain() {
             out.push_str("\x1b[0m");
         }
+    }
+}
+
+/// Unicode bidirectional format characters (ALM, LRM, RLM, the embedding /
+/// override controls and the isolates). A terminal that applies the bidi
+/// algorithm would reorder the text around them, so text could display in
+/// a different order than it is read or run.
+pub fn is_bidi_control(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn encoded(text: &str) -> String {
+        let mut out = String::new();
+        Line::raw(text).encode(0, &mut out);
+        out
+    }
+
+    #[test]
+    fn encode_drops_control_characters() {
+        assert_eq!(encoded("a\x1b[2Jb\x07c\rd"), "a[2Jbcd");
+        assert_eq!(encoded("a\tb"), "a    b");
+    }
+
+    #[test]
+    fn encode_drops_bidi_format_controls() {
+        let action =
+            "run ls \u{202e}\u{2066}x; rm -rf ~ \u{2069}\u{2066}# list the files \u{2069}\u{202c}";
+        assert_eq!(encoded(action), "run ls x; rm -rf ~ # list the files ");
+        for ch in [
+            '\u{061C}', '\u{200E}', '\u{200F}', '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}',
+            '\u{202E}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
+        ] {
+            assert!(is_bidi_control(ch), "U+{:04X}", ch as u32);
+            assert_eq!(encoded(&format!("a{ch}b")), "ab", "U+{:04X}", ch as u32);
+        }
+        // Other format characters and right-to-left text itself are kept.
+        assert_eq!(
+            encoded("\u{200D}\u{05D0}\u{0627}"),
+            "\u{200D}\u{05D0}\u{0627}"
+        );
     }
 }
