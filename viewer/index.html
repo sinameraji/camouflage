@@ -290,46 +290,59 @@ function doRender() {
   $transcript.replaceChildren(frag);
   if (wasAtBottom) $transcript.scrollTop = $transcript.scrollHeight;
 
-  // Status bar
+  // Status bar, task ribbon and permission box. Everything here comes off
+  // the wire (a broadcast stream or a shared recording), so build nodes with
+  // DOM APIs and textContent rather than innerHTML: segment keys, task
+  // states and labels are host-controlled strings.
   const segs = [];
   for (const k of STATUS_ORDER) {
-    if (model.status.has(k)) {
-      segs.push(`<span class="seg ${k}">${k}: <b>${escapeHtml(model.status.get(k))}</b></span>`);
-    }
+    if (model.status.has(k)) segs.push(statusSeg(k, model.status.get(k), k));
   }
   for (const [k, v] of model.status) {
-    if (!STATUS_ORDER.includes(k)) {
-      segs.push(`<span class="seg">${k}: <b>${escapeHtml(v)}</b></span>`);
-    }
+    if (!STATUS_ORDER.includes(k)) segs.push(statusSeg(k, v, null));
   }
-  $status.innerHTML = segs.length ? segs.join("") : '<span class="seg">idle</span>';
+  if (!segs.length) segs.push(el("span", "seg", "idle"));
+  $status.replaceChildren(...segs);
 
-  // Tasks
   const taskParts = [];
   for (const [id, t] of model.tasks) {
-    const pct = t.progress != null ? ` ${Math.round(t.progress * 100)}%` : "";
-    taskParts.push(`<span class="task ${t.state}">${escapeHtml(t.label || id)}${pct}</span>`);
+    const pct = typeof t.progress === "number" && Number.isFinite(t.progress)
+      ? ` ${Math.round(t.progress * 100)}%` : "";
+    const cls = TASK_STATES.has(t.state) ? `task ${t.state}` : "task";
+    taskParts.push(el("span", cls, `${t.label || id}${pct}`));
   }
-  $tasks.innerHTML = taskParts.join("");
+  $tasks.replaceChildren(...taskParts);
 
-  // Permission
   if (model.permission) {
     const p = model.permission;
-    $perm.innerHTML = `
-      <h3>permission requested</h3>
-      <div class="req"><b>${escapeHtml(p.tool || "?")}</b>: ${escapeHtml(p.action || "")}</div>
-      ${p.detail ? `<div class="detail">${escapeHtml(p.detail)}</div>` : ""}
-    `;
+    const req = el("div", "req");
+    req.append(el("b", null, String(p.tool || "?")), `: ${p.action || ""}`);
+    const parts = [el("h3", null, "permission requested"), req];
+    if (p.detail) parts.push(el("div", "detail", String(p.detail)));
+    $perm.replaceChildren(...parts);
   } else {
-    $perm.innerHTML = "";
+    $perm.replaceChildren();
   }
 
   $count.textContent = `${model.eventCount} events`;
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
+// Known BackgroundTaskState values (protocol: snake_case). Only these are
+// used as CSS classes; anything else renders unstyled.
+const TASK_STATES = new Set(["running", "done", "error"]);
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
+}
+
+// `cls` is only ever a STATUS_ORDER entry (a fixed, known class) or null.
+function statusSeg(key, value, cls) {
+  const seg = el("span", cls ? `seg ${cls}` : "seg", `${key}: `);
+  seg.append(el("b", null, String(value)));
+  return seg;
 }
 
 function setConn(state, text) {
@@ -337,18 +350,45 @@ function setConn(state, text) {
   $connStatus.textContent = text;
 }
 
+// camouflage-broadcast requires an access token (printed to its stderr at
+// startup). Take it, and optionally the server URL, from this page's
+// fragment so it never reaches whatever host serves the viewer:
+//   index.html#token=<token>                       (ws://localhost:8080)
+//   index.html#ws=ws://127.0.0.1:8080&token=<token>
+// Pasting the full ws://…/?token=… URL into the box works too.
+function initialUrl() {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const raw = params.get("ws") || $url.value;
+  const token = params.get("token");
+  if (!token) return raw;
+  try {
+    const u = new URL(raw);
+    if (!u.searchParams.has("token")) u.searchParams.set("token", token);
+    return u.toString();
+  } catch {
+    return raw;
+  }
+}
+$url.value = initialUrl();
+
 function connect() {
   if (ws) { try { ws.close(); } catch {} ws = null; }
   setConn("conn-pending", "connecting…");
   const url = $url.value.trim();
+  let sock;
   try {
-    ws = new WebSocket(url);
+    sock = ws = new WebSocket(url);
   } catch (e) {
     setConn("conn-bad", `bad url: ${e.message}`);
     return;
   }
-  ws.onopen = () => setConn("conn-ok", "connected");
-  ws.onclose = () => setConn("conn-bad", "disconnected");
+  let opened = false;
+  ws.onopen = () => { opened = true; setConn("conn-ok", "connected"); };
+  ws.onclose = () => {
+    if (ws !== sock) return;
+    // Browsers hide the handshake status; a refused token looks like this.
+    setConn("conn-bad", opened ? "disconnected" : "could not connect (is the ?token= right?)");
+  };
   ws.onerror = () => setConn("conn-bad", "error");
   ws.onmessage = (msg) => {
     try {
