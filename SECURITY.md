@@ -24,4 +24,5 @@ The optional `camouflage-broadcast` tool (built from source, not part of the
 npm package) serves the event stream over a WebSocket. It only accepts
 clients that present the random access token it prints on stderr at
 startup; keep that token private, since it grants read access to the whole
-session.
+session. Connections that have not completed the WebSocket handshake within
+a few seconds are closed, and only a bounded number may be pending at once.
