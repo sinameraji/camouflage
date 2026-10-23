@@ -18,4 +18,5 @@ Camouflage renders events that a host program sends it. It does not execute
 commands from those events, open network connections, or read files beyond
 its own session store (`~/.camouflage`). The npm package's install script
 downloads the prebuilt binary for your platform from this repository's
-GitHub releases.
+GitHub releases and checks its SHA-256 against the digests published in the
+npm package (`checksums.json`) before extracting it.

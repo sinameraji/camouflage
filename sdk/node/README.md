@@ -166,6 +166,17 @@ versions resolve to a real asset. If the download fails (offline,
 unsupported platform), it prints instructions to build from source — the
 package install itself never fails.
 
+The download is verified before it is extracted: the package ships
+`checksums.json` with the SHA-256 of every platform archive, recorded by the
+release workflow from the binaries it built (and covered by npm provenance).
+A download whose digest doesn't match, or a package version with no digest
+for your platform, is refused. Downloads only follow redirects to GitHub
+hosts. To use a renderer you built or verified yourself, pass
+`mount({ bin: "/path/to/camouflage-tui" })`. To install without the digest
+check (for example from a git checkout, which has no `checksums.json`), set
+`CAMOUFLAGE_SKIP_VERIFY=1`; only the exact value `1` is honored, and a
+warning is printed.
+
 ## Versioning
 
 Versions track the main Camouflage workspace. Within `SCHEMA_VERSION: 1`,
