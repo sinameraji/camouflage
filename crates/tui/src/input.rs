@@ -72,7 +72,18 @@ pub enum Action {
 /// reserved digits) are buffered as the `feedback` field of the eventual
 /// `PermissionResponse`, so a user can type "deny because the path is
 /// outside the workspace" and have it ride along with the choice.
-pub fn handle_key_permission(k: Key, feedback: &mut String) -> Action {
+///
+/// Until the request is `armed` (drawn, and on screen for
+/// `PERMISSION_ARM_MS`) keys are dropped, so type-ahead can't answer a
+/// request the user hasn't read; only Ctrl+C and Esc (which deny) work.
+pub fn handle_key_permission(k: Key, feedback: &mut String, armed: bool) -> Action {
+    if !armed {
+        return match k {
+            Key::CtrlC => Action::Quit,
+            Key::Esc => Action::CancelStream,
+            _ => Action::None,
+        };
+    }
     match k {
         Key::CtrlC => Action::Quit,
         // Direct digit shortcuts (mirrors Ink's Alt+1/2/3 — but bare
@@ -363,13 +374,14 @@ mod tests {
     fn is_prev(a: &Action) -> bool { matches!(a, Action::PermissionSelectPrev) }
     fn is_next(a: &Action) -> bool { matches!(a, Action::PermissionSelectNext) }
     fn is_confirm(a: &Action) -> bool { matches!(a, Action::PermissionConfirmSelected) }
+    fn armed(k: Key, fb: &mut String) -> Action { handle_key_permission(k, fb, true) }
 
     #[test]
     fn permission_digit_shortcuts_map_to_choices() {
         let mut fb = String::new();
-        assert!(is_allow_once(&handle_key_permission(Key::Char('1'), &mut fb)));
-        assert!(is_allow_session(&handle_key_permission(Key::Char('2'), &mut fb)));
-        assert!(is_deny(&handle_key_permission(Key::Char('3'), &mut fb)));
+        assert!(is_allow_once(&armed(Key::Char('1'), &mut fb)));
+        assert!(is_allow_session(&armed(Key::Char('2'), &mut fb)));
+        assert!(is_deny(&armed(Key::Char('3'), &mut fb)));
         // Digits MUST NOT also leak into the feedback buffer.
         assert!(fb.is_empty());
     }
@@ -377,22 +389,48 @@ mod tests {
     #[test]
     fn permission_arrow_keys_navigate_and_enter_confirms() {
         let mut fb = String::new();
-        assert!(is_next(&handle_key_permission(Key::Down, &mut fb)));
-        assert!(is_prev(&handle_key_permission(Key::Up, &mut fb)));
-        assert!(is_next(&handle_key_permission(Key::Char('j'), &mut fb)));
-        assert!(is_prev(&handle_key_permission(Key::Char('k'), &mut fb)));
-        assert!(is_confirm(&handle_key_permission(Key::Enter, &mut fb)));
+        assert!(is_next(&armed(Key::Down, &mut fb)));
+        assert!(is_prev(&armed(Key::Up, &mut fb)));
+        assert!(is_next(&armed(Key::Char('j'), &mut fb)));
+        assert!(is_prev(&armed(Key::Char('k'), &mut fb)));
+        assert!(is_confirm(&armed(Key::Enter, &mut fb)));
+    }
+
+    #[test]
+    fn unarmed_permission_drops_answer_keys() {
+        let mut fb = String::new();
+        for k in [
+            Key::Char('1'),
+            Key::Char('2'),
+            Key::Char('3'),
+            Key::Enter,
+            Key::Down,
+            Key::Char('x'),
+            Key::Paste("2".into()),
+        ] {
+            let action = handle_key_permission(k, &mut fb, false);
+            assert!(matches!(action, Action::None));
+        }
+        assert!(fb.is_empty());
+        assert!(matches!(
+            handle_key_permission(Key::Esc, &mut fb, false),
+            Action::CancelStream
+        ));
+        assert!(matches!(
+            handle_key_permission(Key::CtrlC, &mut fb, false),
+            Action::Quit
+        ));
     }
 
     #[test]
     fn permission_non_digit_chars_go_into_feedback() {
         let mut fb = String::new();
         for c in "deny because path is unsafe".chars() {
-            let _ = handle_key_permission(Key::Char(c), &mut fb);
+            let _ = armed(Key::Char(c), &mut fb);
         }
         assert_eq!(fb, "deny because path is unsafe");
         // Backspace removes the last char.
-        let _ = handle_key_permission(Key::Backspace, &mut fb);
+        let _ = armed(Key::Backspace, &mut fb);
         assert_eq!(fb, "deny because path is unsaf");
     }
 }

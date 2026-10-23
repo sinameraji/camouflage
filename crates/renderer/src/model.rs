@@ -126,9 +126,12 @@ pub struct RenderModel {
     /// v0.1.5+ — host-supplied status-bar segments. Renderer draws these in
     /// a fixed conventional order plus any extras in registration order.
     status_segments: BTreeMap<String, String>,
-    /// v0.1.5+ — most recent PermissionRequested whose response is still
-    /// pending. The TUI renders an inline modal instead of the input box.
+    /// v0.1.5+ — the PermissionRequested being shown, whose response is
+    /// still pending. The TUI renders an inline modal instead of the input box.
     pending_permission: Option<PendingPermission>,
+    /// Further PermissionRequested events, shown one at a time once the
+    /// current one is answered (never replacing it).
+    queued_permissions: VecDeque<PendingPermission>,
     /// v0.1.5+ — active background tasks shown in the ribbon above the
     /// status line. Insertion order preserved for stable display.
     background_tasks: Vec<BackgroundTask>,
@@ -398,6 +401,22 @@ pub struct PendingPermission {
     /// from the `diff` field of a `PermissionRequested` payload:
     /// `{ "diff": { "path": "...", "before": "...", "after": "..." } }`.
     pub diff: Option<PermissionDiff>,
+    /// When a frame showing this request was first drawn (see
+    /// [`RenderModel::permission_drawn`]).
+    pub shown_at: Option<i64>,
+}
+
+/// How long a permission request must have been on screen before keys can
+/// answer it. Keys typed ahead (a message, an Enter) while it appears must
+/// not grant a request the user hasn't read.
+pub const PERMISSION_ARM_MS: i64 = 400;
+
+impl PendingPermission {
+    /// Whether keys may answer this request at `now`: it has been drawn, at
+    /// least [`PERMISSION_ARM_MS`] ago.
+    pub fn armed(&self, now: i64) -> bool {
+        self.shown_at.is_some_and(|t| now - t >= PERMISSION_ARM_MS)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -544,6 +563,7 @@ impl RenderModel {
             history_floor_seq: 0,
             status_segments: BTreeMap::new(),
             pending_permission: None,
+            queued_permissions: VecDeque::new(),
             background_tasks: Vec::new(),
             todos: Vec::new(),
             toasts: Vec::new(),
@@ -911,11 +931,35 @@ impl RenderModel {
 
     /// Called by the TUI when the user has answered. The pending state clears
     /// regardless of the choice; the outbound PermissionResponse event has
-    /// already been emitted to the host by the caller.
+    /// already been emitted to the host by the caller. The next queued
+    /// request, if any, is shown (unarmed until drawn).
     pub fn clear_pending_permission(&mut self) {
         if self.pending_permission.is_some() {
-            self.pending_permission = None;
+            self.pending_permission = self.queued_permissions.pop_front();
             self.dirty = true;
+        }
+    }
+
+    /// The TUI drew a frame showing the pending permission request at `now`;
+    /// its arming delay starts from the first such frame.
+    pub fn permission_drawn(&mut self, now: i64) {
+        if let Some(p) = self.pending_permission.as_mut() {
+            p.shown_at.get_or_insert(now);
+        }
+    }
+
+    /// The host reports a request as granted or denied: drop it, wherever it
+    /// is (a payload without `request_id` means the one shown).
+    fn permission_resolved(&mut self, request_id: Option<&str>) {
+        let shown = self
+            .pending_permission
+            .as_ref()
+            .map(|p| p.request_id.as_str());
+        if request_id.is_none() || request_id == shown {
+            self.pending_permission = self.queued_permissions.pop_front();
+        } else {
+            self.queued_permissions
+                .retain(|p| Some(p.request_id.as_str()) != request_id);
         }
     }
 
@@ -1339,7 +1383,7 @@ impl RenderModel {
                     let after = d.get("after").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     Some(PermissionDiff { path, before, after })
                 });
-                self.pending_permission = Some(PendingPermission {
+                let request = PendingPermission {
                     request_id,
                     tool,
                     action,
@@ -1347,11 +1391,19 @@ impl RenderModel {
                     selected: 0,
                     help_open: false,
                     diff,
-                });
+                    shown_at: None,
+                };
+                // Never replace a request still waiting for an answer: a key
+                // meant for it could otherwise answer this one unseen.
+                if self.pending_permission.is_some() {
+                    self.queued_permissions.push_back(request);
+                } else {
+                    self.pending_permission = Some(request);
+                }
                 self.dirty = true;
             }
             EventType::PermissionGranted => {
-                self.pending_permission = None;
+                self.permission_resolved(ev.payload.get("request_id").and_then(|v| v.as_str()));
                 self.push_row(Row {
                     seq: ev.seq,
                     kind: RowKind::Control,
@@ -1360,7 +1412,7 @@ impl RenderModel {
                 });
             }
             EventType::PermissionDenied => {
-                self.pending_permission = None;
+                self.permission_resolved(ev.payload.get("request_id").and_then(|v| v.as_str()));
                 self.push_row(Row {
                     seq: ev.seq,
                     kind: RowKind::Control,
@@ -2544,6 +2596,53 @@ mod tests {
         for g in ['✓', '✗', '■', '!', '·', '▸'] {
             assert!(!done.text.starts_with(g), "got: {}", done.text);
         }
+    }
+
+    fn perm(seq: i64, id: &str) -> Event {
+        ev(
+            seq,
+            EventType::PermissionRequested,
+            json!({"request_id": id, "tool": "bash", "action": format!("run {id}")}),
+        )
+    }
+
+    #[test]
+    fn permission_requests_arm_only_after_being_drawn() {
+        let mut m = RenderModel::new();
+        m.apply(&perm(0, "r1"));
+        let p = m.pending_permission().unwrap();
+        assert!(!p.armed(i64::MAX));
+        m.permission_drawn(1000);
+        m.permission_drawn(5000); // the first frame counts
+        let p = m.pending_permission().unwrap();
+        assert!(!p.armed(1000 + PERMISSION_ARM_MS - 1));
+        assert!(p.armed(1000 + PERMISSION_ARM_MS));
+    }
+
+    #[test]
+    fn a_second_permission_request_is_queued_not_replacing_the_first() {
+        let mut m = RenderModel::new();
+        m.apply(&perm(0, "r1"));
+        m.permission_drawn(0);
+        m.apply(&perm(1, "r2"));
+        m.apply(&perm(2, "r3"));
+        let p = m.pending_permission().unwrap();
+        assert_eq!(p.request_id, "r1");
+        assert!(p.armed(PERMISSION_ARM_MS));
+
+        m.clear_pending_permission();
+        let p = m.pending_permission().unwrap();
+        assert_eq!(p.request_id, "r2");
+        assert!(!p.armed(i64::MAX), "each request gets its own arming delay");
+
+        // A host-side resolution of a queued request drops just that one;
+        // one for an already-answered request changes nothing.
+        let resolved = |seq, kind, id: &str| ev(seq, kind, json!({"request_id": id}));
+        m.apply(&resolved(3, EventType::PermissionGranted, "r3"));
+        m.apply(&resolved(4, EventType::PermissionGranted, "r1"));
+        assert_eq!(m.pending_permission().unwrap().request_id, "r2");
+        m.apply(&resolved(5, EventType::PermissionDenied, "r2"));
+        assert!(m.pending_permission().is_none());
     }
 
     #[test]

