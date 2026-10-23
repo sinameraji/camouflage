@@ -14,7 +14,7 @@
 
 import { createWriteStream, mkdirSync, chmodSync, existsSync, unlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { join, dirname, resolve } from "node:path";
+import { join, dirname, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { get as httpsGet } from "node:https";
@@ -132,8 +132,33 @@ export async function installBinary({
   }
 }
 
-function extractArchive(archivePath, destination) {
-  execFileSync("tar", ["xzf", archivePath, "-C", destination], { stdio: "pipe" });
+/**
+ * Absolute path of the system tar. Never a bare "tar": on Windows, libuv
+ * looks for tar.com / tar.exe in the working directory before PATH, and the
+ * runtime repair in mount() runs in the host's cwd (often an untrusted
+ * project), so a planted tar.exe there would run.
+ */
+export function systemTar({ platform = process.platform, env = process.env, exists = existsSync } = {}) {
+  if (platform === "win32") {
+    // bsdtar has shipped in System32 since Windows 10 1803.
+    const roots = [env.SystemRoot, env.windir, "C:\\Windows"];
+    for (const root of roots) {
+      if (!root || !win32.isAbsolute(root)) continue;
+      const candidate = win32.join(root, "System32", "tar.exe");
+      if (exists(candidate)) return candidate;
+    }
+    throw new Error("no tar.exe in %SystemRoot%\\System32 (Windows 10 1803 or later is required to install the renderer)");
+  }
+  for (const candidate of ["/usr/bin/tar", "/bin/tar", "/usr/local/bin/tar", "/opt/homebrew/bin/tar"]) {
+    if (exists(candidate)) return candidate;
+  }
+  // Unusual layout: fall back to a PATH lookup. POSIX exec does not search
+  // the working directory, and cwd is set to the destination anyway.
+  return "tar";
+}
+
+export function extractArchive(archivePath, destination, { tar = systemTar(), run = execFileSync } = {}) {
+  run(tar, ["xzf", archivePath, "-C", destination], { stdio: "pipe", cwd: destination });
 }
 
 export function download(url, dest, redirects = 0, get = httpsGet) {
