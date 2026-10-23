@@ -1309,24 +1309,14 @@ impl RenderModel {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let tool = ev
-                    .payload
-                    .get("tool")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let action = ev
-                    .payload
-                    .get("action")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("permission requested")
-                    .to_string();
-                let detail = ev
-                    .payload
-                    .get("detail")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
+                // Shown in the approval prompt: drop bidi format controls
+                // so the request can't display in a reordered visual order.
+                let text = |v: Option<&serde_json::Value>, default: &str| {
+                    strip_bidi_controls(v.and_then(|v| v.as_str()).unwrap_or(default))
+                };
+                let tool = text(ev.payload.get("tool"), "");
+                let action = text(ev.payload.get("action"), "permission requested");
+                let detail = text(ev.payload.get("detail"), "");
                 self.push_row(Row {
                     seq: ev.seq,
                     kind: RowKind::Control,
@@ -1334,9 +1324,9 @@ impl RenderModel {
                     tool_id: None,
                 });
                 let diff = ev.payload.get("diff").and_then(|d| {
-                    let path = d.get("path").and_then(|v| v.as_str())?.to_string();
-                    let before = d.get("before").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let after = d.get("after").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let path = strip_bidi_controls(d.get("path").and_then(|v| v.as_str())?);
+                    let before = text(d.get("before"), "");
+                    let after = text(d.get("after"), "");
                     Some(PermissionDiff { path, before, after })
                 });
                 self.pending_permission = Some(PendingPermission {
@@ -2134,8 +2124,8 @@ pub fn compact_command(raw: &str) -> String {
         }
     }
     // Collapse any whitespace run (including \n / \r / \t) to a single
-    // space, drop other control chars. Tracks UTF-8 codepoints so we
-    // truncate on a char boundary.
+    // space, drop other control chars and bidi format controls. Tracks
+    // UTF-8 codepoints so we truncate on a char boundary.
     let mut out = String::with_capacity(raw.len().min(140));
     let mut prev_space = false;
     let mut count: usize = 0;
@@ -2148,7 +2138,7 @@ pub fn compact_command(raw: &str) -> String {
             }
             continue;
         }
-        if ch.is_control() {
+        if ch.is_control() || is_bidi_control(ch) {
             continue;
         }
         prev_space = false;
@@ -2166,12 +2156,29 @@ pub fn compact_command(raw: &str) -> String {
     out
 }
 
+/// Unicode bidirectional format characters (ALM, LRM, RLM, the embedding /
+/// override controls and the isolates). A terminal that applies the bidi
+/// algorithm would reorder the text around them, so untrusted text (a
+/// permission prompt's action, a tool command) could display in a
+/// different order than it is read or run.
+pub fn is_bidi_control(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
+}
+
+/// `s` without bidi format controls (see [`is_bidi_control`]).
+pub fn strip_bidi_controls(s: &str) -> String {
+    s.chars().filter(|&ch| !is_bidi_control(ch)).collect()
+}
+
 /// Char-aware truncation to `max` visible characters with a trailing ellipsis.
 fn truncate_to_width(s: &str, max: usize) -> String {
     let mut out = String::with_capacity(s.len().min(max + 1));
     let mut count = 0usize;
     for ch in s.chars() {
-        if ch.is_control() {
+        if ch.is_control() || is_bidi_control(ch) {
             continue;
         }
         if count >= max {
@@ -2560,6 +2567,53 @@ mod tests {
     fn compact_command_falls_through_for_non_json() {
         let s = compact_command("ls -la /tmp");
         assert_eq!(s, "ls -la /tmp");
+    }
+
+    const BIDI_ACTION: &str =
+        "run ls \u{202e}\u{2066}x; rm -rf ~ \u{2069}\u{2066}# list the files \u{2069}\u{202c}";
+
+    #[test]
+    fn compact_command_drops_bidi_controls() {
+        assert_eq!(
+            compact_command(BIDI_ACTION),
+            "run ls x; rm -rf ~ # list the files"
+        );
+        assert_eq!(
+            compact_command(r#"{"cmd":"a\u202eb\u2067c\u200fd\u061ce"}"#),
+            "cmd=abcde"
+        );
+        for ch in [
+            '\u{061C}', '\u{200E}', '\u{200F}', '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}',
+            '\u{202E}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
+        ] {
+            assert!(is_bidi_control(ch), "U+{:04X}", ch as u32);
+        }
+        // Right-to-left text itself and other format characters are kept.
+        assert_eq!(
+            strip_bidi_controls("\u{200D}\u{05D0}\u{0627}"),
+            "\u{200D}\u{05D0}\u{0627}"
+        );
+    }
+
+    #[test]
+    fn permission_request_text_drops_bidi_controls() {
+        let mut m = RenderModel::new();
+        m.apply(&ev(0, EventType::PermissionRequested, json!({
+            "request_id": "r1", "tool": "ba\u{202e}sh", "action": BIDI_ACTION, "detail": "\u{2066}d\u{2069}",
+            "diff": {"path": "a\u{202e}.rs", "before": "x\u{2067}", "after": "y\u{200f}"}
+        })));
+        let p = m.pending_permission().unwrap();
+        assert_eq!(p.action, "run ls x; rm -rf ~ # list the files ");
+        assert_eq!(p.tool, "bash");
+        assert_eq!(p.detail, "d");
+        let d = p.diff.as_ref().unwrap();
+        assert_eq!(
+            (d.path.as_str(), d.before.as_str(), d.after.as_str()),
+            ("a.rs", "x", "y")
+        );
+        for r in m.rows() {
+            assert!(!r.text.chars().any(is_bidi_control), "{:?}", r.text);
+        }
     }
 
     #[test]
