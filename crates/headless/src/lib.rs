@@ -4,6 +4,7 @@
 //! may be either full `Event` records or shorthand `{event_type, payload}`
 //! objects which we normalize (filling in `id`, `seq`, `session_id`, `timestamp_ms`).
 
+pub mod broadcast_auth;
 pub mod emit;
 pub mod fixtures;
 pub mod validate;

@@ -350,18 +350,45 @@ function setConn(state, text) {
   $connStatus.textContent = text;
 }
 
+// camouflage-broadcast requires an access token (printed to its stderr at
+// startup). Take it, and optionally the server URL, from this page's
+// fragment so it never reaches whatever host serves the viewer:
+//   index.html#token=<token>                       (ws://localhost:8080)
+//   index.html#ws=ws://127.0.0.1:8080&token=<token>
+// Pasting the full ws://…/?token=… URL into the box works too.
+function initialUrl() {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const raw = params.get("ws") || $url.value;
+  const token = params.get("token");
+  if (!token) return raw;
+  try {
+    const u = new URL(raw);
+    if (!u.searchParams.has("token")) u.searchParams.set("token", token);
+    return u.toString();
+  } catch {
+    return raw;
+  }
+}
+$url.value = initialUrl();
+
 function connect() {
   if (ws) { try { ws.close(); } catch {} ws = null; }
   setConn("conn-pending", "connecting…");
   const url = $url.value.trim();
+  let sock;
   try {
-    ws = new WebSocket(url);
+    sock = ws = new WebSocket(url);
   } catch (e) {
     setConn("conn-bad", `bad url: ${e.message}`);
     return;
   }
-  ws.onopen = () => setConn("conn-ok", "connected");
-  ws.onclose = () => setConn("conn-bad", "disconnected");
+  let opened = false;
+  ws.onopen = () => { opened = true; setConn("conn-ok", "connected"); };
+  ws.onclose = () => {
+    if (ws !== sock) return;
+    // Browsers hide the handshake status; a refused token looks like this.
+    setConn("conn-bad", opened ? "disconnected" : "could not connect (is the ?token= right?)");
+  };
   ws.onerror = () => setConn("conn-bad", "error");
   ws.onmessage = (msg) => {
     try {
