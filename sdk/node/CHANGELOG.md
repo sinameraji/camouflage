@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.8.3](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.8.2...camouflage-tui-v2.8.3) (2026-10-23)
+
+
+### Bug Fixes
+
+* **broadcast:** time out handshakes and back off on accept errors ([#125](https://github.com/sinameraji/camouflage/issues/125)) ([888ff5f](https://github.com/sinameraji/camouflage/commit/888ff5f506a11b1b79aef8fe0e22274bd325765f))
+* ignore keys until a permission prompt is drawn; queue requests ([4ccb104](https://github.com/sinameraji/camouflage/commit/4ccb104ff8a6ec6fa230a5477e4ddd885d1fe2a0))
+* ignore keys until a permission prompt is drawn; queue requests ([7570406](https://github.com/sinameraji/camouflage/commit/7570406a898ee9d6b2d56abcb201a9b75bdeb3c3))
+* **sdk:** run tar by absolute path when installing the renderer ([#124](https://github.com/sinameraji/camouflage/issues/124)) ([0d4bd79](https://github.com/sinameraji/camouflage/commit/0d4bd79160eb3f8769b613798d3e5948cc8c5276))
+* strip bidi format controls from text shown in the terminal ([#126](https://github.com/sinameraji/camouflage/issues/126)) ([278786b](https://github.com/sinameraji/camouflage/commit/278786bf5f92e1fd86d8b3ae57452a086fa417c4))
+
 ## [2.8.2](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.8.1...camouflage-tui-v2.8.2) (2026-10-23)
 
 
