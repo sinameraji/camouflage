@@ -25,7 +25,12 @@ mod tempdir {
     pub struct TempDir(pub std::path::PathBuf);
     impl TempDir {
         pub fn new() -> Self {
-            let p = std::env::temp_dir().join(format!("camo-pty-{}-{}", std::process::id(), rand()));
+            // The counter keeps parallel tests apart: macOS clocks tick in
+            // microseconds, so two tests starting together could get the same
+            // timestamp, share one s.db and fail with "database is locked".
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let p = std::env::temp_dir().join(format!("camo-pty-{}-{}-{}", std::process::id(), n, rand()));
             std::fs::create_dir_all(&p).unwrap();
             TempDir(p)
         }
