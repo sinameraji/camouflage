@@ -227,6 +227,12 @@ The patch landed. Renderer renders a system confirmation row.
 Renderer displays the inline permission widget (`[1]/[2]/[3]/[Esc]`).
 User response comes back as `PermissionResponse` (outbound).
 
+The widget only takes an answer once it has been drawn and on screen for
+400 ms; keys typed before that (type-ahead) are dropped, except Esc /
+Ctrl+C, which deny. A request that arrives while another is still waiting
+for an answer is queued and shown after it, never replacing it, so each
+request gets exactly one `PermissionResponse`.
+
 #### `PermissionGranted`, `PermissionDenied` (inbound)
 ```json
 { "event_type": "PermissionGranted", "payload": { "request_id": "perm-1" } }

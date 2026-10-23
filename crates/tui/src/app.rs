@@ -1153,8 +1153,9 @@ pub async fn run(cfg: Config) -> Result<()> {
             // normal handler.
             let mut action = if search_open {
                 input::handle_key_search(key)
-            } else if model.pending_permission().is_some() {
-                input::handle_key_permission(key, &mut permission_feedback)
+            } else if let Some(pp) = model.pending_permission() {
+                let armed = pp.armed(now_ms());
+                input::handle_key_permission(key, &mut permission_feedback, armed)
             } else if inspector_open
                 && matches!(
                     key,
@@ -1969,6 +1970,12 @@ pub async fn run(cfg: Config) -> Result<()> {
                         paste_preview.as_deref(),
                     )?;
                     last_frame_time_us = draw_start.elapsed().as_micros();
+                    // The permission modal (drawn unless the search prompt
+                    // takes its place) is on screen now: start its arming
+                    // delay. Keys handled before this never answer it.
+                    if !search_open {
+                        model.permission_drawn(now_ms);
+                    }
                     model.mark_clean();
                 }
                 // Resize check (size() is cheap; no kqueue needed)
@@ -2278,7 +2285,8 @@ async fn emit_cancel_requested(
         esc_log("WARN outbound_tx is None — no host pipe wired up");
     }
     if let Some(tx) = outbound_tx.as_ref() {
-        if let Some(pp) = model.pending_permission() {
+        // Deny the request shown and any queued behind it.
+        while let Some(pp) = model.pending_permission() {
             let resp = Event {
                 id: Uuid::new_v4(),
                 session_id,

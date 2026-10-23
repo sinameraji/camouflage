@@ -239,6 +239,9 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
                 last_frame = Some(frame);
                 frames += 1;
             }
+            // This frame is on screen now: a permission prompt in it starts
+            // its arming delay (keys handled before this never answer it).
+            session.frame_drawn(now);
 
             if session.exit || host_closed {
                 break;
