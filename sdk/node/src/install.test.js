@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { installBinary, download } from "../scripts/install.js";
+import { installBinary, download, extractArchive, systemTar } from "../scripts/install.js";
 import {
   PLATFORM_MAP,
   archiveName,
@@ -276,4 +277,66 @@ test("download follows redirects to GitHub hosts and refuses others", async (t) 
   assert.deepEqual(seenBad, [start]);
 
   await assert.rejects(download("https://evil.example/a.tar.gz", dest, 0, fakeGet({}, [])), /Refusing/);
+});
+
+test("systemTar resolves an absolute system tar, never a bare name searched from cwd on Windows", () => {
+  const has = (...paths) => (p) => paths.includes(p);
+
+  assert.equal(
+    systemTar({ platform: "win32", env: { SystemRoot: "D:\\Win" }, exists: has("D:\\Win\\System32\\tar.exe") }),
+    "D:\\Win\\System32\\tar.exe",
+  );
+  // A missing or relative SystemRoot falls back to windir, then C:\Windows.
+  assert.equal(
+    systemTar({ platform: "win32", env: { SystemRoot: "evil", windir: "E:\\Windows" }, exists: has("E:\\Windows\\System32\\tar.exe") }),
+    "E:\\Windows\\System32\\tar.exe",
+  );
+  assert.equal(
+    systemTar({ platform: "win32", env: {}, exists: has("C:\\Windows\\System32\\tar.exe") }),
+    "C:\\Windows\\System32\\tar.exe",
+  );
+  assert.throws(() => systemTar({ platform: "win32", env: {}, exists: () => false }), /System32/);
+
+  assert.equal(systemTar({ platform: "linux", exists: has("/bin/tar") }), "/bin/tar");
+  assert.equal(systemTar({ platform: "darwin", exists: has("/usr/bin/tar", "/bin/tar") }), "/usr/bin/tar");
+  assert.equal(systemTar({ platform: "linux", exists: () => false }), "tar");
+});
+
+test("extractArchive runs tar with cwd set to the destination", () => {
+  const calls = [];
+  extractArchive("/tmp/a.tar.gz", "/pkg/bin", {
+    tar: "C:\\Windows\\System32\\tar.exe",
+    run: (...args) => calls.push(args),
+  });
+  assert.deepEqual(calls, [[
+    "C:\\Windows\\System32\\tar.exe",
+    ["xzf", "/tmp/a.tar.gz", "-C", "/pkg/bin"],
+    { stdio: "pipe", cwd: "/pkg/bin" },
+  ]]);
+});
+
+test("extractArchive ignores a tar planted in the host's working directory", { skip: process.platform === "win32" }, (t) => {
+  const dir = tempDir(t);
+  const hostCwd = join(dir, "project");
+  const stage = join(dir, "stage");
+  const binDir = join(dir, "bin");
+  for (const d of [hostCwd, stage, binDir]) mkdirSync(d);
+  const marker = join(dir, "planted-tar-ran");
+  writeFileSync(join(hostCwd, "tar"), `#!/bin/sh\ntouch "${marker}"\n`, { mode: 0o755 });
+  writeFileSync(join(stage, "camouflage-tui"), "renderer");
+  const archive = join(dir, "r.tar.gz");
+  execFileSync(systemTar(), ["czf", archive, "-C", stage, "camouflage-tui"]);
+
+  const prevCwd = process.cwd();
+  const prevPath = process.env.PATH;
+  process.chdir(hostCwd);
+  process.env.PATH = `.:${prevPath}`;
+  try {
+    extractArchive(archive, binDir);
+  } finally {
+    process.chdir(prevCwd);
+    process.env.PATH = prevPath;
+  }
+  assert.equal(readFileSync(join(binDir, "camouflage-tui"), "utf8"), "renderer");
+  assert.equal(existsSync(marker), false);
 });
