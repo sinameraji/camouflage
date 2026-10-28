@@ -34,20 +34,29 @@ test("mount() rejects when the binary is missing", async () => {
   );
 });
 
-test("default renderer resolution refuses PATH fallback when repair fails", async () => {
-  let attempts = 0;
-  const tempBin = join(dirname(fileURLToPath(import.meta.url)), "__missing-default-renderer");
-  await assert.rejects(
-    () => resolveDefaultBin({
-      localBin: tempBin,
-      loadInstaller: async () => ({
-        INSTALL_ERROR_PATH: "/tmp/camouflage-install-error.txt",
-        installBinary: async () => { attempts++; return false; },
-      }),
-    }),
-    /bundled renderer is missing.*will not be used.*Install diagnostics/s,
+test("default renderer resolution selects the matching optional package", () => {
+  let request;
+  const bin = resolveDefaultBin({
+    platform: "darwin",
+    arch: "arm64",
+    resolvePackageFile: (specifier) => {
+      request = specifier;
+      return "/project/node_modules/camouflage-tui-darwin-arm64/camouflage-tui";
+    },
+  });
+  assert.equal(request, "camouflage-tui-darwin-arm64/camouflage-tui");
+  assert.equal(bin, "/project/node_modules/camouflage-tui-darwin-arm64/camouflage-tui");
+});
+
+test("default renderer resolution explains missing and unsupported packages", () => {
+  assert.throws(
+    () => resolveDefaultBin({ platform: "darwin", arch: "arm64", resolvePackageFile: () => { throw new Error("missing"); } }),
+    /camouflage-tui-darwin-arm64 is not installed.*optional dependencies enabled/,
   );
-  assert.equal(attempts, 1);
+  assert.throws(
+    () => resolveDefaultBin({ platform: "freebsd", arch: "x64" }),
+    /no renderer binary is published for freebsd-x64.*Supported targets/,
+  );
 });
 
 test("emit() writes one line per call; outbound events round-trip", async () => {

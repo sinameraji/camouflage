@@ -23,11 +23,16 @@
     "src/",
     "bin/",
     "scripts/",
-    "checksums.json",
     "README.md"
   ],
+  "optionalDependencies": {
+    "camouflage-tui-darwin-arm64": "2.8.3",
+    "camouflage-tui-darwin-x64": "2.8.3",
+    "camouflage-tui-linux-arm64": "2.8.3",
+    "camouflage-tui-linux-x64": "2.8.3",
+    "camouflage-tui-win32-x64": "2.8.3"
+  },
   "scripts": {
-    "postinstall": "node scripts/install.js",
     "test": "node --test src/*.test.js"
   },
   "engines": {

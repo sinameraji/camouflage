@@ -9,6 +9,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync, appendFileSync } from "node:fs";
@@ -17,34 +18,40 @@ import { fileURLToPath } from "node:url";
 import { SCHEMA_VERSION, encode, validate } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const LOCAL_BIN = join(__dirname, "..", "bin", process.platform === "win32" ? "camouflage-tui.exe" : "camouflage-tui");
-let rendererInstallPromise = null;
+const require = createRequire(import.meta.url);
+const PLATFORM_PACKAGES = {
+  "darwin-arm64": "camouflage-tui-darwin-arm64",
+  "darwin-x64": "camouflage-tui-darwin-x64",
+  "linux-arm64": "camouflage-tui-linux-arm64",
+  "linux-x64": "camouflage-tui-linux-x64",
+  "win32-x64": "camouflage-tui-win32-x64",
+};
 
-/** Resolve only the package-local renderer; never silently run an unchecked PATH binary. */
-export async function resolveDefaultBin({
-  localBin = LOCAL_BIN,
-  loadInstaller = () => import("../scripts/install.js"),
+/** Resolve the platform binary shipped by its matching optional dependency. */
+export function resolveDefaultBin({
+  platform = process.platform,
+  arch = process.arch,
+  resolvePackageFile = (request) => require.resolve(request),
 } = {}) {
-  if (existsSync(localBin)) return localBin;
-
-  const installer = await loadInstaller();
-  if (!rendererInstallPromise) {
-    rendererInstallPromise = installer.installBinary().finally(() => {
-      rendererInstallPromise = null;
-    });
+  const target = `${platform}-${arch}`;
+  const packageName = PLATFORM_PACKAGES[target];
+  if (!packageName) {
+    throw new Error(
+      `camouflage: no renderer binary is published for ${target}. ` +
+      `Supported targets: ${Object.keys(PLATFORM_PACKAGES).join(", ")}.`,
+    );
   }
-  await rendererInstallPromise;
-  if (existsSync(localBin)) return localBin;
 
-  let diagnostic = "No install failure details were saved.";
+  const executable = platform === "win32" ? "camouflage-tui.exe" : "camouflage-tui";
   try {
-    diagnostic = readFileSync(installer.INSTALL_ERROR_PATH, "utf8").trim();
-  } catch {}
-  throw new Error(
-    `camouflage: bundled renderer is missing at ${localBin}; an automatic repair was attempted but failed. ` +
-    `A renderer found on PATH will not be used because its version cannot be trusted. ` +
-    `Install diagnostics: ${installer.INSTALL_ERROR_PATH}. ${diagnostic}`,
-  );
+    return resolvePackageFile(`${packageName}/${executable}`);
+  } catch (cause) {
+    throw new Error(
+      `camouflage: renderer package ${packageName} is not installed for ${target}. ` +
+      `Reinstall camouflage-tui with optional dependencies enabled (do not use --no-optional).`,
+      { cause },
+    );
+  }
 }
 
 /**
@@ -214,7 +221,7 @@ function waitForExit(child, softTimeoutMs) {
  *
  * @param {object} [opts]
  * @param {string} [opts.bin]      Executable name or path. Defaults to the
- *                                 package-local binary, repaired if missing.
+ *                                 binary in the matching platform package.
  * @param {string} [opts.appTitle] Brand shown in the renderer header. When
  *                                 omitted, auto-detected from the host's
  *                                 package.json `name` (falling back to the

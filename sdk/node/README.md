@@ -8,7 +8,7 @@ If you're building an LLM-powered CLI tool and need streaming chat UI, tool exec
 npm install camouflage-tui
 ```
 
-The `postinstall` script downloads a pre-built native binary for your platform (macOS, Linux). No Rust toolchain required. It retries transient failures; if the binary is still unavailable, the SDK retries on `mount()` and reports the saved diagnostics instead of silently running a possibly stale `camouflage-tui` from `PATH`.
+The package includes a platform-specific optional dependency containing the pre-built renderer (macOS, Linux, or Windows). No Rust toolchain, network download, or install script is required; this also works with `npm install --ignore-scripts`. If your platform package is missing, `mount()` reports which package to install. The SDK never falls back to an unchecked `camouflage-tui` from `PATH`.
 
 ## Quick start
 
@@ -42,11 +42,11 @@ await cam.close();
 ### `mount(opts?) => Promise<CamouflageHandle>`
 
 Spawns the renderer and resolves once the child has spawned. Rejects with
-a friendly error if the package-local binary can't be found or repaired.
+a clear error if the matching platform binary package isn't installed.
 
 ```ts
 interface MountOptions {
-  bin?: string;              // default: package-local binary (repaired if missing)
+  bin?: string;              // default: matching platform optional dependency
   args?: string[];           // extra args after --stdin-events --emit-responses
   env?: NodeJS.ProcessEnv;   // merged with process.env
   inheritStderr?: boolean;   // default true; false → "stderr" event
@@ -156,26 +156,19 @@ If you're replacing a React/Ink TUI:
 
 ## Native binary
 
-The terminal renderer is a pre-built Rust binary. On install, the
-`postinstall` script downloads the binary for your platform from this
-package's GitHub Release. It resolves the release tag from the package
-version, preferring the component-tagged release
-(`camouflage-tui-v<version>`, as produced by release-please) and falling
-back to the legacy `v<version>` tag, so both old and new published
-versions resolve to a real asset. If the download fails (offline,
-unsupported platform), it prints instructions to build from source — the
-package install itself never fails.
+The renderer is shipped in five optional npm packages, one per supported
+OS/CPU target. npm selects the matching package using its `os` and `cpu`
+metadata, and `camouflage-tui` resolves that package directly at runtime.
+No postinstall script, download, or network access is required; installs
+with `--ignore-scripts` work normally. The release workflow publishes all
+platform packages before the SDK package so its exact-version optional
+dependencies are available as soon as the SDK is published. Each package's
+version and the SDK's dependency versions are kept in sync by release-please.
 
-The download is verified before it is extracted: the package ships
-`checksums.json` with the SHA-256 of every platform archive, recorded by the
-release workflow from the binaries it built (and covered by npm provenance).
-A download whose digest doesn't match, or a package version with no digest
-for your platform, is refused. Downloads only follow redirects to GitHub
-hosts. To use a renderer you built or verified yourself, pass
-`mount({ bin: "/path/to/camouflage-tui" })`. To install without the digest
-check (for example from a git checkout, which has no `checksums.json`), set
-`CAMOUFLAGE_SKIP_VERIFY=1`; only the exact value `1` is honored, and a
-warning is printed.
+Supported targets are macOS arm64/x64, Linux arm64/x64, and Windows x64.
+If npm omitted optional dependencies, `mount()` reports the missing package
+and the remedy. To use a renderer you built yourself, pass
+`mount({ bin: "/path/to/camouflage-tui" })`.
 
 ## Versioning
 

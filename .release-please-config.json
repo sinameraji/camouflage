@@ -13,6 +13,56 @@
           "type": "json",
           "path": "sdk/node/package.json",
           "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "sdk/node/package.json",
+          "jsonpath": "$['optionalDependencies']['camouflage-tui-darwin-arm64']"
+        },
+        {
+          "type": "json",
+          "path": "sdk/node/package.json",
+          "jsonpath": "$['optionalDependencies']['camouflage-tui-darwin-x64']"
+        },
+        {
+          "type": "json",
+          "path": "sdk/node/package.json",
+          "jsonpath": "$['optionalDependencies']['camouflage-tui-linux-arm64']"
+        },
+        {
+          "type": "json",
+          "path": "sdk/node/package.json",
+          "jsonpath": "$['optionalDependencies']['camouflage-tui-linux-x64']"
+        },
+        {
+          "type": "json",
+          "path": "sdk/node/package.json",
+          "jsonpath": "$['optionalDependencies']['camouflage-tui-win32-x64']"
+        },
+        {
+          "type": "json",
+          "path": "sdk/node/platform-packages/darwin-arm64/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "sdk/node/platform-packages/darwin-x64/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "sdk/node/platform-packages/linux-arm64/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "sdk/node/platform-packages/linux-x64/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "sdk/node/platform-packages/win32-x64/package.json",
+          "jsonpath": "$.version"
         }
       ]
     }
