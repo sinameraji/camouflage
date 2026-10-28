@@ -313,7 +313,7 @@ impl Activity {
         v
     }
 
-    /// The footer badge: `◆ 2 jobs · 1 agent · ctrl+b`. None without items.
+    /// The footer badge: `◆ 2 jobs · 1 agent · ctrl+b activity`. None without items.
     pub fn badge(&self, theme: &Theme) -> Option<Vec<Span>> {
         if self.items.is_empty() {
             return None;
@@ -361,7 +361,7 @@ impl Activity {
                 theme.accent(),
             ));
         }
-        out.push(Span::styled(" · ctrl+b", theme.dim()));
+        out.push(Span::styled(" · ctrl+b activity", theme.dim()));
         Some(out)
     }
 }
@@ -841,12 +841,15 @@ mod tests {
                 .map(|s| s.text.clone())
                 .collect::<String>()
         };
-        assert_eq!(badge(&a), "◆ 1 job · 1 agent · ctrl+b");
+        assert_eq!(badge(&a), "◆ 1 job · 1 agent · ctrl+b activity");
         a.upsert(&json!({"id": "a1", "status": "needs_attention"}), true);
-        assert_eq!(badge(&a), "◆ 1 job · 1 agent · 1 needs attention · ctrl+b");
+        assert_eq!(
+            badge(&a),
+            "◆ 1 job · 1 agent · 1 needs attention · ctrl+b activity"
+        );
         a.upsert(&json!({"id": "a1", "status": "done"}), true);
         a.upsert(&json!({"id": "j1", "status": "failed"}), true);
-        assert_eq!(badge(&a), "○ 2 finished · ctrl+b");
+        assert_eq!(badge(&a), "○ 2 finished · ctrl+b activity");
         assert!(Activity::default().badge(&Theme::default()).is_none());
     }
 

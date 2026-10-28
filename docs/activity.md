@@ -2,7 +2,8 @@
 
 Long-running work the host owns: shell jobs (a dev server, a test watcher)
 and worker agents. The inline renderer shows it without making users ask:
-a footer badge, a browser on **Ctrl+B**, live output for each item, a stop
+a footer badge with an explicit **Ctrl+B activity** hint, a browser on
+**Ctrl+B**, live output for each item, a stop
 request, and a transcript line when something starts, finishes, fails or
 needs attention.
 
