@@ -11,8 +11,9 @@ pub mod validate;
 
 use camouflage_protocol::{Event, EventType, SCHEMA_VERSION};
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicI64, Ordering};
-use tokio::io::{AsyncBufReadExt, AsyncBufRead};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt};
 use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
@@ -22,11 +23,17 @@ pub enum NdjsonError {
     #[error(transparent)]
     Json(#[from] serde_json::Error),
     /// Forward-compat: an event_type the running renderer doesn't know
-    /// about. Callers may choose to skip these silently instead of
-    /// surfacing them as RuntimeError rows, which is important whenever
-    /// a host ships ahead of the renderer binary.
+    /// about. Callers can surface a diagnostic while continuing the stream.
     #[error("unknown event_type: {0}")]
     UnknownEventType(String),
+    #[error("schema version mismatch: host uses {received}, renderer supports {supported}")]
+    SchemaVersionMismatch { received: u32, supported: u32 },
+    #[error("invalid payload for {event_type:?}: {source}")]
+    InvalidPayload {
+        event_type: EventType,
+        #[source]
+        source: serde_json::Error,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,7 +76,21 @@ impl NdjsonDecoder {
         let Some(event_type) = EventType::from_str(&s.event_type) else {
             return Err(NdjsonError::UnknownEventType(s.event_type));
         };
-        let seq = s.seq.unwrap_or_else(|| self.seq.fetch_add(1, Ordering::Relaxed));
+        let schema_version = s.schema_version.unwrap_or(SCHEMA_VERSION);
+        // Zero was used by pre-versioned event producers and remains an
+        // explicit legacy sentinel. Every nonzero version must agree.
+        if schema_version != 0 && schema_version != SCHEMA_VERSION {
+            return Err(NdjsonError::SchemaVersionMismatch {
+                received: schema_version,
+                supported: SCHEMA_VERSION,
+            });
+        }
+        let payload = s.payload.unwrap_or(serde_json::Value::Null);
+        crate::validate::validate_payload(event_type, payload.clone())
+            .map_err(|source| NdjsonError::InvalidPayload { event_type, source })?;
+        let seq = s
+            .seq
+            .unwrap_or_else(|| self.seq.fetch_add(1, Ordering::Relaxed));
         // Keep the local counter ahead of any externally-supplied seq.
         if let Some(seq_v) = s.seq {
             self.seq.fetch_max(seq_v + 1, Ordering::Relaxed);
@@ -79,9 +100,13 @@ impl NdjsonDecoder {
             session_id: s.session_id.unwrap_or(self.default_session),
             seq,
             timestamp_ms: s.timestamp_ms.unwrap_or_else(now_ms),
-            schema_version: s.schema_version.unwrap_or(SCHEMA_VERSION),
+            schema_version: if schema_version == 0 {
+                SCHEMA_VERSION
+            } else {
+                schema_version
+            },
             event_type,
-            payload: s.payload.unwrap_or(serde_json::Value::Null),
+            payload,
         })
     }
 }
@@ -105,6 +130,7 @@ where
     R: AsyncBufRead + Unpin,
 {
     let mut lines = reader.lines();
+    let mut warned_unknown = HashSet::new();
     while let Some(line) = lines.next_line().await? {
         if line.trim().is_empty() {
             continue;
@@ -116,35 +142,42 @@ where
                 }
             }
             Err(NdjsonError::UnknownEventType(name)) => {
-                // Forward-compat: a newer host shipped an event type
-                // this renderer build doesn't recognise. Silently skip
-                // instead of polluting the transcript with a noisy
-                // RuntimeError row the user can't act on. Surface via
-                // an env-gated stderr line for diagnostics.
-                if std::env::var_os("CAMOUFLAGE_DEBUG_NDJSON").is_some() {
-                    eprintln!("[camouflage] skipping unknown event_type: {name}");
+                // One visible diagnostic per unknown type keeps a newer host
+                // from silently losing events without flooding the transcript.
+                if warned_unknown.insert(name.clone()) {
+                    let message = format!(
+                        "Ignored unknown event {name:?}. The host may need a newer Camouflage renderer."
+                    );
+                    if tx.send(diagnostic_event(&decoder, message)).await.is_err() {
+                        break;
+                    }
                 }
             }
             Err(e) => {
-                let err_ev = Event {
-                    id: Uuid::new_v4(),
-                    session_id: decoder.default_session,
-                    seq: decoder.seq.fetch_add(1, Ordering::Relaxed),
-                    timestamp_ms: now_ms(),
-                    schema_version: SCHEMA_VERSION,
-                    event_type: EventType::RuntimeError,
-                    payload: serde_json::json!({
-                        "message": format!("ndjson parse error: {e}"),
-                        "source": "headless",
-                    }),
-                };
-                if tx.send(err_ev).await.is_err() {
+                let message = format!("Ignored invalid event from host: {e}");
+                if tx.send(diagnostic_event(&decoder, message)).await.is_err() {
                     break;
                 }
             }
         }
     }
     Ok(())
+}
+
+fn diagnostic_event(decoder: &NdjsonDecoder, message: String) -> Event {
+    Event {
+        id: Uuid::new_v4(),
+        session_id: decoder.default_session,
+        seq: decoder.seq.fetch_add(1, Ordering::Relaxed),
+        timestamp_ms: now_ms(),
+        schema_version: SCHEMA_VERSION,
+        event_type: EventType::RuntimeError,
+        payload: serde_json::json!({
+            "message": message,
+            "source": "protocol",
+            "severity": "warn",
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -186,19 +219,86 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unknown_event_type_is_skipped_not_surfaced() {
-        // A host shipped with a Camouflage variant this renderer doesn't
-        // know about. The stream must keep flowing; only known events
-        // reach the channel.
+    async fn schema_and_payload_errors_become_visible_warnings() {
         let d = NdjsonDecoder::new(Uuid::nil());
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
-        let input = "{\"event_type\":\"FutureMagic\"}\n{\"event_type\":\"SessionEnded\"}\n"
-            .as_bytes();
+        let input = concat!(
+            "{\"event_type\":\"SessionStarted\",\"schema_version\":2,\"payload\":{}}\n",
+            "{\"event_type\":\"UserMessageCreated\",\"payload\":{\"text\":false}}\n",
+            "{\"event_type\":\"SessionEnded\"}\n",
+        )
+        .as_bytes();
         let reader = BufReader::new(input);
         tokio::spawn(async move { run_reader(reader, d, tx).await.unwrap() });
+
+        let version_warning = rx.recv().await.unwrap();
+        assert_eq!(version_warning.event_type, EventType::RuntimeError);
+        assert!(version_warning.payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("schema version mismatch"));
+        assert_eq!(version_warning.payload["severity"], "warn");
+
+        let payload_warning = rx.recv().await.unwrap();
+        assert_eq!(payload_warning.event_type, EventType::RuntimeError);
+        assert!(payload_warning.payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("invalid payload for UserMessageCreated"));
+        assert_eq!(payload_warning.payload["severity"], "warn");
+
+        assert_eq!(rx.recv().await.unwrap().event_type, EventType::SessionEnded);
+        assert!(rx.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn unknown_event_type_is_reported_once_and_stream_continues() {
+        let d = NdjsonDecoder::new(Uuid::nil());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let input = "{\"event_type\":\"FutureMagic\"}\n{\"event_type\":\"FutureMagic\"}\n{\"event_type\":\"SessionEnded\"}\n".as_bytes();
+        let reader = BufReader::new(input);
+        tokio::spawn(async move { run_reader(reader, d, tx).await.unwrap() });
+        let warning = rx.recv().await.unwrap();
+        assert_eq!(warning.event_type, EventType::RuntimeError);
+        assert!(warning.payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("FutureMagic"));
+        assert_eq!(warning.payload["severity"], "warn");
         let next = rx.recv().await.unwrap();
         assert_eq!(next.event_type, EventType::SessionEnded);
-        // No second event — the unknown one was dropped silently.
         assert!(rx.recv().await.is_none());
+    }
+
+    #[test]
+    fn rejects_mismatched_schema_versions_and_bad_typed_payloads() {
+        let decoder = NdjsonDecoder::new(Uuid::nil());
+        let mismatch = decoder
+            .parse_line(r#"{"event_type":"SessionStarted","schema_version":2,"payload":{}}"#)
+            .unwrap_err();
+        assert!(matches!(
+            mismatch,
+            NdjsonError::SchemaVersionMismatch { received: 2, .. }
+        ));
+
+        let invalid = decoder
+            .parse_line(r#"{"event_type":"UserMessageCreated","payload":{"text":false}}"#)
+            .unwrap_err();
+        assert!(matches!(
+            invalid,
+            NdjsonError::InvalidPayload {
+                event_type: EventType::UserMessageCreated,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn accepts_legacy_zero_schema_version() {
+        let decoder = NdjsonDecoder::new(Uuid::nil());
+        let event = decoder
+            .parse_line(r#"{"event_type":"SessionEnded","schema_version":0}"#)
+            .unwrap();
+        assert_eq!(event.schema_version, SCHEMA_VERSION);
     }
 }

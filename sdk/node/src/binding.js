@@ -14,7 +14,7 @@ import { EventEmitter } from "node:events";
 import { existsSync, readFileSync, appendFileSync } from "node:fs";
 import { join, dirname, basename, parse as parsePath } from "node:path";
 import { fileURLToPath } from "node:url";
-import { encode, validate } from "./types.js";
+import { SCHEMA_VERSION, encode, validate } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const LOCAL_BIN = join(__dirname, "..", "bin", process.platform === "win32" ? "camouflage-tui.exe" : "camouflage-tui");
@@ -116,7 +116,7 @@ class CamouflageHandle extends EventEmitter {
     if (typeof event_type !== "string" || !event_type) {
       throw new TypeError("camouflage: event_type must be a non-empty string");
     }
-    const line = encode({ event_type, payload });
+    const line = encode({ schema_version: SCHEMA_VERSION, event_type, payload });
     try {
       return this._writeLine(line);
     } catch (err) {
@@ -138,7 +138,7 @@ class CamouflageHandle extends EventEmitter {
     if (this._closed) {
       return false;
     }
-    return this._writeLine(encode(ev));
+    return this._writeLine(encode({ schema_version: SCHEMA_VERSION, ...ev }));
   }
 
   _writeLine(line) {

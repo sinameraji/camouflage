@@ -54,8 +54,8 @@ pub fn validate_line(line: usize, raw: &str) -> Result<EventType, ValidationErro
     if let Err(e) = serde_json::from_str::<serde_json::Value>(raw) {
         return Err(ValidationError::NotJson { line, source: e });
     }
-    let env: Envelope = serde_json::from_str(raw)
-        .map_err(|e| ValidationError::BadEventType { line, source: e })?;
+    let env: Envelope =
+        serde_json::from_str(raw).map_err(|e| ValidationError::BadEventType { line, source: e })?;
     let payload = env.payload.unwrap_or(serde_json::Value::Null);
     validate_payload(env.event_type, payload).map_err(|e| ValidationError::BadPayload {
         line,
@@ -73,7 +73,10 @@ fn or_empty(v: serde_json::Value) -> serde_json::Value {
     }
 }
 
-fn validate_payload(event_type: EventType, payload: serde_json::Value) -> Result<(), serde_json::Error> {
+pub(crate) fn validate_payload(
+    event_type: EventType,
+    payload: serde_json::Value,
+) -> Result<(), serde_json::Error> {
     use EventType::*;
     match event_type {
         UserMessageCreated => {
@@ -281,14 +284,20 @@ mod tests {
     #[test]
     fn rejects_not_json() {
         let err = validate_line(7, "this is not json").unwrap_err();
-        assert!(matches!(err, ValidationError::NotJson { line: 7, .. }), "{err:?}");
+        assert!(
+            matches!(err, ValidationError::NotJson { line: 7, .. }),
+            "{err:?}"
+        );
     }
 
     #[test]
     fn rejects_unknown_event_type() {
         let line = r#"{"event_type":"NotARealEvent","payload":{}}"#;
         let err = validate_line(1, line).unwrap_err();
-        assert!(matches!(err, ValidationError::BadEventType { .. }), "{err:?}");
+        assert!(
+            matches!(err, ValidationError::BadEventType { .. }),
+            "{err:?}"
+        );
     }
 
     #[test]
@@ -296,7 +305,13 @@ mod tests {
         let line = r#"{"event_type":"UserMessageCreated","payload":{"not_text":"x"}}"#;
         let err = validate_line(1, line).unwrap_err();
         assert!(
-            matches!(err, ValidationError::BadPayload { event_type: EventType::UserMessageCreated, .. }),
+            matches!(
+                err,
+                ValidationError::BadPayload {
+                    event_type: EventType::UserMessageCreated,
+                    ..
+                }
+            ),
             "{err:?}"
         );
     }
@@ -310,7 +325,8 @@ mod tests {
 
     #[test]
     fn rejects_token_delta_wrong_type() {
-        let line = r#"{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":42}}"#;
+        let line =
+            r#"{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":42}}"#;
         let err = validate_line(1, line).unwrap_err();
         assert!(matches!(err, ValidationError::BadPayload { .. }), "{err:?}");
     }
@@ -330,6 +346,9 @@ not json
         assert_eq!(report.lines_valid, 3);
         assert_eq!(report.errors.len(), 2);
         assert!(matches!(report.errors[0], ValidationError::NotJson { .. }));
-        assert!(matches!(report.errors[1], ValidationError::BadPayload { .. }));
+        assert!(matches!(
+            report.errors[1],
+            ValidationError::BadPayload { .. }
+        ));
     }
 }
