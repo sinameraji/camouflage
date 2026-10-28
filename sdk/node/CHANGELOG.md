@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.10.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.9.0...camouflage-tui-v2.10.0) (2026-10-28)
+
+
+### Features
+
+* **inline:** show repo and branch in footer ([f484b03](https://github.com/sinameraji/camouflage/commit/f484b039b312dd43250bbd7ed62a2cc03d06cbe9))
+* **inline:** show repo and branch in footer ([a0d2ab8](https://github.com/sinameraji/camouflage/commit/a0d2ab8114ba1d1403743f9935d6eefca916a7b7))
+
 ## [2.9.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.8.3...camouflage-tui-v2.9.0) (2026-10-28)
 
 
