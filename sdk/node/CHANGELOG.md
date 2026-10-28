@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.9.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.8.3...camouflage-tui-v2.9.0) (2026-10-28)
+
+
+### Features
+
+* **sdk:** ship renderer through platform optional dependencies ([80f1b9e](https://github.com/sinameraji/camouflage/commit/80f1b9ecde4a1d8d3d969c5c94a9ed9e5c48ab58))
+* **sdk:** ship renderer via platform optional dependencies ([cfdf392](https://github.com/sinameraji/camouflage/commit/cfdf39269e6243719877c9c7ef56a20a75412be0))
+
+
+### Bug Fixes
+
+* **protocol:** validate payloads and schema versions ([6afa500](https://github.com/sinameraji/camouflage/commit/6afa5002d0d771c14cf72c724a0b3c86796dd1fb))
+* **protocol:** validate payloads and schema versions ([04e1d6c](https://github.com/sinameraji/camouflage/commit/04e1d6cc059627885d0a02d6a9cf8702c59da864))
+
 ## [2.8.3](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.8.2...camouflage-tui-v2.8.3) (2026-10-23)
 
 
