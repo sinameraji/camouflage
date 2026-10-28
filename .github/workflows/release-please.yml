@@ -50,9 +50,8 @@ jobs:
       tag: ${{ needs.release-please.outputs.tag_name }}
     secrets: inherit
 
-  # Publish to npm after the binaries are attached to the GitHub release:
-  # the package's install script downloads them from there, so publishing
-  # first would give early installers a missing binary.
+  # Publish the platform npm packages before the main SDK package so every
+  # exact-version optionalDependency is available to early installers.
   #
   # Auth: npm trusted publishing (OIDC, configured on npmjs.com for this
   # repo and this workflow file) needs npm >= 11.5.1, installed below. If an
@@ -62,14 +61,10 @@ jobs:
   # idempotent: an already-published version is skipped. Pre-releases go
   # to the "beta" dist-tag, stable releases to "latest".
   #
-  # Integrity: the package ships checksums.json, the SHA-256 of every
-  # platform archive, and install.js refuses a download that doesn't match.
-  # On the normal (push) path the digests come from this run's build
-  # artifacts, not from the GitHub release, whose assets can be replaced
-  # later; because the file is written before `npm publish`, npm provenance
-  # covers it. Rebuilding binaries for an already-published version (the
-  # Release workflow's manual dispatch) yields different archives and breaks
-  # installs of that version, so cut a new release instead.
+  # Platform packages are prepared from this run's build artifacts (or the
+  # existing release archives during workflow_dispatch) before they are
+  # published. Their exact versions are kept aligned with the SDK by
+  # release-please extra-files.
   publish:
     needs: [release-please, build-binaries]
     if: >-
@@ -106,11 +101,32 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
-      # Fails if any platform's archive is missing.
-      - name: Record archive checksums in the package
-        run: node scripts/integrity.js write ../../release-archives checksums.json
+      # Extracts and validates all five archives before publishing anything.
+      - name: Stage optional platform packages
+        run: node scripts/prepare-platform-packages.js ../../release-archives
         working-directory: sdk/node
-      - run: |
+      - name: Publish optional platform packages before the SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          DIST_TAG=latest
+          if [[ "$VERSION" == *-* ]]; then DIST_TAG=beta; fi
+          for PACKAGE_DIR in platform-packages/*; do
+            NAME="$(node -p "require('./$PACKAGE_DIR/package.json').name")"
+            pushd "$PACKAGE_DIR" >/dev/null
+            if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+              echo "$NAME@$VERSION is already published — skipping."
+            else
+              npm publish --provenance --access public --tag "$DIST_TAG"
+            fi
+            popd >/dev/null
+          done
+        working-directory: sdk/node
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish SDK package
+        run: |
           VERSION="$(node -p "require('./package.json').version")"
           NAME="$(node -p "require('./package.json').name")"
           if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
