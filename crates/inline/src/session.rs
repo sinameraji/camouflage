@@ -145,6 +145,8 @@ impl Prompt {
 pub struct Session {
     pub theme: Theme,
     app_name: String,
+    project_repo: Option<String>,
+    project_branch: Option<String>,
     width: usize,
     height: usize,
     entries: Vec<Entry>,
@@ -219,6 +221,8 @@ impl Session {
         Session {
             theme,
             app_name: app_name.into(),
+            project_repo: None,
+            project_branch: None,
             width: width.max(20),
             height: height.max(6),
             entries: Vec::new(),
@@ -262,6 +266,12 @@ impl Session {
             exit: false,
             compact: CompactState::new(),
         }
+    }
+
+    /// Set the repository identity shown beside the activity shortcut.
+    pub fn set_project_context(&mut self, repo: impl Into<String>, branch: impl Into<String>) {
+        self.project_repo = Some(repo.into());
+        self.project_branch = Some(branch.into());
     }
 
     pub fn resize(&mut self, width: usize, height: usize) {
@@ -868,6 +878,13 @@ impl Session {
                         } else {
                             self.segments.insert(k.clone(), v);
                         }
+                    }
+                    if let Some(branch) = segs
+                        .get("branch")
+                        .and_then(Value::as_str)
+                        .filter(|v| !v.is_empty())
+                    {
+                        self.project_branch = Some(branch.to_string());
                     }
                 }
                 if self.footer_right() != before {
@@ -1911,14 +1928,20 @@ impl Session {
             return vec![Span::styled(w.clone(), self.theme.warn())];
         }
         // Background activity stays visible; a mode badge, if any, follows.
-        if let Some(mut badge) = self.activity.badge(&self.theme) {
+        let mut left = if let Some(mut badge) = self.activity.badge(&self.theme) {
             if self.mode != InputMode::Default {
                 badge.push(Span::styled(" · ", self.theme.dim()));
                 badge.extend(chrome::mode_hint(&self.theme, self.mode));
             }
-            return badge;
+            badge
+        } else {
+            chrome::mode_hint(&self.theme, self.mode)
+        };
+        if let (Some(repo), Some(branch)) = (&self.project_repo, &self.project_branch) {
+            left.push(Span::styled(" · ", self.theme.dim()));
+            left.push(Span::styled(format!("{repo}@{branch}"), self.theme.dim()));
         }
-        chrome::mode_hint(&self.theme, self.mode)
+        left
     }
 
     fn open_browser(&mut self) {
@@ -1981,8 +2004,8 @@ impl Session {
     }
 
     fn footer_right(&self) -> String {
-        const SKIP: [&str; 5] = ["mode", "phase", "elapsed", "warn", "activity"];
-        const ORDER: [&str; 4] = ["model", "tokens", "cost", "branch"];
+        const SKIP: [&str; 6] = ["mode", "phase", "elapsed", "warn", "activity", "branch"];
+        const ORDER: [&str; 3] = ["model", "tokens", "cost"];
         let mut parts: Vec<&str> = ORDER
             .iter()
             .filter_map(|k| self.segments.get(*k).map(String::as_str))
@@ -3013,12 +3036,29 @@ mod tests {
             ]
         );
         let footer = live_text(&s, 0).last().cloned().unwrap();
-        assert!(footer.contains("◆ 1 job · 1 agent · ctrl+b"), "{footer}");
+        assert!(footer.contains("◆ 1 job · 1 agent · ctrl+b activity"), "{footer}");
         assert_eq!(
             s.next_wakeup(10),
             None,
             "a running job alone never wakes the renderer"
         );
+    }
+
+    #[test]
+    fn footer_shows_repository_and_branch_beside_the_activity_hint() {
+        let mut s = with_activity();
+        s.resize(100, 30);
+        s.set_project_context("autopilot", "feature/footer");
+        let footer = live_text(&s, 0).last().cloned().unwrap();
+        assert!(footer.contains("ctrl+b activity"), "{footer}");
+        assert!(footer.contains("autopilot@feature/footer"), "{footer}");
+
+        s.apply(
+            &ev(EventType::StatusUpdate, json!({"segments": {"branch": "feature/new"}})),
+            0,
+        );
+        let updated = live_text(&s, 0).last().cloned().unwrap();
+        assert!(updated.contains("autopilot@feature/new"), "{updated}");
     }
 
     #[test]

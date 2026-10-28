@@ -20,6 +20,8 @@ use camouflage_store::{EventStore, SqliteStore};
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use std::collections::HashSet;
 use std::io::{Read, Write};
+use std::path::Path;
+use std::process::Command;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -44,6 +46,53 @@ enum Input {
     Term(TermEvent),
     /// The session's deadline passed (spinner frame, message expiry).
     Tick,
+}
+
+/// Resolve the current Git worktree's repository name and branch once at startup.
+fn resolve_project_context(cwd: &Path) -> Option<(String, String)> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD"])
+        .current_dir(cwd)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut lines = stdout.lines();
+    let root = Path::new(lines.next()?.trim());
+    let branch = lines.next()?.trim();
+    let remote = Command::new("git")
+        .args(["config", "--get", "remote.origin.url"])
+        .current_dir(cwd)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    let repo = remote
+        .as_deref()
+        .and_then(|url| url.trim_end_matches(".git").rsplit(|c| c == '/' || c == ':').next())
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .or_else(|| root.file_name().map(|n| n.to_string_lossy().into_owned()))?;
+    if branch.is_empty() {
+        return None;
+    }
+    let branch = if branch == "HEAD" {
+        let short = Command::new("git")
+            .args(["rev-parse", "--short", "HEAD"])
+            .current_dir(cwd)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "detached".to_string());
+        format!("detached@{short}")
+    } else {
+        branch.to_string()
+    };
+    Some((repo, branch))
 }
 
 pub async fn run(cfg: InlineConfig) -> Result<()> {
@@ -80,6 +129,11 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     let theme = detect_theme();
     let mut term = InlineTerminal::new(screen, w, h);
     let mut session = Session::new(app_title, theme, term.content_width(), h as usize);
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some((repo, branch)) = resolve_project_context(&cwd) {
+            session.set_project_context(repo, branch);
+        }
+    }
 
     enter_terminal_modes()?;
     install_panic_hook();
@@ -730,5 +784,54 @@ mod tests {
         let mut release = key(KeyCode::Char('a'), KeyModifiers::NONE);
         release.kind = KeyEventKind::Release;
         assert_eq!(map_key(release), None);
+    }
+
+    #[test]
+    fn resolves_repository_root_and_branch_from_nested_working_directory() {
+        let root = std::env::temp_dir().join(format!("camouflage-context-{}", uuid::Uuid::new_v4()));
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+
+        let init = Command::new("git")
+            .args(["init", "--initial-branch=feature/context"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(init.status.success(), "{}", String::from_utf8_lossy(&init.stderr));
+        for args in [
+            ["config", "user.name", "Camouflage Test"],
+            ["config", "user.email", "camouflage-test@example.com"],
+        ] {
+            assert!(Command::new("git")
+                .args(args)
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success());
+        }
+        std::fs::write(root.join("README.md"), "test\n").unwrap();
+        assert!(Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["commit", "--quiet", "-m", "test"])
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["remote", "add", "origin", "https://github.com/example/canonical-repo.git"])
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success());
+
+        let context = resolve_project_context(&nested).unwrap();
+        assert_eq!(context.0, "canonical-repo");
+        assert_eq!(context.1, "feature/context");
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
