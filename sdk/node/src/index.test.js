@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
-import { reader, validate, encode } from "./index.js";
+import { SCHEMA_VERSION, reader, validate, encode } from "./index.js";
 
 test("validate accepts a well-formed line", () => {
   const v = validate('{"event_type":"UserMessageCreated","payload":{"text":"hi"}}');
@@ -16,6 +16,18 @@ test("validate rejects unknown event_type", () => {
 test("validate rejects non-JSON", () => {
   const v = validate("not json");
   assert.match(v ?? "", /not valid JSON/);
+});
+
+test("validate rejects a mismatched schema version", () => {
+  const v = validate('{"event_type":"SessionStarted","schema_version":999,"payload":{}}');
+  assert.match(v ?? "", /schema version mismatch.*999/);
+});
+
+test("reader fails clearly on a mismatched schema version", async () => {
+  const src = Readable.from(['{"event_type":"SessionStarted","schema_version":999,"payload":{}}\n']);
+  await assert.rejects(async () => {
+    for await (const _ev of reader(src)) {}
+  }, /schema version mismatch.*999/);
 });
 
 test("reader parses NDJSON line-by-line and skips malformed", async () => {
@@ -43,4 +55,6 @@ test("encode roundtrips through reader", async () => {
   for await (const e of reader(src)) out.push(e);
   assert.equal(out.length, 1);
   assert.equal(out[0].payload.segments.phase, "thinking");
+  assert.equal(out[0].schema_version, undefined);
+  assert.equal(SCHEMA_VERSION, 1);
 });

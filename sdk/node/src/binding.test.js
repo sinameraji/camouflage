@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { mount, selectList, confirm, permission, suspendTerminal, resumeTerminal } from "./index.js";
+import { SCHEMA_VERSION, mount, selectList, confirm, permission, suspendTerminal, resumeTerminal } from "./index.js";
 import { resolveDefaultBin } from "./binding.js";
 
 const FAKE = join(dirname(fileURLToPath(import.meta.url)), "__fake-renderer.js");
@@ -62,6 +62,7 @@ test("emit() writes one line per call; outbound events round-trip", async () => 
   // Wait for the fake to echo back
   await waitUntil(() => received.length >= 3, 1000);
   assert.equal(received.length, 3);
+  assert.deepEqual(received.map((e) => e.schema_version), Array(3).fill(SCHEMA_VERSION));
   assert.deepEqual(
     received.map((e) => e.event_type),
     ["SessionStarted", "UserMessageCreated", "AssistantTokenDelta"],

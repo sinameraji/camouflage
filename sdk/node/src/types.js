@@ -46,23 +46,22 @@ export async function* reader(src) {
       const line = buf.slice(0, nl);
       buf = buf.slice(nl + 1);
       if (!line.trim()) continue;
-      try {
-        const ev = JSON.parse(line);
-        if (ev && typeof ev.event_type === "string" && KNOWN_TYPES.has(ev.event_type)) {
-          yield ev;
-        }
-      } catch {
-        // skip; mirror the renderer's lenient behaviour
+      let ev;
+      try { ev = JSON.parse(line); }
+      catch { continue; } // skip malformed lines, matching the lenient Rust renderer
+      if (ev && typeof ev.event_type === "string" && KNOWN_TYPES.has(ev.event_type)) {
+        assertSchemaVersion(ev.schema_version);
+        yield ev;
       }
     }
   }
   if (buf.trim()) {
-    try {
-      const ev = JSON.parse(buf);
-      if (ev && typeof ev.event_type === "string" && KNOWN_TYPES.has(ev.event_type)) {
-        yield ev;
-      }
-    } catch {}
+    let ev;
+    try { ev = JSON.parse(buf); } catch { return; }
+    if (ev && typeof ev.event_type === "string" && KNOWN_TYPES.has(ev.event_type)) {
+      assertSchemaVersion(ev.schema_version);
+      yield ev;
+    }
   }
 }
 
@@ -75,6 +74,12 @@ export async function* reader(src) {
  * @param {string} line
  * @returns {string | null}
  */
+function assertSchemaVersion(version) {
+  if (version !== undefined && version !== 0 && version !== SCHEMA_VERSION) {
+    throw new Error(`schema version mismatch: renderer uses ${version}, SDK supports ${SCHEMA_VERSION}`);
+  }
+}
+
 export function validate(line) {
   let v;
   try { v = JSON.parse(line); }
@@ -82,6 +87,8 @@ export function validate(line) {
   if (!v || typeof v !== "object") return "top-level value is not an object";
   if (typeof v.event_type !== "string") return "missing event_type";
   if (!KNOWN_TYPES.has(v.event_type)) return `unknown event_type: ${v.event_type}`;
+  try { assertSchemaVersion(v.schema_version); }
+  catch (e) { return e instanceof Error ? e.message : String(e); }
   return null;
 }
 
