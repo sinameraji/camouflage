@@ -63,7 +63,8 @@ export type EventType =
   | "ActivitySnapshot"
   | "ActivityBrowserOpen"
   | "ActivityStopRequested"
-  | "ActivityViewChanged";
+  | "ActivityViewChanged"
+  | "SessionStatus";
 
 export type Direction = "inbound" | "outbound";
 
@@ -400,6 +401,34 @@ export type ActivityStopRequested = { id: string };
 /** v2.4+: renderer → host. Stream an item's output while its details are open, for example. */
 export type ActivityViewChanged = { view: "list" | "detail" | "closed"; id?: string };
 
+/** v2.11+: what a session is doing, as the deck shows it. */
+export type SessionState = "working" | "blocked" | "idle" | "done" | "failed";
+/**
+ * v2.11+: one session's state in a multi-session stream. The enclosing
+ * event's `session_id` identifies the session. Every field except `state`
+ * is optional; a later SessionStatus replaces the previous one wholesale.
+ */
+export type SessionStatus = {
+  state: SessionState;
+  /** What the session is about, e.g. the repo name. */
+  title?: string;
+  /** Where it runs, e.g. "this computer" or a server's name. */
+  place?: string;
+  /** Git branch the session works on. */
+  branch?: string;
+  /** Why it is blocked or failed; one short line. */
+  detail?: string;
+  /** Spend so far, in US dollars. */
+  cost_usd?: number;
+  /** Context tokens used, and the model's limit. */
+  context_used?: number;
+  context_limit?: number;
+  /** The pull request this session opened, once there is one. */
+  pr_url?: string;
+  /** When this state was observed (epoch ms). */
+  updated_ms?: number;
+};
+
 /** A diff to show inline: full before/after text, or a unified diff. */
 export type DiffPayload = {
   path: string;
@@ -432,6 +461,8 @@ export type Event = EnvelopeMeta &
     | { event_type: "ActivityBrowserOpen"; payload?: Record<string, never> }
     | { event_type: "ActivityStopRequested"; payload: ActivityStopRequested }
     | { event_type: "ActivityViewChanged"; payload: ActivityViewChanged }
+    /** v2.11+: one session's state; `session_id` says which session. */
+    | { event_type: "SessionStatus"; payload: SessionStatus }
     | { event_type: "AssistantMessageCompleted"; payload: AssistantMessageCompleted }
     | { event_type: "ToolExecutionStarted"; payload: ToolStarted }
     | { event_type: "ToolExecutionStdout"; payload: ToolOutput }

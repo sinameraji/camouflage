@@ -197,6 +197,12 @@ pub enum EventType {
     /// item's details (`{view: "list" | "detail" | "closed", id?}`), e.g. to
     /// stream an item's output only while it's on screen.
     ActivityViewChanged,
+    /// v2.11+ — Host → renderer: one session's state, for hosts that put
+    /// several sessions in one stream (the deck). The event's `session_id`
+    /// says which session it describes; `SessionStarted` introduces a
+    /// session and `SessionEnded` removes it. Single-session hosts never
+    /// need to send it. Payload: `payloads::SessionStatus`.
+    SessionStatus,
 }
 
 impl EventType {
@@ -255,6 +261,7 @@ impl EventType {
             EventType::ActivityBrowserOpen => "ActivityBrowserOpen",
             EventType::ActivityStopRequested => "ActivityStopRequested",
             EventType::ActivityViewChanged => "ActivityViewChanged",
+            EventType::SessionStatus => "SessionStatus",
         }
     }
 
@@ -317,6 +324,7 @@ impl EventType {
             "ActivityBrowserOpen" => Self::ActivityBrowserOpen,
             "ActivityStopRequested" => Self::ActivityStopRequested,
             "ActivityViewChanged" => Self::ActivityViewChanged,
+            "SessionStatus" => Self::SessionStatus,
             _ => return None,
         })
     }
@@ -618,6 +626,62 @@ pub mod payloads {
         /// The item, for `detail`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub id: Option<String>,
+    }
+
+    /// v2.11+ — what a session is doing, as the deck shows it.
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    #[serde(rename_all = "snake_case")]
+    pub enum SessionState {
+        /// A turn is running.
+        Working,
+        /// Waiting on the user (an approval, a question).
+        Blocked,
+        /// No turn running, nothing pending.
+        Idle,
+        /// Finished; usually with a PR.
+        Done,
+        /// Ended in an error.
+        Failed,
+    }
+
+    /// v2.11+ — one session's state in a multi-session stream.
+    ///
+    /// The enclosing event's `session_id` identifies the session, so the
+    /// payload carries no id of its own. Every field except `state` is
+    /// optional: hosts send what they know, and a later `SessionStatus`
+    /// replaces the previous one wholesale (last-write-wins, like
+    /// `StatusUpdate`).
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct SessionStatus {
+        pub state: SessionState,
+        /// What the session is about, e.g. the repo name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub title: Option<String>,
+        /// Where it runs, e.g. `this computer` or a server's name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub place: Option<String>,
+        /// Git branch the session works on.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub branch: Option<String>,
+        /// Why it is blocked or failed; one short line.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub detail: Option<String>,
+        /// Spend so far, in US dollars.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub cost_usd: Option<f64>,
+        /// Context tokens used, and the model's limit.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub context_used: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub context_limit: Option<u64>,
+        /// The pull request this session opened, once there is one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub pr_url: Option<String>,
+        /// When this state was observed (epoch ms).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub updated_ms: Option<i64>,
     }
 
     /// v2.4+ — renderer → host answer to `TerminalSuspend`.
@@ -1242,8 +1306,9 @@ mod tests {
             EventType::ActivityBrowserOpen,
             EventType::ActivityStopRequested,
             EventType::ActivityViewChanged,
+            EventType::SessionStatus,
         ];
-        assert_eq!(types.len(), 53);
+        assert_eq!(types.len(), 54);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();
@@ -1276,6 +1341,7 @@ mod tests {
             EventType::MentionQuery, EventType::AssistantReasoningDelta,
             EventType::TerminalSuspend, EventType::TerminalResume, EventType::TerminalSuspended,
             EventType::ActivityUpdate, EventType::ActivityLog, EventType::ActivityRemoved, EventType::ActivitySnapshot, EventType::ActivityBrowserOpen, EventType::ActivityStopRequested, EventType::ActivityViewChanged,
+            EventType::SessionStatus,
         ];
         for t in all {
             let quoted = format!("\"{}\"", t.as_str());
@@ -1388,7 +1454,7 @@ mod tests {
             ShowForm, FormResponse, ShowWizard, WizardCompleted, WizardCancelled,
             ModeChangeRequested, ShowToast, Splash, TerminalHandoff, TerminalSuspended,
             ActivityStep, ActivityItem, ActivityLog, ActivityRemoved, ActivitySnapshot,
-            ActivityStopRequested, ActivityViewChanged,
+            ActivityStopRequested, ActivityViewChanged, SessionStatus,
         );
         let mut problems = Vec::new();
         for (name, fields) in &ts {
@@ -1521,5 +1587,48 @@ mod tests {
         let s = serde_json::to_string(&p).unwrap();
         let back: payloads::AssistantTokenDelta = serde_json::from_str(&s).unwrap();
         assert_eq!(p, back);
+    }
+
+    #[test]
+    fn session_status_payload_roundtrip() {
+        let p = payloads::SessionStatus {
+            state: payloads::SessionState::Blocked,
+            title: Some("camouflage".into()),
+            place: Some("this computer".into()),
+            branch: Some("aster/154f59c9".into()),
+            detail: Some("waiting for approval to run tests".into()),
+            cost_usd: Some(0.42),
+            context_used: Some(48_000),
+            context_limit: Some(200_000),
+            pr_url: Some("https://github.com/sinameraji/camouflage/pull/1".into()),
+            updated_ms: Some(1_747_521_837_000),
+        };
+        let s = serde_json::to_string(&p).unwrap();
+        assert!(s.contains("\"state\":\"blocked\""), "got {s}");
+        let back: payloads::SessionStatus = serde_json::from_str(&s).unwrap();
+        assert_eq!(p, back);
+
+        // Only `state` is required; a host that knows nothing else still
+        // gets a valid status.
+        let raw = r#"{"state":"working"}"#;
+        let m: payloads::SessionStatus = serde_json::from_str(raw).unwrap();
+        assert_eq!(m.state, payloads::SessionState::Working);
+        assert!(m.title.is_none());
+        assert!(m.cost_usd.is_none());
+    }
+
+    #[test]
+    fn session_state_wire_format() {
+        // The deck and `dl sessions --json` key off these exact strings.
+        for (state, wire) in [
+            (payloads::SessionState::Working, "working"),
+            (payloads::SessionState::Blocked, "blocked"),
+            (payloads::SessionState::Idle, "idle"),
+            (payloads::SessionState::Done, "done"),
+            (payloads::SessionState::Failed, "failed"),
+        ] {
+            let s = serde_json::to_string(&state).unwrap();
+            assert_eq!(s, format!("\"{wire}\""));
+        }
     }
 }

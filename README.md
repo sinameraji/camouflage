@@ -73,6 +73,34 @@ Emit one JSON object per line on stdout. The minimum required fields:
 
 `id`, `session_id`, `seq`, and `timestamp_ms` are filled in by Camouflage if absent.
 
+### Several sessions in one stream
+
+One NDJSON stream may carry several sessions. Events from different
+`session_id`s may interleave in any order; `seq` is per session, not per
+stream, so each session's events number `0, 1, 2, …` independently.
+`SessionStarted` introduces a session and `SessionEnded` removes it. A
+single-session host changes nothing — omit `session_id` and every event
+belongs to the one session Camouflage created for you.
+
+A host that renders several sessions (the deck) reports each one's state
+with `SessionStatus`. The event's `session_id` says which session it
+describes; the payload is last-write-wins, so send the whole state each
+time:
+
+```json
+{"event_type":"SessionStatus","session_id":"11111111-1111-4111-8111-111111111111","payload":{"state":"blocked","title":"camouflage","place":"this computer","branch":"aster/154f59c9","detail":"waiting for approval to run tests","cost_usd":0.31,"context_used":48000,"context_limit":200000,"pr_url":"https://github.com/sinameraji/camouflage/pull/149","updated_ms":1793000001100}}
+```
+
+`state` is one of `working`, `blocked`, `idle`, `done`, `failed`. Every
+other field is optional: `title` (e.g. the repo), `place`, `branch`,
+`detail` (why blocked/failed), `cost_usd`, `context_used` /
+`context_limit`, `pr_url`, and `updated_ms`. Renderers that show one
+session ignore it.
+
+See [`fixtures/multi-session.ndjson`](fixtures/multi-session.ndjson) for a
+two-session interleaved stream, and `docs/protocol.md` for the full
+reference.
+
 ## UI components
 
 Surfaces the renderer draws natively:

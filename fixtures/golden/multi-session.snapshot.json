@@ -1,0 +1,39 @@
+{
+  "total_rows": 6,
+  "rows": [
+    {
+      "seq": 0,
+      "kind": "system",
+      "text": "session started"
+    },
+    {
+      "seq": 4,
+      "kind": "user",
+      "text": "add the per-session status event"
+    },
+    {
+      "seq": 5,
+      "kind": "user",
+      "text": "wire up dl sessions"
+    },
+    {
+      "seq": 6,
+      "kind": "assistant",
+      "text": ""
+    },
+    {
+      "seq": 7,
+      "kind": "assistant",
+      "text": "Done — the event is in.Opened the PR."
+    },
+    {
+      "seq": 14,
+      "kind": "system",
+      "text": "session ended"
+    }
+  ],
+  "status": {
+    "phase": "idle"
+  },
+  "tasks": []
+}

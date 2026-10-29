@@ -8,13 +8,19 @@
 //! adapter should fail loudly.
 //!
 //! Events whose payloads do not have a dedicated typed struct
-//! (`SessionStarted`, `SessionEnded`, `PatchProposed`, `PatchApplied`,
-//! `PermissionRequested`, `PermissionGranted`, `PermissionDenied`,
-//! `SessionCompacted`, `ViewportMarker`) are accepted with any JSON value as
-//! payload; the validator only enforces shape where the protocol defines one.
+//! (`SessionEnded`, `TranscriptCleared`, `ActivityBrowserOpen`) are accepted
+//! with any JSON value as payload; the validator only enforces shape where
+//! the protocol defines one.
+//!
+//! A stream may carry several sessions at once: events from different
+//! `session_id`s interleave, and `seq` is only required to increase *within*
+//! a session. `validate_stream` tracks the last `seq` per session and reports
+//! a duplicate or backwards `seq` as an error, because the store's
+//! uniqueness is `(session_id, seq)`.
 
 use camouflage_protocol::{payloads, EventType};
 use serde::Deserialize;
+use std::collections::HashMap;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ValidationError {
@@ -37,6 +43,13 @@ pub enum ValidationError {
         #[source]
         source: serde_json::Error,
     },
+    #[error("line {line}: session {session_id} seq {seq} is not after {previous}")]
+    SeqOutOfOrder {
+        line: usize,
+        session_id: String,
+        seq: i64,
+        previous: i64,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,11 +57,31 @@ struct Envelope {
     event_type: EventType,
     #[serde(default)]
     payload: Option<serde_json::Value>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    seq: Option<i64>,
+}
+
+/// What a validated line says about the stream, beyond its event type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineMeta {
+    pub event_type: EventType,
+    /// The session the line belongs to, when the host set one.
+    pub session_id: Option<String>,
+    /// The host's sequence number, when it set one.
+    pub seq: Option<i64>,
 }
 
 /// Validate a single NDJSON line. The `line` index is purely for error
 /// messages; pass `1` for the first line and increment as you go.
 pub fn validate_line(line: usize, raw: &str) -> Result<EventType, ValidationError> {
+    validate_line_meta(line, raw).map(|meta| meta.event_type)
+}
+
+/// Like [`validate_line`], but also returns the envelope fields a
+/// multi-session stream needs (`session_id`, `seq`).
+pub fn validate_line_meta(line: usize, raw: &str) -> Result<LineMeta, ValidationError> {
     // First pass: parse as raw JSON to detect "not even JSON" cases distinctly
     // from "JSON but missing event_type".
     if let Err(e) = serde_json::from_str::<serde_json::Value>(raw) {
@@ -62,7 +95,11 @@ pub fn validate_line(line: usize, raw: &str) -> Result<EventType, ValidationErro
         event_type: env.event_type,
         source: e,
     })?;
-    Ok(env.event_type)
+    Ok(LineMeta {
+        event_type: env.event_type,
+        session_id: env.session_id,
+        seq: env.seq,
+    })
 }
 
 fn or_empty(v: serde_json::Value) -> serde_json::Value {
@@ -221,6 +258,9 @@ pub(crate) fn validate_payload(
         ActivityViewChanged => {
             serde_json::from_value::<payloads::ActivityViewChanged>(payload)?;
         }
+        SessionStatus => {
+            serde_json::from_value::<payloads::SessionStatus>(payload)?;
+        }
         // Bodyless events — any JSON value is accepted.
         SessionEnded | TranscriptCleared | ActivityBrowserOpen => {}
     }
@@ -232,6 +272,8 @@ pub(crate) fn validate_payload(
 pub struct ValidationReport {
     pub lines_total: usize,
     pub lines_valid: usize,
+    /// Distinct `session_id`s seen in the stream.
+    pub sessions: usize,
     pub errors: Vec<ValidationError>,
 }
 
@@ -243,16 +285,49 @@ impl ValidationReport {
 
 /// Validate every non-blank line in `input`. Errors are collected; the report
 /// always includes per-line counts so callers can print a summary.
+///
+/// Sessions may interleave: `seq` is checked per `session_id`, never across
+/// the whole stream.
 pub fn validate_stream(input: &str) -> ValidationReport {
     let mut report = ValidationReport::default();
+    let mut last_seq: HashMap<String, i64> = HashMap::new();
     for (i, raw) in input.lines().enumerate() {
         if raw.trim().is_empty() {
             continue;
         }
+        let line = i + 1;
         report.lines_total += 1;
-        match validate_line(i + 1, raw) {
-            Ok(_) => report.lines_valid += 1,
-            Err(e) => report.errors.push(e),
+        let meta = match validate_line_meta(line, raw) {
+            Ok(meta) => meta,
+            Err(e) => {
+                report.errors.push(e);
+                continue;
+            }
+        };
+        if let Some(sid) = &meta.session_id {
+            if !last_seq.contains_key(sid) {
+                report.sessions += 1;
+            }
+        }
+        let mut valid = true;
+        if let (Some(sid), Some(seq)) = (&meta.session_id, meta.seq) {
+            if let Some(&previous) = last_seq.get(sid) {
+                if seq <= previous {
+                    report.errors.push(ValidationError::SeqOutOfOrder {
+                        line,
+                        session_id: sid.clone(),
+                        seq,
+                        previous,
+                    });
+                    valid = false;
+                }
+            }
+            if valid {
+                last_seq.insert(sid.clone(), seq);
+            }
+        }
+        if valid {
+            report.lines_valid += 1;
         }
     }
     report
@@ -344,11 +419,90 @@ not json
         let report = validate_stream(input);
         assert_eq!(report.lines_total, 5);
         assert_eq!(report.lines_valid, 3);
+        assert_eq!(report.sessions, 0);
         assert_eq!(report.errors.len(), 2);
         assert!(matches!(report.errors[0], ValidationError::NotJson { .. }));
         assert!(matches!(
             report.errors[1],
             ValidationError::BadPayload { .. }
         ));
+    }
+
+    #[test]
+    fn accepts_session_status() {
+        let line = r#"{"event_type":"SessionStatus","session_id":"a","payload":{"state":"blocked","title":"camouflage","detail":"waiting for approval","cost_usd":0.42,"context_used":48000,"context_limit":200000,"pr_url":"https://example.com/pr/1","updated_ms":1747521837000}}"#;
+        let meta = validate_line_meta(1, line).unwrap();
+        assert_eq!(meta.event_type, EventType::SessionStatus);
+        assert_eq!(meta.session_id.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn rejects_session_status_with_unknown_state() {
+        let line = r#"{"event_type":"SessionStatus","payload":{"state":"sleeping"}}"#;
+        let err = validate_line(1, line).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::BadPayload {
+                    event_type: EventType::SessionStatus,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_session_status_without_state() {
+        let line = r#"{"event_type":"SessionStatus","payload":{"title":"camouflage"}}"#;
+        let err = validate_line(1, line).unwrap_err();
+        assert!(matches!(err, ValidationError::BadPayload { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn interleaved_sessions_keep_per_session_seq() {
+        // Two sessions, each with its own 0,1,2 sequence, interleaved in one
+        // stream. Global ordering would flag this; per-session ordering must
+        // not.
+        let input = "\
+{\"event_type\":\"SessionStarted\",\"session_id\":\"a\",\"seq\":0}
+{\"event_type\":\"SessionStarted\",\"session_id\":\"b\",\"seq\":0}
+{\"event_type\":\"SessionStatus\",\"session_id\":\"a\",\"seq\":1,\"payload\":{\"state\":\"working\"}}
+{\"event_type\":\"SessionStatus\",\"session_id\":\"b\",\"seq\":1,\"payload\":{\"state\":\"blocked\"}}
+{\"event_type\":\"SessionEnded\",\"session_id\":\"a\",\"seq\":2}
+{\"event_type\":\"SessionEnded\",\"session_id\":\"b\",\"seq\":2}
+";
+        let report = validate_stream(input);
+        assert!(report.ok(), "errors: {:#?}", report.errors);
+        assert_eq!(report.lines_total, 6);
+        assert_eq!(report.lines_valid, 6);
+        assert_eq!(report.sessions, 2);
+    }
+
+    #[test]
+    fn rejects_duplicate_seq_within_one_session() {
+        let input = "\
+{\"event_type\":\"SessionStarted\",\"session_id\":\"a\",\"seq\":0}
+{\"event_type\":\"SessionEnded\",\"session_id\":\"a\",\"seq\":0}
+";
+        let report = validate_stream(input);
+        assert_eq!(report.lines_valid, 1);
+        assert!(matches!(
+            report.errors[0],
+            ValidationError::SeqOutOfOrder {
+                line: 2,
+                seq: 0,
+                previous: 0,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn multi_session_fixture_validates() {
+        let body = crate::fixtures::load_fixture("multi-session").expect("fixture exists");
+        let report = validate_stream(&body);
+        assert!(report.ok(), "errors: {:#?}", report.errors);
+        assert_eq!(report.sessions, 2);
     }
 }

@@ -1757,6 +1757,10 @@ impl RenderModel {
             EventType::TerminalSuspend | EventType::TerminalResume | EventType::TerminalSuspended => {
                 // Terminal handoff is an inline-renderer feature.
             }
+            EventType::SessionStatus => {
+                // Per-session state is for multi-session hosts (the deck);
+                // a single-session renderer has nothing to show for it.
+            }
             EventType::WizardCompleted | EventType::WizardCancelled => {
                 self.active_wizard = None;
                 self.dirty = true;

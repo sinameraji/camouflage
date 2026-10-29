@@ -35,6 +35,27 @@ omitted. Full form (what `camouflage-record` persists and
 
 ---
 
+## Multi-session streams
+
+One stream may carry several sessions. Events from different
+`session_id`s may interleave in any order; `seq` is **per session**, not
+per stream, so each session's events number `0, 1, 2, …` independently.
+The store's uniqueness is `(session_id, seq)`, and `camouflage-validate`
+checks `seq` per session (a duplicate or backwards `seq` within one
+session is an error; interleaving is not).
+
+- `SessionStarted` introduces a session.
+- `SessionEnded` removes it.
+- `SessionStatus` (v2.11+) reports its state.
+
+A single-session host changes nothing: omit `session_id` and every event
+belongs to the one session Camouflage created for you.
+
+`fixtures/multi-session.ndjson` is a two-session interleaved stream used
+by the decoder and validator tests.
+
+---
+
 ## Direction
 
 Most events flow **host → renderer** (inbound). A handful are **renderer
@@ -108,6 +129,47 @@ the wiped rows from the persisted store.
 { "event_type": "SessionEnded", "payload": {} }
 ```
 Marks clean termination. Renderer resets `phase` segment to `"idle"`.
+In a multi-session stream it also removes the session from the deck.
+
+#### `SessionStatus` (v2.11+)
+```json
+{
+  "event_type": "SessionStatus",
+  "session_id": "11111111-1111-4111-8111-111111111111",
+  "payload": {
+    "state": "blocked",
+    "title": "camouflage",
+    "place": "this computer",
+    "branch": "aster/154f59c9",
+    "detail": "waiting for approval to run tests",
+    "cost_usd": 0.31,
+    "context_used": 48000,
+    "context_limit": 200000,
+    "pr_url": "https://github.com/sinameraji/camouflage/pull/149",
+    "updated_ms": 1793000001100
+  }
+}
+```
+One session's state, for hosts that put several sessions in one stream
+(the deck). The enclosing event's `session_id` identifies the session, so
+the payload carries no id of its own. Last-write-wins: send the whole
+state each time.
+
+- `state` (required) — `working` (a turn is running), `blocked` (waiting
+  on the user), `idle` (nothing running), `done` (finished, usually with a
+  PR) or `failed`.
+- `title` — what the session is about, e.g. the repo name.
+- `place` — where it runs, e.g. `this computer` or a server's name.
+- `branch` — the git branch the session works on.
+- `detail` — why it is blocked or failed; one short line.
+- `cost_usd` — spend so far, in US dollars.
+- `context_used` / `context_limit` — context tokens used and the model's
+  limit.
+- `pr_url` — the pull request this session opened, once there is one.
+- `updated_ms` — when this state was observed (epoch ms).
+
+Single-session renderers ignore it; the deck (a later task) uses it to
+show each session's state in its sidebar.
 
 #### `SessionCompacted`
 ```json

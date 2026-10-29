@@ -11,8 +11,8 @@ pub mod validate;
 
 use camouflage_protocol::{Event, EventType, SCHEMA_VERSION};
 use serde::Deserialize;
-use std::collections::HashSet;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt};
 use uuid::Uuid;
 
@@ -58,17 +58,39 @@ struct Shorthand {
 
 /// Stateful decoder that assigns sequence numbers / a session id when the
 /// upstream emitter does not provide them. Cheap to construct.
+///
+/// One stream may carry several sessions: events from different
+/// `session_id`s interleave, and each session keeps its own `seq` counter
+/// (the store's uniqueness is `(session_id, seq)`). A single-session host
+/// sees exactly the old behaviour — one counter, starting at 0.
 pub struct NdjsonDecoder {
     default_session: Uuid,
-    seq: AtomicI64,
+    /// Next `seq` per session.
+    seq: Mutex<HashMap<Uuid, i64>>,
 }
 
 impl NdjsonDecoder {
     pub fn new(default_session: Uuid) -> Self {
         Self {
             default_session,
-            seq: AtomicI64::new(0),
+            seq: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The next `seq` for `session_id`, advancing that session's counter.
+    fn next_seq(&self, session_id: Uuid) -> i64 {
+        let mut seqs = self.seq.lock().unwrap();
+        let next = seqs.entry(session_id).or_insert(0);
+        let seq = *next;
+        *next += 1;
+        seq
+    }
+
+    /// Keep a session's counter ahead of an externally-supplied `seq`.
+    fn observe_seq(&self, session_id: Uuid, seq: i64) {
+        let mut seqs = self.seq.lock().unwrap();
+        let next = seqs.entry(session_id).or_insert(0);
+        *next = (*next).max(seq + 1);
     }
 
     pub fn parse_line(&self, line: &str) -> Result<Event, NdjsonError> {
@@ -88,16 +110,17 @@ impl NdjsonDecoder {
         let payload = s.payload.unwrap_or(serde_json::Value::Null);
         crate::validate::validate_payload(event_type, payload.clone())
             .map_err(|source| NdjsonError::InvalidPayload { event_type, source })?;
-        let seq = s
-            .seq
-            .unwrap_or_else(|| self.seq.fetch_add(1, Ordering::Relaxed));
-        // Keep the local counter ahead of any externally-supplied seq.
-        if let Some(seq_v) = s.seq {
-            self.seq.fetch_max(seq_v + 1, Ordering::Relaxed);
-        }
+        let session_id = s.session_id.unwrap_or(self.default_session);
+        let seq = match s.seq {
+            Some(seq) => {
+                self.observe_seq(session_id, seq);
+                seq
+            }
+            None => self.next_seq(session_id),
+        };
         Ok(Event {
             id: s.id.unwrap_or_else(Uuid::new_v4),
-            session_id: s.session_id.unwrap_or(self.default_session),
+            session_id,
             seq,
             timestamp_ms: s.timestamp_ms.unwrap_or_else(now_ms),
             schema_version: if schema_version == 0 {
@@ -168,7 +191,7 @@ fn diagnostic_event(decoder: &NdjsonDecoder, message: String) -> Event {
     Event {
         id: Uuid::new_v4(),
         session_id: decoder.default_session,
-        seq: decoder.seq.fetch_add(1, Ordering::Relaxed),
+        seq: decoder.next_seq(decoder.default_session),
         timestamp_ms: now_ms(),
         schema_version: SCHEMA_VERSION,
         event_type: EventType::RuntimeError,
@@ -300,5 +323,66 @@ mod tests {
             .parse_line(r#"{"event_type":"SessionEnded","schema_version":0}"#)
             .unwrap();
         assert_eq!(event.schema_version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn seq_is_per_session_when_sessions_interleave() {
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        let d = NdjsonDecoder::new(Uuid::nil());
+        let line = |sid: Uuid| {
+            format!(r#"{{"event_type":"UserMessageCreated","session_id":"{sid}","payload":{{"text":"hi"}}}}"#)
+        };
+        let seqs: Vec<(Uuid, i64)> = [a, b, a, b, a]
+            .into_iter()
+            .map(|sid| {
+                let ev = d.parse_line(&line(sid)).unwrap();
+                (ev.session_id, ev.seq)
+            })
+            .collect();
+        assert_eq!(seqs, vec![(a, 0), (b, 0), (a, 1), (b, 1), (a, 2)]);
+    }
+
+    #[test]
+    fn external_seq_only_advances_its_own_session() {
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        let d = NdjsonDecoder::new(Uuid::nil());
+        let with_seq = |sid: Uuid, seq: i64| {
+            format!(r#"{{"event_type":"SessionEnded","session_id":"{sid}","seq":{seq}}}"#)
+        };
+        assert_eq!(d.parse_line(&with_seq(a, 41)).unwrap().seq, 41);
+        // b's counter is untouched by a's explicit seq.
+        let b0 = d
+            .parse_line(&format!(r#"{{"event_type":"SessionEnded","session_id":"{b}"}}"#))
+            .unwrap();
+        assert_eq!(b0.seq, 0);
+        // a continues after the explicit seq.
+        let a1 = d
+            .parse_line(&format!(r#"{{"event_type":"SessionEnded","session_id":"{a}"}}"#))
+            .unwrap();
+        assert_eq!(a1.seq, 42);
+    }
+
+    #[test]
+    fn interleaved_fixture_decodes_with_per_session_seq() {
+        let body = crate::fixtures::load_fixture("multi-session").expect("fixture exists");
+        let d = NdjsonDecoder::new(Uuid::nil());
+        let mut per_session: HashMap<Uuid, Vec<i64>> = HashMap::new();
+        let mut statuses = 0;
+        for line in body.lines().filter(|l| !l.trim().is_empty()) {
+            let ev = d.parse_line(line).expect("fixture line decodes");
+            per_session.entry(ev.session_id).or_default().push(ev.seq);
+            if ev.event_type == EventType::SessionStatus {
+                statuses += 1;
+            }
+        }
+        assert_eq!(per_session.len(), 2, "fixture should carry two sessions");
+        for (sid, seqs) in &per_session {
+            assert_eq!(
+                seqs,
+                &(0..seqs.len() as i64).collect::<Vec<_>>(),
+                "session {sid} seqs should be 0..n"
+            );
+        }
+        assert!(statuses >= 2, "fixture should carry SessionStatus events");
     }
 }

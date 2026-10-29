@@ -26,6 +26,9 @@ pub trait EventStore: Send + Sync {
     fn load_session(&self, session_id: Uuid) -> Result<Vec<Event>>;
     fn load_range(&self, session_id: Uuid, from_seq: i64, to_seq: i64) -> Result<Vec<Event>>;
     fn latest_seq(&self, session_id: Uuid) -> Result<i64>;
+    /// Every session in the store, oldest first. A multi-session host (the
+    /// deck) uses this to find the sessions it should render.
+    fn session_ids(&self) -> Result<Vec<Uuid>>;
 }
 
 pub struct SqliteStore {
@@ -254,6 +257,19 @@ impl EventStore for SqliteStore {
             .flatten();
         Ok(v.unwrap_or(-1))
     }
+
+    fn session_ids(&self) -> Result<Vec<Uuid>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT session_id FROM events GROUP BY session_id ORDER BY MIN(rowid) ASC",
+        )?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(Uuid::parse_str(&row?)?);
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -339,6 +355,46 @@ mod tests {
     fn latest_seq_empty_returns_neg_one() {
         let s = SqliteStore::open_in_memory().unwrap();
         assert_eq!(s.latest_seq(Uuid::new_v4()).unwrap(), -1);
+    }
+
+    #[test]
+    fn interleaved_sessions_keep_per_session_seq() {
+        // Two sessions appended in one interleaved batch: each keeps its own
+        // 0..n sequence, and loading one never returns the other's events.
+        let s = SqliteStore::open_in_memory().unwrap();
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        let mut batch = Vec::new();
+        for i in 0..50 {
+            batch.push(ev(a, i, EventType::AssistantTokenDelta));
+            batch.push(ev(b, i, EventType::AssistantTokenDelta));
+        }
+        s.append_batch(&batch).unwrap();
+
+        for sid in [a, b] {
+            let loaded = s.load_session(sid).unwrap();
+            assert_eq!(loaded.len(), 50);
+            assert!(loaded.iter().all(|e| e.session_id == sid));
+            assert_eq!(
+                loaded.iter().map(|e| e.seq).collect::<Vec<_>>(),
+                (0..50).collect::<Vec<_>>()
+            );
+            assert_eq!(s.latest_seq(sid).unwrap(), 49);
+        }
+        assert_eq!(s.session_ids().unwrap(), vec![a, b]);
+    }
+
+    #[test]
+    fn session_ids_lists_each_session_once() {
+        let s = SqliteStore::open_in_memory().unwrap();
+        assert!(s.session_ids().unwrap().is_empty());
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        s.append_batch(&[
+            ev(a, 0, EventType::SessionStarted),
+            ev(b, 0, EventType::SessionStarted),
+            ev(a, 1, EventType::SessionEnded),
+        ])
+        .unwrap();
+        assert_eq!(s.session_ids().unwrap(), vec![a, b]);
     }
 
     #[test]

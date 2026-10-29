@@ -37,4 +37,5 @@
 {"event_type":"WizardCancelled","payload":{"id":"onboard-2","at_step":1}}
 {"event_type":"ModeChangeRequested","payload":{"direction":"next"}}
 {"event_type":"CancelRequested","payload":{}}
+{"event_type":"SessionStatus","payload":{"state":"done","title":"camouflage","place":"this computer","branch":"main","cost_usd":0.44,"context_used":31000,"context_limit":200000,"pr_url":"https://github.com/sinameraji/camouflage/pull/149","updated_ms":1793000006000}}
 {"event_type":"SessionEnded","payload":{}}

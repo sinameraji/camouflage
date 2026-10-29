@@ -27,6 +27,7 @@ const KNOWN_TYPES = new Set([
   "TerminalSuspend", "TerminalResume", "TerminalSuspended",
   "ActivityUpdate", "ActivityLog", "ActivityRemoved", "ActivitySnapshot",
   "ActivityBrowserOpen", "ActivityStopRequested", "ActivityViewChanged",
+  "SessionStatus",
 ]);
 
 /**

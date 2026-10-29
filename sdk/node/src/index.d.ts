@@ -65,6 +65,8 @@ export {
   DiffPayload,
   TodoItem,
   TodoListUpdate,
+  SessionState,
+  SessionStatus,
   PayloadOf,
   // Tagged union
   Event,
