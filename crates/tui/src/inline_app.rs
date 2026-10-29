@@ -640,12 +640,29 @@ fn spawn_signal_handler(tx: mpsc::Sender<Input>) {
     #[cfg(unix)]
     tokio::spawn(async move {
         use tokio::signal::unix::{signal, SignalKind};
-        let (Ok(mut term), Ok(mut hup)) = (signal(SignalKind::terminate()), signal(SignalKind::hangup())) else {
+        let (Ok(mut term), Ok(mut hup), Ok(mut int)) = (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::hangup()),
+            signal(SignalKind::interrupt()),
+        ) else {
             return;
         };
-        tokio::select! {
-            _ = term.recv() => {}
-            _ = hup.recv() => {}
+        loop {
+            tokio::select! {
+                _ = term.recv() => break,
+                _ = hup.recv() => break,
+                _ = int.recv() => {
+                    // Ctrl+C arrived as a signal rather than a key: the
+                    // terminal is not in raw mode (e.g. after a `!` command
+                    // or a handoff). Feed it to the session as the key it
+                    // stands for, so it interrupts a turn or arms the exit
+                    // instead of killing the renderer.
+                    let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+                    if tx.send(Input::Term(TermEvent::Key(key))).await.is_err() {
+                        return;
+                    }
+                }
+            }
         }
         let _ = tx.send(Input::HostClosed).await;
     });
