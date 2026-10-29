@@ -124,6 +124,13 @@ impl Pty {
         self.master.flush().unwrap();
     }
 
+    /// Send a signal to the renderer, as a terminal does for Ctrl+C when the
+    /// renderer is not in raw mode.
+    fn signal(&self, sig: i32) {
+        // SAFETY: the child is alive for the duration of the test.
+        unsafe { libc::kill(self.child.id() as i32, sig) };
+    }
+
     fn len(&self) -> usize {
         self.out.lock().unwrap().len()
     }
@@ -261,6 +268,27 @@ fn a_turn_renders_inline_and_stays_after_exit() {
     let after = t.all_lines();
     t.finish();
     assert!(after.iter().any(|l| l.contains("Fixed it.")));
+    assert!(!after.iter().any(|l| l.contains("╭")), "input box removed on exit");
+}
+
+#[test]
+fn sigint_acts_like_ctrl_c_instead_of_killing_the_renderer() {
+    let mut t = Pty::spawn();
+    t.host("SessionStarted", serde_json::json!({ "title": "sigint" }));
+    t.wait_for("╭");
+    // A terminal sends SIGINT for Ctrl+C when the renderer is not in raw
+    // mode (e.g. after a `!` command). It must arm the exit, not kill the
+    // renderer and make the host restart it.
+    t.signal(libc::SIGINT);
+    let screen = t.wait_for("Press Ctrl+C again");
+    assert!(
+        screen.iter().any(|l| l.contains("Press Ctrl+C again")),
+        "SIGINT arms the exit like Ctrl+C"
+    );
+    t.signal(libc::SIGINT);
+    std::thread::sleep(Duration::from_millis(300));
+    let after = t.all_lines();
+    t.finish();
     assert!(!after.iter().any(|l| l.contains("╭")), "input box removed on exit");
 }
 

@@ -1127,8 +1127,13 @@ impl Session {
             Key::Ctrl('c') => {
                 if !self.editor.is_empty() {
                     self.editor.clear();
+                    // Arm the exit: the next Ctrl+C quits, like readline.
+                    self.ctrl_c_at = Some(now);
                 } else if self.is_busy() {
                     self.interrupt(now);
+                    // Arm the exit: the next Ctrl+C quits instead of
+                    // interrupting an already-settled turn.
+                    self.ctrl_c_at = Some(now);
                 } else if self
                     .ctrl_c_at
                     .map(|t| now - t < CTRL_C_WINDOW_MS)
@@ -3864,6 +3869,47 @@ mod tests {
             .iter()
             .any(|l| l.contains("Press Ctrl+C again")));
         s.key(Key::Ctrl('c'), 500);
+        assert!(s.exit);
+    }
+
+    #[test]
+    fn ctrl_c_clears_text_then_exits() {
+        let mut s = session();
+        type_str(&mut s, "draft");
+        s.key(Key::Ctrl('c'), 0);
+        assert_eq!(s.editor.text(), "");
+        assert!(!s.exit);
+        assert!(
+            live_text(&s, 10)
+                .iter()
+                .any(|l| l.contains("Press Ctrl+C again")),
+            "clearing the editor arms the exit"
+        );
+        s.key(Key::Ctrl('c'), 500);
+        assert!(s.exit);
+    }
+
+    #[test]
+    fn ctrl_c_interrupts_then_exits() {
+        let mut s = session();
+        s.apply(
+            &ev(
+                EventType::StatusUpdate,
+                json!({"segments": {"phase": "thinking"}}),
+            ),
+            0,
+        );
+        s.key(Key::Ctrl('c'), 100);
+        assert_eq!(s.take_outbound()[0].event_type, EventType::CancelRequested);
+        assert!(!s.is_busy());
+        assert!(!s.exit);
+        assert!(
+            live_text(&s, 110)
+                .iter()
+                .any(|l| l.contains("Press Ctrl+C again")),
+            "interrupting a turn arms the exit"
+        );
+        s.key(Key::Ctrl('c'), 600);
         assert!(s.exit);
     }
 
