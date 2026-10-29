@@ -321,6 +321,7 @@ dependencies = [
  "unicode-width",
  "uuid",
  "vt100",
+ "windows-sys",
 ]
 
 [[package]]

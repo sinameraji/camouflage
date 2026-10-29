@@ -35,3 +35,4 @@ vt100 = "0.16"
 
 [target.'cfg(windows)'.dependencies]
 crossterm_winapi = "0.9"
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }

@@ -715,6 +715,8 @@ const ENTER_MODES: &[u8] = b"\x1b[?2004h\x1b[?1004h";
 const LEAVE_MODES: &[u8] = b"\x1b[?2004l\x1b[?1004l\x1b[<u\x1b[0m\x1b[?25h";
 
 fn enter_terminal_modes() -> Result<()> {
+    // Windows: UTF-8 code page and VT processing before anything is drawn.
+    crate::platform::enter_console();
     crossterm::terminal::enable_raw_mode()?;
     let mut tty = tty_writer();
     tty.write_all(ENTER_MODES)?;
@@ -734,6 +736,9 @@ fn leave_terminal_modes() {
     let _ = tty.write_all(LEAVE_MODES);
     let _ = tty.flush();
     let _ = crossterm::terminal::disable_raw_mode();
+    // Last, so the escapes above are still interpreted. Also runs before
+    // a suspended host's child process, which gets the user's settings.
+    crate::platform::leave_console();
 }
 
 fn tty_writer() -> Box<dyn Write> {
