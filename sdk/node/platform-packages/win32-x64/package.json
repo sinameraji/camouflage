@@ -1,6 +1,6 @@
 {
   "name": "camouflage-tui-win32-x64",
-  "version": "2.10.1",
+  "version": "2.10.2",
   "description": "Camouflage renderer binary for Windows x64",
   "license": "Apache-2.0",
   "os": [

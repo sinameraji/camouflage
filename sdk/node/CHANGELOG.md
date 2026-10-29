@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.10.2](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.10.1...camouflage-tui-v2.10.2) (2026-10-29)
+
+
+### Bug Fixes
+
+* **inline:** treat SIGINT as Ctrl+C instead of dying ([d0f13f3](https://github.com/sinameraji/camouflage/commit/d0f13f3a0186fe23aaf200c123f2270e4aed46e6))
+* **inline:** treat SIGINT as Ctrl+C instead of dying ([9373947](https://github.com/sinameraji/camouflage/commit/93739477e574ee2c25e7cef8325c17dfe078c9cb))
+
 ## [2.10.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.10.0...camouflage-tui-v2.10.1) (2026-10-29)
 
 
