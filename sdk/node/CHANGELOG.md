@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.10.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.10.0...camouflage-tui-v2.10.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **tui:** use UTF-8 and VT processing on the Windows console ([8fb4f5f](https://github.com/sinameraji/camouflage/commit/8fb4f5f83e44cb5f4370255703d324cf7311c10b))
+* **tui:** use UTF-8 and VT processing on the Windows console ([37082ca](https://github.com/sinameraji/camouflage/commit/37082ca82e29d86d4ae6bd56c2999c28023e4104))
+
 ## [2.10.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.9.0...camouflage-tui-v2.10.0) (2026-10-28)
 
 
