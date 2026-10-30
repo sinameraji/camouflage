@@ -2,6 +2,18 @@ name: CI
 
 on:
   pull_request:
+    # release-please opens its PR with GITHUB_TOKEN, and GitHub parks the
+    # pull_request run for such PRs in `action_required` — no job ever starts
+    # until a maintainer approves it by hand. A release PR only rewrites the
+    # version files below on top of a main commit that already passed CI, so
+    # skip the run entirely instead of leaving a stuck check on the PR.
+    # Anything else in a release PR still triggers CI.
+    paths-ignore:
+      - .release-please-manifest.json
+      - version.txt
+      - sdk/node/CHANGELOG.md
+      - sdk/node/package.json
+      - sdk/node/platform-packages/*/package.json
   push:
     branches: [main]
 
