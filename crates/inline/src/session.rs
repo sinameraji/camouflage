@@ -12,8 +12,8 @@
 
 use crate::ansi::parse_ansi;
 use crate::blocks::{
-    explore_kind, gap_between, render_block, Block, GroupBlock, NoticeKind, PlanItem, PlanStatus,
-    RenderCtx, ToolBlock, ToolStatus,
+    explore_kind, gap_between, render_block, run_label, Block, GroupBlock, NoticeKind, PlanItem,
+    PlanStatus, RenderCtx, ToolBlock, ToolStatus,
 };
 use crate::chrome::{self, InputMode, PickItem, PromptView};
 use crate::compact::CompactState;
@@ -476,23 +476,31 @@ impl Session {
                 // Every tool, including reads and searches, contributes one bead.
                 self.compact.tool_started(&tid, &t.name, &t.args, now);
 
-                if explore_kind(&t.name).is_none() {
+                // A run of one tool (code steps) folds like a run of reads,
+                // but keeps its name as the group's label.
+                let label = run_label(&t.name);
+                if explore_kind(&t.name).is_none() && label.is_none() {
                     let id = self.push(Block::Tool(t), false);
                     self.tools.insert(tid, (id, None));
                     return;
                 }
                 if let Some(gid) = self.open_group {
                     if let Some(Block::Group(g)) = self.block_mut(gid) {
-                        g.tools.push(t);
-                        let i = g.tools.len() - 1;
-                        self.tools.insert(tid, (gid, Some(i)));
-                        return;
+                        if g.label.as_deref() == label {
+                            g.tools.push(t);
+                            let i = g.tools.len() - 1;
+                            self.tools.insert(tid, (gid, Some(i)));
+                            return;
+                        }
                     }
                 }
+                // A different kind of run starts: close the one that was open.
+                self.close_group();
                 let gid = self.push(
                     Block::Group(GroupBlock {
                         tools: vec![t],
                         closed: false,
+                        label: label.map(str::to_string),
                     }),
                     false,
                 );
@@ -2784,6 +2792,72 @@ mod tests {
     }
 
     #[test]
+    fn code_steps_fold_into_one_run() {
+        let mut s = session();
+        let start = |s: &mut Session, id: &str, cmd: &str| {
+            s.apply(
+                &ev(
+                    EventType::ToolExecutionStarted,
+                    json!({"tool_id": id, "tool": "Code", "command": cmd}),
+                ),
+                0,
+            );
+            s.apply(
+                &ev(
+                    EventType::ToolExecutionFinished,
+                    json!({"tool_id": id, "exit_code": 0}),
+                ),
+                0,
+            );
+        };
+        start(&mut s, "1", "Read the prompts file.");
+        start(&mut s, "2", "Inspect worktrees.");
+        assert!(
+            history_text(&mut s, 0).is_empty(),
+            "the run stays open for more steps"
+        );
+        // A read is a different kind of run, so it closes the code run.
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({"tool_id": "3", "tool": "Read", "command": "a.ts"}),
+            ),
+            0,
+        );
+        assert_eq!(history_text(&mut s, 0), vec!["✓ Code · 2 steps"]);
+    }
+
+    #[test]
+    fn a_single_code_step_prints_as_a_plain_row() {
+        let mut s = session();
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({"tool_id": "1", "tool": "Code", "command": "Read the prompts file."}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionFinished,
+                json!({"tool_id": "1", "exit_code": 0}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({"tool_id": "2", "tool": "Bash", "command": "make"}),
+            ),
+            0,
+        );
+        assert_eq!(
+            history_text(&mut s, 0),
+            vec!["✓ Code Read the prompts file."]
+        );
+    }
+
+    #[test]
     fn turn_end_closes_an_open_group() {
         let mut s = session();
         s.apply(
@@ -3041,7 +3115,10 @@ mod tests {
             ]
         );
         let footer = live_text(&s, 0).last().cloned().unwrap();
-        assert!(footer.contains("◆ 1 job · 1 agent · ctrl+b activity"), "{footer}");
+        assert!(
+            footer.contains("◆ 1 job · 1 agent · ctrl+b activity"),
+            "{footer}"
+        );
         assert_eq!(
             s.next_wakeup(10),
             None,
@@ -3059,7 +3136,10 @@ mod tests {
         assert!(footer.contains("autopilot@feature/footer"), "{footer}");
 
         s.apply(
-            &ev(EventType::StatusUpdate, json!({"segments": {"branch": "feature/new"}})),
+            &ev(
+                EventType::StatusUpdate,
+                json!({"segments": {"branch": "feature/new"}}),
+            ),
             0,
         );
         let updated = live_text(&s, 0).last().cloned().unwrap();

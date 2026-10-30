@@ -6,8 +6,9 @@
 //! - tools: one quiet row each (glyph, name, args cut in the middle, then
 //!   `+a −r` / failure / elapsed); a running tool adds one faint line of its
 //!   latest output; failures show the end of theirs; runs of reads and
-//!   searches fold into `Explored 5 files · 3 searches`. Ctrl+O shows the
-//!   full layout (summary, diff, output).
+//!   searches fold into `Explored 5 files · 3 searches`, and runs of one
+//!   tool (code steps) into `Code · 25 steps` with the name printed once.
+//!   Ctrl+O shows the full layout (summary, diff, output).
 //! - one blank row between blocks; consecutive tool rows sit together
 
 use crate::highlight::highlight;
@@ -135,12 +136,27 @@ pub enum Block {
     Group(GroupBlock),
 }
 
-/// Consecutive exploring tools. Open while more may join; done once closed
-/// and every tool has finished.
+/// Consecutive tools that fold into one row. Open while more may join; done
+/// once closed and every tool has finished.
+///
+/// `label` is `None` for a run of read-only steps (`Explored 5 files`), and
+/// the tool's name for a run of one tool (`Code · 25 steps`), where the name
+/// is printed once as a header instead of on every row.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupBlock {
     pub tools: Vec<ToolBlock>,
     pub closed: bool,
+    pub label: Option<String>,
+}
+
+/// Tools that fold into a named run (`Code · 25 steps`) rather than getting a
+/// row each. Returns the run's label.
+pub fn run_label(name: &str) -> Option<&'static str> {
+    let n = name.to_ascii_lowercase();
+    Some(match n.as_str() {
+        "execute_code" | "code" => "Code",
+        _ => return None,
+    })
 }
 
 /// What a read-only tool counts as in a group summary, or None when the
@@ -208,6 +224,14 @@ pub fn render_block(block: &Block, width: usize, theme: &Theme, ctx: RenderCtx) 
 }
 
 fn render_group(g: &GroupBlock, width: usize, theme: &Theme, ctx: RenderCtx) -> Vec<Line> {
+    if g.label.is_some() {
+        // One step reads better as a plain tool row than as a header with
+        // nothing under it.
+        if g.tools.len() == 1 {
+            return render_tool(&g.tools[0], width, theme, ctx);
+        }
+        return render_run(g, width, theme, ctx);
+    }
     if ctx.expanded || g.tools.len() == 1 {
         return g
             .tools
@@ -252,16 +276,8 @@ fn render_group(g: &GroupBlock, width: usize, theme: &Theme, ctx: RenderCtx) -> 
         head.push(format!(" · {failed} failed"), theme.warn());
     }
     if !live {
-        let start = g.tools.iter().filter_map(|t| t.started_at_ms).min();
-        let end = g
-            .tools
-            .iter()
-            .filter_map(|t| Some(t.started_at_ms? + t.elapsed_ms? as i64))
-            .max();
-        if let (Some(s), Some(e)) = (start, end) {
-            if e - s >= 1000 {
-                head.push(format!(" · {}", format_elapsed((e - s) as u64)), dim);
-            }
+        if let Some(ms) = run_elapsed(g) {
+            head.push(format!(" · {}", format_elapsed(ms)), dim);
         }
     }
     let mut out = vec![one_line(head, width)];
@@ -278,6 +294,96 @@ fn render_group(g: &GroupBlock, width: usize, theme: &Theme, ctx: RenderCtx) -> 
                 Line::styled("  └ ", dim)
                     .with(ellipsize_middle(&text, width.saturating_sub(4)), dim),
             );
+        }
+    }
+    out
+}
+
+/// Wall time of a whole run: first start to last finish, once it is worth
+/// showing.
+fn run_elapsed(g: &GroupBlock) -> Option<u64> {
+    let start = g.tools.iter().filter_map(|t| t.started_at_ms).min()?;
+    let end = g
+        .tools
+        .iter()
+        .filter_map(|t| Some(t.started_at_ms? + t.elapsed_ms? as i64))
+        .max()?;
+    (end - start >= 1000).then_some((end - start) as u64)
+}
+
+/// What a step in a named run says: its arguments, or its name when it has
+/// none.
+fn step_text(t: &ToolBlock) -> String {
+    let args = flat(&t.args);
+    if args.is_empty() {
+        t.name.clone()
+    } else {
+        args
+    }
+}
+
+/// A run of one tool (`Code · 25 steps`): the name appears once as a header
+/// and each step hangs under it. Collapsed it is a single row; Ctrl+O lists
+/// every step.
+fn render_run(g: &GroupBlock, width: usize, theme: &Theme, ctx: RenderCtx) -> Vec<Line> {
+    let dim = theme.dim();
+    let label = g.label.as_deref().unwrap_or("Run");
+    let live = !g.closed || g.tools.iter().any(|t| t.status == ToolStatus::Running);
+    let failed = g
+        .tools
+        .iter()
+        .filter(|t| t.status == ToolStatus::Error)
+        .count();
+    let glyph = if live {
+        Span::styled(
+            theme.glyphs.spinner[ctx.frame % theme.glyphs.spinner.len()],
+            theme.accent(),
+        )
+    } else if failed == g.tools.len() {
+        Span::styled(theme.glyphs.error, theme.err())
+    } else {
+        Span::styled(theme.glyphs.success, theme.ok())
+    };
+    let mut head = Line::from_spans(vec![glyph, Span::raw(" ")]);
+    head.push(label, theme.strong());
+    head.push(format!(" · {}", plural(g.tools.len(), "step")), dim);
+    if failed > 0 {
+        head.push(format!(" · {failed} failed"), theme.warn());
+    }
+    if !live {
+        if let Some(ms) = run_elapsed(g) {
+            head.push(format!(" · {}", format_elapsed(ms)), dim);
+        }
+    }
+    let mut out = vec![one_line(head, width)];
+
+    if ctx.expanded {
+        let n = g.tools.len();
+        for (i, t) in g.tools.iter().enumerate() {
+            let mut line = Line::styled(if i + 1 == n { "  └ " } else { "  ├ " }, dim);
+            let style = if t.status == ToolStatus::Error {
+                theme.err()
+            } else {
+                Style::new()
+            };
+            line.push(step_text(t), style);
+            if let Some(ms) = t.elapsed_ms.filter(|ms| *ms >= 1000) {
+                line.push(format!(" · {}", format_elapsed(ms)), dim);
+            }
+            out.push(one_line(line, width));
+        }
+    } else if live {
+        if let Some(t) = g
+            .tools
+            .iter()
+            .rev()
+            .find(|t| t.status == ToolStatus::Running)
+            .or(g.tools.last())
+        {
+            out.push(Line::styled("  └ ", dim).with(
+                ellipsize_middle(&step_text(t), width.saturating_sub(4)),
+                dim,
+            ));
         }
     }
     out
@@ -820,6 +926,7 @@ mod tests {
                 tool("Glob", "*.rs"),
             ],
             closed: true,
+            label: None,
         };
         assert_eq!(
             text(&render_block(
@@ -841,6 +948,124 @@ mod tests {
                 ctx()
             )),
             vec!["⠋ Exploring 2 files · 2 searches", "  └ Glob *.rs"]
+        );
+    }
+
+    #[test]
+    fn a_code_run_prints_its_name_once() {
+        let step = |args: &str| {
+            let mut t = ToolBlock::new("Code", args);
+            t.status = ToolStatus::Ok;
+            t.started_at_ms = Some(0);
+            t.elapsed_ms = Some(1200);
+            t
+        };
+        let g = GroupBlock {
+            tools: vec![
+                step("Read the prompts file."),
+                step("Inspect worktrees."),
+                step("Read pickModel."),
+            ],
+            closed: true,
+            label: Some("Code".into()),
+        };
+        assert_eq!(
+            text(&render_block(
+                &Block::Group(g.clone()),
+                60,
+                &Theme::default(),
+                ctx()
+            )),
+            vec!["✓ Code · 3 steps · 1s"]
+        );
+        assert_eq!(
+            text(&render_block(
+                &Block::Group(g),
+                60,
+                &Theme::default(),
+                RenderCtx {
+                    expanded: true,
+                    ..ctx()
+                }
+            )),
+            vec![
+                "✓ Code · 3 steps · 1s",
+                "  ├ Read the prompts file. · 1s",
+                "  ├ Inspect worktrees. · 1s",
+                "  └ Read pickModel. · 1s",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_live_code_run_shows_its_current_step() {
+        let mut done = ToolBlock::new("Code", "Read the prompts file.");
+        done.status = ToolStatus::Ok;
+        done.started_at_ms = Some(0);
+        done.elapsed_ms = Some(400);
+        let mut running = ToolBlock::new("Code", "Inspect worktrees.");
+        running.started_at_ms = Some(400);
+        let g = GroupBlock {
+            tools: vec![done, running],
+            closed: false,
+            label: Some("Code".into()),
+        };
+        assert_eq!(
+            text(&render_block(
+                &Block::Group(g),
+                60,
+                &Theme::default(),
+                ctx()
+            )),
+            vec!["⠋ Code · 2 steps", "  └ Inspect worktrees."]
+        );
+    }
+
+    #[test]
+    fn a_single_code_step_stays_a_plain_row() {
+        let mut t = ToolBlock::new("Code", "Read the prompts file.");
+        t.status = ToolStatus::Ok;
+        t.started_at_ms = Some(0);
+        t.elapsed_ms = Some(1200);
+        let g = GroupBlock {
+            tools: vec![t],
+            closed: true,
+            label: Some("Code".into()),
+        };
+        assert_eq!(
+            text(&render_block(
+                &Block::Group(g),
+                60,
+                &Theme::default(),
+                ctx()
+            )),
+            vec!["✓ Code Read the prompts file. · 1s"]
+        );
+    }
+
+    #[test]
+    fn a_failed_step_is_counted_in_the_header() {
+        let mut ok = ToolBlock::new("Code", "Read the prompts file.");
+        ok.status = ToolStatus::Ok;
+        ok.started_at_ms = Some(0);
+        ok.elapsed_ms = Some(400);
+        let mut bad = ToolBlock::new("Code", "Inspect worktrees.");
+        bad.status = ToolStatus::Error;
+        bad.started_at_ms = Some(400);
+        bad.elapsed_ms = Some(400);
+        let g = GroupBlock {
+            tools: vec![ok, bad],
+            closed: true,
+            label: Some("Code".into()),
+        };
+        assert_eq!(
+            text(&render_block(
+                &Block::Group(g),
+                60,
+                &Theme::default(),
+                ctx()
+            )),
+            vec!["✓ Code · 2 steps · 1 failed"]
         );
     }
 

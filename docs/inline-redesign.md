@@ -220,6 +220,10 @@ Known limits of the Ink hotfix (the Camouflage rewrite removes them):
   - The idle soak now asserts zero timer wakeups; loop stats record wakeups by source.
   - autopilot #672 brings back `--ui camouflage` on `^2.2.2-beta.1`, verified with the published package in a pseudo-terminal (real model turn, `/help`, modes, cost, 0 bytes while idle, clean exit).
   - Release gotcha: release-please only tracks `sdk/node`, and has no option to add `crates/` (checked 17.11.2). Crate-only fixes need `scripts/trigger-binary-release.sh` (a `Release-As:` commit) to ship.
+- **2026-10-30** — Tool rows stop repeating the tool name.
+  - A turn that runs one tool 25 times printed `Code` 25 times. Runs of one tool now fold like runs of reads: `✓ Code · 25 steps · 1m 12s` collapsed, and Ctrl+O prints the name once as a header with each step hanging under it (`├`/`└`).
+  - `GroupBlock` gained a `label`; `run_label()` names the tools that fold this way (currently `execute_code`/`code`). A run of a different kind closes the open one, so reads and code steps never share a group.
+  - A single step still renders as a plain tool row — a header with nothing under it reads worse than the row it replaces.
 - **Next:** /compact and the MCP/LSP/memory managers in autopilot's Camouflage mode; daily-drive it; then make `--ui inline` the Camouflage default and `camouflage` the autopilot default.
 - **2026-10-01** — cf#49–#51 released as 2.3.0-beta.1; ap#688 merged. ap#691 (draft) ports every remaining Ink dialog (command editor, changelog image, inbox, multi-agent, remote dashboard, LSP wizard, hooks dashboard + wizard) to the Camouflage view. It needs cf#53 (multi-line fields) released, because 2.3.0's renderer rejects the `multiline` kind. Left after that: Ctrl+R reasoning, the Ctrl+O transcript view.
 - **2026-10-01 (later)** — cf#53 and cf#54 released as 2.4.0-beta.1. ap#691 bumps `camouflage-tui` to it. Left: the Ctrl+O full transcript view (beyond Ink, which only toggles verbose), `/reasoning` driving the renderer toggle, live `/theme` accent, and pausing while the terminal is unfocused.
