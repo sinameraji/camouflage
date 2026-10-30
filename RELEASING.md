@@ -11,6 +11,12 @@ a pre-built native binary built from the Rust crates in this workspace.
   `feat:` → minor, `!`/`BREAKING` → major). It updates the SDK version, all
   five platform package versions, and the SDK's exact optional-dependency
   versions together.
+- Release PRs do not run CI. release-please opens them with `GITHUB_TOKEN`,
+  and GitHub holds the `pull_request` run for such PRs in `action_required`
+  until a maintainer approves it, which leaves a stuck check on the PR. Since
+  a release PR is just a main commit that already passed CI plus version
+  bumps, `ci.yml` ignores PRs that only touch those version files. `main`
+  still runs the full matrix on every push after the merge.
 - **release.yml** triggers on the `camouflage-tui-v*` tag, builds the binary
   for each platform, and attaches the tarballs to the GitHub Release.
 - The release-please publish job extracts those build artifacts into their
