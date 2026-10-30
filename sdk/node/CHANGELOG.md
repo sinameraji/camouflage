@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.11.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.10.2...camouflage-tui-v2.11.0) (2026-10-30)
+
+
+### Features
+
+* **inline:** fold a run of one tool into a single row ([#152](https://github.com/sinameraji/camouflage/issues/152)) ([b71c7a5](https://github.com/sinameraji/camouflage/commit/b71c7a515028c4940d3e15f22542882f1173d0b5))
+
+
+### Bug Fixes
+
+* **inline:** assume 80x24 when the terminal reports 0x0 ([#151](https://github.com/sinameraji/camouflage/issues/151)) ([91c3a07](https://github.com/sinameraji/camouflage/commit/91c3a07b6f3bacbff969ab9f71998faaf660e31b))
+
 ## [2.10.2](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.10.1...camouflage-tui-v2.10.2) (2026-10-29)
 
 
