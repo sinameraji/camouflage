@@ -125,7 +125,7 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     spawn_signal_handler(tx.clone());
     drop(tx);
 
-    let (w, h) = crossterm::terminal::size().unwrap_or((80, 24));
+    let (w, h) = terminal_size();
     let theme = detect_theme();
     let mut term = InlineTerminal::new(screen, w, h);
     let mut session = Session::new(app_title, theme, term.content_width(), h as usize);
@@ -218,10 +218,9 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
                             keys.set_paused(false);
                             suspended = false;
                             // The window may have changed while the child ran.
-                            if let Ok((w, h)) = crossterm::terminal::size() {
-                                session.resize((w as usize).saturating_sub(1), h as usize);
-                                term.resize(w, h, &Default::default())?;
-                            }
+                            let (w, h) = terminal_size();
+                            session.resize((w as usize).saturating_sub(1), h as usize);
+                            term.resize(w, h, &Default::default())?;
                             last_frame = None;
                             urgent = true;
                         }
@@ -629,10 +628,9 @@ fn spawn_signal_handler(tx: mpsc::Sender<Input>) {
             use tokio::signal::unix::{signal, SignalKind};
             let Ok(mut winch) = signal(SignalKind::window_change()) else { return };
             while winch.recv().await.is_some() {
-                if let Ok((w, h)) = crossterm::terminal::size() {
-                    if tx.send(Input::Term(TermEvent::Resize(w, h))).await.is_err() {
-                        return;
-                    }
+                let (w, h) = terminal_size();
+                if tx.send(Input::Term(TermEvent::Resize(w, h))).await.is_err() {
+                    return;
                 }
             }
         });
@@ -693,6 +691,26 @@ fn make_event(seq: &AtomicI64, session_id: Uuid, event_type: EventType, payload:
         event_type,
         payload,
     }
+}
+
+/// The terminal's size, treating a 0 or missing report as unknown.
+///
+/// Some ptys answer 0 rows × 0 cols: `expect` without `set stty_init`, some CI
+/// runners, `script`, and a few IDE task terminals. Taken literally that leaves
+/// the renderer one cell wide, so every line is drawn as a single "…" and the
+/// picker never appears. Fall back to $COLUMNS/$LINES, then 80×24.
+fn terminal_size() -> (u16, u16) {
+    let reported = crossterm::terminal::size().ok();
+    let env = |name: &str| std::env::var(name).ok().and_then(|value| value.trim().parse::<u16>().ok());
+    resolve_size(reported, env("COLUMNS"), env("LINES"))
+}
+
+/// The size to draw at: what the terminal reported when it's real, else the
+/// environment's, else 80×24. Split out so the fallback is testable without a pty.
+fn resolve_size(reported: Option<(u16, u16)>, columns: Option<u16>, lines: Option<u16>) -> (u16, u16) {
+    let (w, h) = reported.unwrap_or((0, 0));
+    let pick = |value: Option<u16>, fallback: u16| value.filter(|n| *n > 0).unwrap_or(fallback);
+    (pick(Some(w), pick(columns, 80)), pick(Some(h), pick(lines, 24)))
 }
 
 /// Dark unless COLORFGBG says the background is light.
@@ -776,6 +794,25 @@ mod tests {
 
     fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
         KeyEvent { code, modifiers, kind: KeyEventKind::Press, state: KeyEventState::NONE }
+    }
+
+    #[test]
+    fn a_zero_by_zero_terminal_still_draws_real_text() {
+        // `expect` without stty_init, some CI runners and `script` report 0×0. Taken
+        // literally that left the renderer one cell wide: every line was just "…".
+        assert_eq!(resolve_size(Some((0, 0)), None, None), (80, 24));
+        assert_eq!(resolve_size(None, None, None), (80, 24));
+        assert_eq!(resolve_size(Some((0, 0)), Some(120), Some(40)), (120, 40));
+        assert_eq!(resolve_size(Some((100, 30)), Some(120), Some(40)), (100, 30), "a real size wins");
+        assert_eq!(resolve_size(Some((0, 0)), Some(0), Some(0)), (80, 24), "0 in the environment is no answer either");
+
+        let (w, h) = resolve_size(Some((0, 0)), None, None);
+        let term = InlineTerminal::new(Vec::new(), w, h);
+        let session = Session::new("autopilot", Theme::dark(), term.content_width(), h as usize);
+        let frame = session.live_frame(0);
+        let text = frame.lines.iter().map(|line| line.plain_text()).collect::<Vec<_>>().join("\n");
+        assert!(!text.trim().is_empty(), "the first frame has text");
+        assert!(text.chars().any(|c| c.is_alphanumeric()), "real text, not only ellipses: {text:?}");
     }
 
     #[test]
