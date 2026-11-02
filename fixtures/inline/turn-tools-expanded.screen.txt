@@ -3,10 +3,7 @@ gpt-6-luna · ~/project · main
 / for commands · @ to mention files
 
 › run the suite
-──── live area at tool output expanded ────
-
-⠴ Bash cargo test --workspace
-    running 212 tests
+──── live area at ctrl+o requests the transcript; the live area stays collapsed ────
   ›
   cargo test --workspace
 ⠴ cargo test --workspace… · 0s · ↓ 0 tokens · esc to interrupt
@@ -14,7 +11,7 @@ gpt-6-luna · ~/project · main
 ╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ › Type ahead · esc to interrupt                                                                 │
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
-  Showing full tool output
+  ? for shortcuts
 ────
 
 ✓ Bash cargo test --workspace
@@ -25,4 +22,4 @@ gpt-6-luna · ~/project · main
 ╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ › Ask autopilot anything · / for commands                                                       │
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
-  Tool output collapsed                                         gpt-6-luna · 12.4k tokens · $0.91
+  ? for shortcuts                                               gpt-6-luna · 12.4k tokens · $0.91
