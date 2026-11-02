@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.13.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.12.0...camouflage-tui-v2.13.0) (2026-11-02)
+
+
+### Features
+
+* **tui:** remove the full-screen UI and rebuild replay inline ([a831c44](https://github.com/sinameraji/camouflage/commit/a831c44ab7ddd9cf98365f9691208d687d52bab7))
+
 ## [2.12.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.11.0...camouflage-tui-v2.12.0) (2026-11-02)
 
 
