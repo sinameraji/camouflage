@@ -1,0 +1,42 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› /init
+──── live area when the user sent SelectListResponse ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Which model?  (Set up autopilot · Step 1 of 3)                                                  │
+│                                                                                                 │
+│ › 1. gpt-6-luna                           fast                                                  │
+│   2. claude-opus-5                        long turns                                            │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ↑↓ to choose · type to search · enter to select · esc to cancel
+────
+──── live area when the user sent ConfirmResponse ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Install the format-on-save hook?  (Set up autopilot · Step 2 of 3)                              │
+│                                                                                                 │
+│ › 1. Install                                                                                    │
+│   2. Skip                                                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ↑↓ to choose · enter to select · esc to cancel
+────
+──── live area when the user sent FormResponse ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Project name  (Set up autopilot · Step 3 of 3)                                                  │
+│                                                                                                 │
+│ Name *                                                                                          │
+│ › camouflage                                                                                    │
+│                                                                                                 │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  tab to move · enter to continue · esc to cancel
+────
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts                                               gpt-6-luna · 12.4k tokens · $0.91

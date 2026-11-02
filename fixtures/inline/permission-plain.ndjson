@@ -1,0 +1,14 @@
+{"t":0,"in":{"event_type":"SessionStarted","payload":{"title":"autopilot 2.11.0","detail":["gpt-6-luna \u00b7 ~/project \u00b7 main","/ for commands \u00b7 @ to mention files"],"accent":"orange","assistant_label":"autopilot"}}}
+{"t":20,"in":{"event_type":"SlashCommandsRegistered","payload":{"commands":[{"name":"help","description":"Show the commands and shortcuts","args_hint":null},{"name":"model","description":"Switch the model","args_hint":"[name]"},{"name":"hooks","description":"Manage hooks","args_hint":null},{"name":"sessions","description":"Resume a previous session","args_hint":null},{"name":"theme","description":"Pick a colour theme","args_hint":null},{"name":"agents","description":"Show running agents","args_hint":null},{"name":"mcp","description":"Manage MCP servers","args_hint":null},{"name":"permissions","description":"Review allowed tools","args_hint":null},{"name":"cost","description":"Show token usage and cost","args_hint":null},{"name":"clear","description":"Clear the transcript","args_hint":null},{"name":"compact","description":"Compact the conversation","args_hint":null},{"name":"settings","description":"Open settings","args_hint":null}]}}}
+{"t":30,"in":{"event_type":"MentionCandidatesRegistered","payload":{"candidates":[{"token":"crates/inline/src/session.rs","kind":"file"},{"token":"crates/inline/src/blocks.rs","kind":"file"},{"token":"crates/inline/src/chrome.rs","kind":"file"},{"token":"crates/inline/tests/replay.rs","kind":"file"},{"token":"fixtures/inline/README.md","kind":"file"},{"token":"scripts/gen_inline_fixtures.py","kind":"file"},{"token":"Cargo.toml","kind":"file"},{"token":"README.md","kind":"file"}]}}}
+{"t":40,"in":{"event_type":"StatusUpdate","payload":{"segments":{"model":"gpt-6-luna","tokens":"12.4k tokens","cost":"$0.91"}}}}
+{"t":90,"out":{"event_type":"UserInputSubmitted","payload":{"text":"run the tests"}}}
+{"t":140,"in":{"event_type":"StatusUpdate","payload":{"segments":{"phase":"thinking"}}}}
+{"t":140,"in":{"event_type":"PermissionRequested","payload":{"request_id":"req-2","tool":"Bash","action":"run cargo test --workspace","detail":"cargo test --workspace"}}}
+{"t":740,"out":{"event_type":"PermissionResponse","payload":{"request_id":"req-2","choice":"allow_session"}}}
+{"t":780,"in":{"event_type":"ToolExecutionStarted","payload":{"tool_id":"t1","tool":"Bash","command":"cargo test --workspace","started_at_ms":780}}}
+{"t":3180,"in":{"event_type":"ToolExecutionFinished","payload":{"tool_id":"t1","exit_code":0,"summary":"59 suites passed"}}}
+{"t":3210,"in":{"event_type":"AssistantStreamStarted","payload":{"stream_id":"s1"}}}
+{"t":3222,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"Everything passes."}}}
+{"t":3242,"in":{"event_type":"AssistantMessageCompleted","payload":{"stream_id":"s1","text":"Everything passes."}}}
+{"t":3322,"in":{"event_type":"StatusUpdate","payload":{"segments":{"phase":""}}}}

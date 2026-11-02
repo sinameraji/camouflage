@@ -1,0 +1,32 @@
+[package]
+name = "camouflage-inline-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Its own workspace root: the fuzz targets need nightly and `libfuzzer-sys`,
+# which must not leak into `cargo test --workspace` on stable.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+camouflage-inline = { path = ".." }
+camouflage-protocol = { path = "../../protocol" }
+serde_json = "1"
+
+[[bin]]
+name = "session_apply"
+path = "fuzz_targets/session_apply.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "session_key"
+path = "fuzz_targets/session_key.rs"
+test = false
+doc = false
+bench = false

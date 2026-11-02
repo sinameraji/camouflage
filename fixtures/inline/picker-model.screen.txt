@@ -1,0 +1,30 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› /model
+──── live area when the user sent SelectListResponse ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Switch model                                                                                    │
+│ Current: gpt-6-luna                                                                             │
+│                                                                                                 │
+│ OpenAI                                                                                          │
+│ › 1. gpt-6-luna ✓ current                 fast · 400k context                                   │
+│   2. gpt-6-sol                            deep reasoning · 400k context                         │
+│                                                                                                 │
+│ Anthropic                                                                                       │
+│   3. claude-opus-5                        long turns · 1M context                               │
+│   4. claude-sonnet-5                      balanced · 1M context                                 │
+│                                                                                                 │
+│ DeepSeek                                                                                        │
+│   5. deepseek-v4                          cheap · 128k context                                  │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ↑↓ to choose · type to search · enter to select · esc to cancel
+────
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts                                                gpt-6-sol · 12.4k tokens · $0.91

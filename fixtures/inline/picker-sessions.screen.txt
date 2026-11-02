@@ -1,0 +1,22 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› /sessions
+──── live area when the user sent SelectListResponse ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Resume a session                                                                                │
+│                                                                                                 │
+│ › 1. inline replay fixtures  18 turns          main  2m ago                                     │
+│   2. compact region beads    42 turns  feat/compact  1h ago                                     │
+│   3. fuzz target              7 turns          main  yesterday                                  │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ↑↓ to choose · type to search · enter to select · esc to cancel
+────
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts                                               gpt-6-luna · 12.4k tokens · $0.91

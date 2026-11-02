@@ -1,0 +1,20 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› fan out the review across three agents
+
+· Started agent · review session.rs
+· Started agent · review blocks.rs
+· Started agent · review chrome.rs
+✓ Agent finished · review session.rs
+✓ Agent finished · review blocks.rs
+✓ Agent finished · review chrome.rs
+──── live area ────
+
+── Background activity ────────────────────────────────────────────────────────────────────────────
+  Agents
+› ✓ review session.rs  done · 1s · no findings
+  ✓ review blocks.rs   done · 1s · no findings
+  ✓ review chrome.rs   done · 0s · no findings
+  ↑↓ select · enter details · esc close

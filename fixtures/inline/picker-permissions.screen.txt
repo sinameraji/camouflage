@@ -1,0 +1,24 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› /permissions
+──── live area when the user sent SelectListResponse ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Allowed tools                                                                                   │
+│ This session                                                                                    │
+│                                                                                                 │
+│ › 1. ● Read                               always                                                │
+│   2. ● Grep                               always                                                │
+│   3. ○ Bash                               ask every time                                        │
+│   4. ○ Edit                               ask every time                                        │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ↑↓ to choose · type to search · enter to select · esc to cancel
+────
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts                                               gpt-6-luna · 12.4k tokens · $0.91
