@@ -58,12 +58,15 @@ jobs:
         with:
           workspaces: crates/inline/fuzz
       - run: cargo install cargo-fuzz --locked
+      # `+nightly` is required, not just installed: rust-toolchain.toml pins
+      # stable, and cargo-fuzz spawns a plain `cargo build` that would pick it
+      # up. The `+nightly` proxy sets RUSTUP_TOOLCHAIN for that child.
       - name: Fuzz Session::apply
         working-directory: crates/inline/fuzz
-        run: cargo fuzz run session_apply -- -max_total_time=60
+        run: cargo +nightly fuzz run session_apply -- -max_total_time=60
       - name: Fuzz Session::key
         working-directory: crates/inline/fuzz
-        run: cargo fuzz run session_key -- -max_total_time=60
+        run: cargo +nightly fuzz run session_key -- -max_total_time=60
 
   # The release builds Windows and Intel Mac binaries; make sure every PR
   # still compiles for them. Windows has no pseudo-terminal tests.
