@@ -8,7 +8,7 @@ updates:
       actions:
         patterns: ["*"]
   # Patch releases only: most of our crates are 0.x, where a minor bump
-  # breaks the API (ratatui, rusqlite, tokio-tungstenite). Upgrade those
+  # breaks the API (rusqlite, tokio-tungstenite). Upgrade those
   # deliberately, one at a time.
   - package-ecosystem: cargo
     directory: /

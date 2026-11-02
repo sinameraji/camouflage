@@ -272,6 +272,33 @@ fn a_turn_renders_inline_and_stays_after_exit() {
 }
 
 #[test]
+fn ctrl_o_opens_the_transcript_from_the_store() {
+    let mut t = Pty::spawn();
+    t.host("SessionStarted", serde_json::json!({ "title": "transcript demo" }));
+    t.wait_for("transcript demo");
+    t.host("UserMessageCreated", serde_json::json!({ "text": "first prompt" }));
+    t.host("AssistantStreamStarted", serde_json::json!({ "stream_id": "s" }));
+    t.host("AssistantTokenDelta", serde_json::json!({ "stream_id": "s", "token": "first answer" }));
+    t.host("AssistantMessageCompleted", serde_json::json!({ "stream_id": "s" }));
+    t.wait_for("first answer");
+
+    // Ctrl+O pages the whole session, read back from SQLite.
+    t.keys(b"\x0f");
+    let screen = t.wait_for("Transcript");
+    assert!(screen.iter().any(|l| l.contains("first prompt")), "{screen:?}");
+    assert!(screen.iter().any(|l| l.contains("first answer")), "{screen:?}");
+
+    // q returns to the live area.
+    t.keys(b"q");
+    t.wait_for("╭");
+    t.keys(b"\x03");
+    std::thread::sleep(Duration::from_millis(150));
+    t.keys(b"\x03");
+    std::thread::sleep(Duration::from_millis(300));
+    t.finish();
+}
+
+#[test]
 fn sigint_acts_like_ctrl_c_instead_of_killing_the_renderer() {
     let mut t = Pty::spawn();
     t.host("SessionStarted", serde_json::json!({ "title": "sigint" }));

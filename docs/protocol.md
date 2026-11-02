@@ -657,11 +657,16 @@ your-adapter | camouflage-validate
 ```
 
 If `--validate` exits 0, your wire output is protocol-conformant.
-For visual conformance, additionally compare snapshots:
+For visual conformance, replay the captured stream through the inline
+renderer and compare the transcript:
 
 ```
 your-adapter > session.ndjson
-camouflage-replay-check session.ndjson > golden.json
+camouflage-tui --play session.ndjson > transcript.txt
 # (later, after adapter changes)
-camouflage-replay-check session.ndjson --golden golden.json
+camouflage-tui --play session.ndjson > transcript.new.txt
+diff transcript.txt transcript.new.txt
 ```
+
+The inline crate's `tests/replay.rs` does the same for the checked-in
+`fixtures/inline/*.ndjson` sessions, with a golden screen per fixture.

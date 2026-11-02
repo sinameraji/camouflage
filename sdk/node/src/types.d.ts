@@ -106,7 +106,7 @@ export type ToolFinished = {
   summary?: string;
   /** Full output; replaces anything streamed via ToolExecutionStdout. */
   output?: string;
-  /** Output lines shown before "ctrl+o to expand". Default 0 (12 on error). */
+  /** Output lines shown before the full transcript (ctrl+o). Default 0 (12 on error). */
   preview?: number;
   /** Highlight the output as this language (e.g. "ts" for a written file). */
   output_lang?: string;

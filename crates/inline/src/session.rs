@@ -200,7 +200,12 @@ pub struct Session {
     streamed_chars: u64,
     streamed_at_busy: u64,
     tasks: BTreeMap<String, String>,
+    /// Render tool output in full. The live area keeps it collapsed; the
+    /// transcript view and replay turn it on.
     expanded: bool,
+    /// Ctrl+O asked for the full-screen transcript view. The app owns the
+    /// store, so it opens the view and clears this.
+    pub transcript_requested: bool,
     /// Ctrl+R: draw the model's reasoning above replies.
     show_reasoning: bool,
     /// Open reasoning block per stream id.
@@ -266,6 +271,7 @@ impl Session {
             streamed_at_busy: 0,
             tasks: BTreeMap::new(),
             expanded: false,
+            transcript_requested: false,
             show_reasoning: false,
             reasoning: HashMap::new(),
             outbound: Vec::new(),
@@ -315,6 +321,17 @@ impl Session {
     /// Number of blocks still held in memory (unprinted).
     pub fn held_blocks(&self) -> usize {
         self.entries.len()
+    }
+
+    /// Render tool output in full. The live area keeps it collapsed; the
+    /// transcript view and replay turn it on before applying events.
+    pub fn set_expanded(&mut self, expanded: bool) {
+        self.expanded = expanded;
+    }
+
+    /// Show a short message in the footer (the app's own notices).
+    pub fn flash_message(&mut self, text: &str, now: i64) {
+        self.flash(text, now);
     }
 
     // ----- events from the host -------------------------------------------
@@ -1207,15 +1224,9 @@ impl Session {
                 return;
             }
             Key::Ctrl('o') => {
-                self.expanded = !self.expanded;
-                self.flash(
-                    if self.expanded {
-                        "Showing full tool output"
-                    } else {
-                        "Tool output collapsed"
-                    },
-                    now,
-                );
+                // The app opens the full-screen transcript view (built from
+                // the session store) and clears this flag.
+                self.transcript_requested = true;
                 return;
             }
             Key::Ctrl('b') if self.editor.is_empty() => {
@@ -1573,6 +1584,16 @@ impl Session {
             self.last_printed = Some(e.block);
         }
         out
+    }
+
+    /// Finish every held block and return the whole transcript. Replay and
+    /// the transcript view have no live turn to wait for, so nothing may
+    /// stay behind in the live area.
+    pub fn finish_transcript(&mut self, now: i64) -> Vec<Line> {
+        for e in &mut self.entries {
+            e.done = true;
+        }
+        self.take_history(now)
     }
 
     pub fn live_frame(&self, now: i64) -> LiveFrame {
@@ -4665,7 +4686,8 @@ mod tests {
             .iter()
             .any(|line| line.contains("Read src/readme.md")));
         s.key(Key::Ctrl('o'), 1_700);
-        assert!(s.expanded);
+        assert!(s.transcript_requested, "Ctrl+O asks the app for the transcript view");
+        assert!(!s.expanded, "the live area stays collapsed");
         assert!(live_text(&s, 1_700)
             .iter()
             .any(|line| line.contains("Read src/readme.md")));

@@ -1,12 +1,8 @@
-mod app;
 mod inline_app;
-mod draw;
-mod input;
-pub(crate) mod scrolllog;
-pub(crate) mod settings;
-mod tty;
 mod platform;
 mod persist;
+mod replay;
+mod transcript;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -20,13 +16,15 @@ struct Args {
     #[arg(long)]
     stdin_events: bool,
 
-    /// Replay an existing session from the SQLite store.
-    #[arg(long, value_name = "SESSION_ID")]
+    /// Replay an existing session from the SQLite store. The transcript is
+    /// printed through the inline renderer and the process exits.
+    #[arg(long, value_name = "SESSION_ID", conflicts_with = "play")]
     replay: Option<Uuid>,
 
     /// Play back a shareable .camo file (header line + NDJSON events).
-    /// The file may also be plain NDJSON without a header.
-    #[arg(long, value_name = "FILE")]
+    /// The file may also be plain NDJSON without a header. The transcript is
+    /// printed through the inline renderer and the process exits.
+    #[arg(long, value_name = "FILE", conflicts_with = "replay")]
     play: Option<PathBuf>,
 
     /// Path to SQLite database. Defaults to $HOME/.camouflage/sessions.db.
@@ -34,8 +32,6 @@ struct Args {
     db: Option<PathBuf>,
 
     /// Don't save sessions at all (for hosts that keep their own history).
-    /// Full-screen mode, which pages history from the store, keeps it in
-    /// memory instead.
     #[arg(long)]
     no_store: bool,
 
@@ -44,13 +40,14 @@ struct Args {
     #[arg(long, value_name = "DAYS", env = "CAMOUFLAGE_RETENTION_DAYS", default_value_t = 30)]
     retention_days: u32,
 
-    /// Target frame rate (frames per second).
-    #[arg(long, default_value_t = 60)]
-    fps: u32,
+    /// Deprecated: the inline renderer has no frame ticker. Accepted and
+    /// ignored so older hosts and scripts keep working.
+    #[arg(long, hide = true)]
+    fps: Option<u32>,
 
-    /// Override the live-buffer row cap (default 2000). Lower values force
-    /// history paging earlier — useful for testing.
-    #[arg(long)]
+    /// Deprecated: the inline renderer keeps no row buffer. Accepted and
+    /// ignored so older hosts and scripts keep working.
+    #[arg(long, hide = true)]
     row_cap: Option<usize>,
 
     /// Emit outbound NDJSON events (UserInputSubmitted, PermissionResponse)
@@ -79,10 +76,9 @@ struct Args {
     #[arg(long, value_name = "NAME")]
     app_title: Option<String>,
 
-    /// Rendering mode. `inline` (the default) prints finished output into
-    /// the terminal's normal scrollback and redraws only a small live
-    /// region; `fullscreen` is the v2 alternate-screen UI (always used for
-    /// --replay and --play).
+    /// Rendering mode. `inline` is the only mode; the old full-screen UI was
+    /// removed. The flag is kept so hosts that pass `--ui inline` keep
+    /// working, and `--ui fullscreen` fails with a clear message.
     #[arg(long, value_enum, default_value_t = UiMode::Inline)]
     ui: UiMode,
 }
@@ -105,6 +101,26 @@ mod tests {
     fn inline_is_the_default_mode() {
         assert_eq!(Args::try_parse_from(["camouflage-tui"]).unwrap().ui, UiMode::Inline);
         assert_eq!(Args::try_parse_from(["camouflage-tui", "--ui", "fullscreen"]).unwrap().ui, UiMode::Fullscreen);
+    }
+
+    #[test]
+    fn replay_and_play_are_mutually_exclusive() {
+        let err = Args::try_parse_from([
+            "camouflage-tui",
+            "--replay",
+            "00000000-0000-0000-0000-000000000000",
+            "--play",
+            "x.camo",
+        ])
+        .unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn deprecated_flags_still_parse() {
+        let a = Args::try_parse_from(["camouflage-tui", "--fps", "30", "--row-cap", "2000"]).unwrap();
+        assert_eq!(a.fps, Some(30));
+        assert_eq!(a.row_cap, Some(2000));
     }
 }
 
@@ -148,6 +164,12 @@ fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
+    if args.ui == UiMode::Fullscreen {
+        anyhow::bail!(
+            "--ui fullscreen was removed; the inline renderer is the only UI now. \
+             Use --ui inline (the default), or --replay/--play to print a stored transcript."
+        );
+    }
     let db_path = args.db.unwrap_or_else(default_db_path);
 
     let store = if args.no_store {
@@ -155,6 +177,29 @@ fn main() -> Result<()> {
     } else {
         camouflage_store::SqliteStore::open(&db_path).context("opening event store")?
     };
+
+    // Replay and play are non-interactive: render the transcript through the
+    // inline block renderer and exit. They never touch the live loop.
+    if args.replay.is_some() || args.play.is_some() {
+        if args.no_store && args.replay.is_some() {
+            anyhow::bail!("--replay needs the session store; drop --no-store");
+        }
+        let (w, h) = inline_app::terminal_size();
+        let cfg = replay::ReplayConfig {
+            app_title: resolve_app_title(args.app_title),
+            theme: inline_app::detect_theme(),
+            width: (w as usize).saturating_sub(1),
+            height: h as usize,
+        };
+        let lines = match (args.replay, args.play) {
+            (Some(sid), _) => replay::replay_session(&store, sid, &cfg)?,
+            (_, Some(path)) => replay::replay_file(&path, &cfg)?,
+            _ => unreachable!(),
+        };
+        let mut out = std::io::stdout();
+        replay::write_transcript(&mut out, &lines, cfg.width)?;
+        return Ok(());
+    }
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -171,28 +216,12 @@ fn main() -> Result<()> {
         anyhow::bail!("--responses-fd and --emit-responses=true are mutually exclusive");
     }
 
-    if args.ui == UiMode::Inline && args.replay.is_none() && args.play.is_none() {
-        let result = rt.block_on(inline_app::run(inline_app::InlineConfig {
-            // Inline mode never reads the store back; with --no-store it
-            // keeps nothing at all (not even in memory).
-            store: (!args.no_store).then_some(store),
-            retention_days: Some(args.retention_days),
-            stdin_events: args.stdin_events,
-            emit_responses,
-            responses_fd: args.responses_fd,
-            app_title: resolve_app_title(args.app_title),
-        }));
-        rt.shutdown_background();
-        return result;
-    }
-
-    let result = rt.block_on(app::run(app::Config {
-        store,
+    let result = rt.block_on(inline_app::run(inline_app::InlineConfig {
+        // Inline mode never reads the store back; with --no-store it
+        // keeps nothing at all (not even in memory).
+        store: (!args.no_store).then_some(store),
+        retention_days: Some(args.retention_days),
         stdin_events: args.stdin_events,
-        replay: args.replay,
-        play_file: args.play,
-        fps: args.fps.max(1).min(120),
-        row_cap: args.row_cap,
         emit_responses,
         responses_fd: args.responses_fd,
         app_title: resolve_app_title(args.app_title),

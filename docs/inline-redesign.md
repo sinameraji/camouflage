@@ -93,7 +93,7 @@ The proposed design, as built in the prototype:
 
 ## 3. Architecture: inline rendering
 
-Finished blocks are printed **once** into the terminal's normal scrollback and never redrawn. The live area contains only the unfinished assistant block, input and footer, plus a compact busy-turn summary. That summary shows the current plan, active agents, a bounded trail of recent reads/edits/shell actions, and the latest action; it is capped at four rows, with one separate spinner/status row (five rows total). Its elapsed time and token count are anchored to the current turn, and the trail is cleared when the turn settles. Ctrl+O expands per-tool details without rewriting the printed transcript. One shared 80 ms frame clock drives the visible animations and stops when the renderer is idle. SQLite stays the source of truth for replay and resume.
+Finished blocks are printed **once** into the terminal's normal scrollback and never redrawn. The live area contains only the unfinished assistant block, input and footer, plus a compact busy-turn summary. That summary shows the current plan, active agents, a bounded trail of recent reads/edits/shell actions, and the latest action; it is capped at four rows, with one separate spinner/status row (five rows total). Its elapsed time and token count are anchored to the current turn, and the trail is cleared when the turn settles. Ctrl+O opens a full-screen transcript view built from SQLite without rewriting the printed transcript. One shared 80 ms frame clock drives the visible animations and stops when the renderer is idle. SQLite stays the source of truth for replay and resume.
 
 What this gives you:
 - You can scroll with the terminal's own scrollback while the agent works.
@@ -105,7 +105,7 @@ What this gives you:
 Rules that make it work:
 1. **The live area must always be shorter than the screen.** A streaming answer is printed paragraph by paragraph and only the unfinished part stays live. Running tool output shows only its last few lines. The compact busy-turn summary itself is capped at four rows plus one spinner/status row; narrow terminals drop descriptive labels before clipping. If the full live area ever grows past the screen, it's back to clearing the terminal, which is exactly how Ink breaks (`ink/build/ink.js:705`).
 2. **Never clear the terminal**, except on an explicit `/clear`.
-3. **Printed blocks are final.** Ctrl+O expands tool details in the live region; it does not rewrite scrollback. The full-screen transcript/replay view built from SQLite remains a separate roadmap item.
+3. **Printed blocks are final.** Ctrl+O opens a full-screen transcript view built from SQLite; it does not rewrite scrollback.
 4. **No full-width boxes or rules in printed output.** The terminal re-wraps old text on resize, but full-width lines break badly. Boxes belong only in the live area, which is redrawn at the new width anyway.
 
 Trade-off: the terminal's scrollback limit caps how far back you can scroll. Older history stays reachable through SQLite, the transcript view and `--resume`.
@@ -184,7 +184,7 @@ Known limits of the Ink hotfix (the Camouflage rewrite removes them):
 - Ink keeps its own copy of all printed output and reprints it on some redraws (for example a resize), so a `/clear`ed screen can come back after a resize.
 
 **B. Camouflage rewrite**
-- [~] B1. Inline renderer: printed output plus a small live area (§3). The busy-turn summary now shows turn-scoped progress, active agents, a bounded tool trail and latest action behind `--ui inline`; Ctrl+O expands tool details. Left: make inline the default and build the separate full-screen transcript/replay view.
+- [x] B1. Inline renderer: printed output plus a small live area (§3). The busy-turn summary shows turn-scoped progress, active agents, a bounded tool trail and latest action behind `--ui inline`; Ctrl+O opens the transcript view. Inline is the default and the only UI; the full-screen app, draw code and `RenderModel` are gone.
 - [~] B2. Event-driven loop with no fixed ticker, settle on turn end, skip identical frames: done (#34, #35); waiting for a prompt counts as idle. The busy-turn frame clock is turn-anchored and decorative animation pauses while unfocused.
 - [x] B3. Input (#33, #35): crossterm with `use-dev-tty`, movement by grapheme, UTF-8, `\`+Enter / Shift+Enter / Alt+Enter, undo and yank, draft kept while browsing history, paste chips, no single-key shortcuts.
 - [x] B4. Markdown with pulldown-cmark, syntax highlighting with syntect mapped onto the terminal palette (#32).
@@ -241,6 +241,13 @@ Known limits of the Ink hotfix (the Camouflage rewrite removes them):
 - **2026-10-01 (later)** — cf#53 and cf#54 released as 2.4.0-beta.1. ap#691 bumps `camouflage-tui` to it. Left: the Ctrl+O full transcript view (beyond Ink, which only toggles verbose), `/reasoning` driving the renderer toggle, live `/theme` accent, and pausing while the terminal is unfocused.
 
 - **2026-10-19** — Revamped the inline busy-turn summary: current-turn timing/token accounting, a four-row plan/agent/tool-trail/action panel, frame-indexed animation, ASCII-safe glyphs and compact-width handling. Added session regressions, a PTY busy-redraw/settle test, and the `busy-turn` VHS scenario. Verified `cargo test -p camouflage-inline` (112 unit, 1 replay, 11 terminal tests), the workspace suite, the focused PTY test, and generated three VHS checkpoints plus a GIF; added the matching renderer golden snapshot. Next: inspect the visual output, run workspace validation, then open one PR.
+- **2026-11-02** — Removed the full-screen TUI (cf#134).
+  - `--replay` and `--play` now render through the inline block renderer: the session is loaded from SQLite (or a `.camo`/NDJSON file), applied to a fresh `Session` with tool output expanded, and printed into scrollback. The process exits; there is no playback loop.
+  - Ctrl+O opens a full-screen transcript pager built from SQLite. The app flushes the store writer, loads the session, renders it with the same blocks, and pages it in the alternate screen with `/` search and `n`/`N`. Closing it restores the live area.
+  - Deleted `crates/tui/src/{app,draw,input,scrolllog,settings,tty}.rs`, the `camouflage-diff` binary and the whole `crates/renderer` crate (`RenderModel`, `Snapshot`, golden snapshots). `camouflage-replay-check` and its JSON goldens are gone; `fixtures/inline/*.screen.txt` is the deterministic replay gate.
+  - `--ui fullscreen` now fails with a clear message. `--fps` and `--row-cap` are accepted and ignored so older scripts keep working.
+  - The SDK facade re-exports `camouflage-inline` instead of `camouflage-renderer`; the Node `ui` option is `"inline"` only.
+  - Verified: `cargo test --workspace`, a PTY test for Ctrl+O, and manual `--replay`/`--play` runs against a recorded session.
 
 ## 8. Roadmap: Ink parity, then defaults (2026-10-01)
 
@@ -256,7 +263,7 @@ autopilot 1.5.0 ships `--ui camouflage`. First real use: speed and smoothness ar
 - Host-driven `@` completion: a new outbound event carries the text after `@`; the host answers with entries for that directory. Paths starting `./`, `../`, `~`, `/` list that directory; picking a folder keeps the picker open inside it.
 - Forms and wizards in inline mode (today they answer "cancelled"), needed for several autopilot modals.
 - Color in model text: map inline HTML (`<span style="color: …">`, `<font color>`, `<mark>`, `<u>`) to terminal colors, and pass ANSI color through. Neither UI does this today; add a line to autopilot's system prompt saying it's available.
-- Ctrl+O transcript view: full screen, built from SQLite, searchable (rule 3 of §3).
+- Ctrl+O transcript view: full screen, built from SQLite, searchable (rule 3 of §3). Done.
 - Runtime theme/accent from the host (for /theme).
 - Slow down or pause when the terminal is unfocused; Windows support.
 
@@ -293,4 +300,4 @@ Updated as PRs land. "✅" means checked against the Ink implementation, not ass
 | MCP / LSP / memory / hooks / skills managers | Yes | Same App code (ap#685) | ✅ |
 | Ctrl+R reasoning display | Yes | `AssistantReasoningDelta`, toggled in the renderer (cf#54, ap#691) | ⏳ ap#691 |
 | Color in model text | No | Inline HTML + ANSI (cf#51) | ✅ |
-| Ctrl+O full transcript | Verbose toggle | Expands collapsed output in the live area | ⚠️ |
+| Ctrl+O full transcript | Verbose toggle | Full-screen pager from SQLite, searchable | ✅ |

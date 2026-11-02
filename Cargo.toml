@@ -3,7 +3,6 @@ resolver = "2"
 members = [
     "crates/protocol",
     "crates/store",
-    "crates/renderer",
     "crates/tui",
     "crates/headless",
     "crates/bench",
@@ -20,7 +19,6 @@ license = "Apache-2.0"
 rust-version = "1.75"
 
 [workspace.dependencies]
-ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 crossterm = "0.29"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync", "time", "signal", "fs"] }
 serde = { version = "1", features = ["derive"] }
@@ -39,10 +37,8 @@ futures-util = { version = "0.3", default-features = false, features = ["sink"] 
 
 camouflage-protocol = { path = "crates/protocol" }
 camouflage-store = { path = "crates/store" }
-camouflage-renderer = { path = "crates/renderer" }
 camouflage-headless = { path = "crates/headless" }
-# camouflage-renderer dep above is already declared; headless now reuses it
-# for its replay-check binary.
+camouflage-inline = { path = "crates/inline" }
 
 [profile.release]
 opt-level = 3

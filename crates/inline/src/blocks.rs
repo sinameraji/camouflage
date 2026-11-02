@@ -1022,7 +1022,7 @@ fn render_tool_full(t: &ToolBlock, width: usize, theme: &Theme, ctx: RenderCtx) 
                 format!("… {rest} {noun}")
             };
             out.push(Line::styled(
-                format!("{out_indent}{what} (ctrl+o to expand)"),
+                format!("{out_indent}{what} (ctrl+o for the transcript)"),
                 dim,
             ));
         }

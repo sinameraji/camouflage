@@ -8,7 +8,7 @@ description = "Event-native rendering runtime for long-running AI agent applicat
 [dependencies]
 camouflage-protocol = { workspace = true }
 camouflage-store = { workspace = true }
-camouflage-renderer = { workspace = true }
+camouflage-inline = { workspace = true }
 camouflage-headless = { workspace = true }
 
 [dev-dependencies]

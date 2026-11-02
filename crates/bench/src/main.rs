@@ -6,8 +6,9 @@
 //! not a Vec<Event> blowup.
 
 use anyhow::Result;
+use camouflage_inline::session::Session;
+use camouflage_inline::Theme;
 use camouflage_protocol::{Event, EventType, SCHEMA_VERSION};
-use camouflage_renderer::RenderModel;
 use camouflage_store::{EventStore, SqliteStore};
 use clap::Parser;
 use std::time::Instant;
@@ -146,14 +147,14 @@ fn rss_mb() -> u64 {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let session = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
     let store = SqliteStore::open_in_memory()?;
 
     // Stream events into the store in batches of 256. Never hold the full
     // population in memory; the bench process should stay near the
     // renderer-bounded RSS at the end.
     const BATCH: usize = 256;
-    let mut gen = SynthGen::new(args.events, args.tools, args.tokens, session);
+    let mut gen = SynthGen::new(args.events, args.tools, args.tokens, session_id);
     let synth_and_write_start = Instant::now();
     let mut batch: Vec<Event> = Vec::with_capacity(BATCH);
     let mut total_written: usize = 0;
@@ -179,13 +180,13 @@ fn main() -> Result<()> {
     // Range-read latency.
     let mid = (total_written / 2) as i64;
     let rr_start = Instant::now();
-    let _ = store.load_range(session, mid, mid + 100)?;
+    let _ = store.load_range(session_id, mid, mid + 100)?;
     let range_read_ms = rr_start.elapsed().as_millis();
 
     // Replay: stream events from the store via load_range in chunks; apply
-    // each to the bounded render model. Avoids loading the full session.
+    // each to the inline session. Avoids loading the full session.
     let replay_start = Instant::now();
-    let mut model = RenderModel::new();
+    let mut session = Session::new("bench", Theme::dark(), 100, 40);
     let mut frame_times: Vec<u128> = Vec::with_capacity(total_written / 64 + 1);
     let mut last_frame = Instant::now();
     const REPLAY_CHUNK: i64 = 1024;
@@ -193,12 +194,12 @@ fn main() -> Result<()> {
     let mut from: i64 = 0;
     while applied < total_written {
         let to = from + REPLAY_CHUNK;
-        let chunk = store.load_range(session, from, to)?;
+        let chunk = store.load_range(session_id, from, to)?;
         if chunk.is_empty() {
             break;
         }
         for ev in &chunk {
-            model.apply(ev);
+            session.apply(ev, ev.timestamp_ms);
             applied += 1;
             if applied % 64 == 0 {
                 frame_times.push(last_frame.elapsed().as_micros());
@@ -227,8 +228,8 @@ fn main() -> Result<()> {
         "p95_frame_ms": p95_frame_ms,
         "p95_input_latency_ms": 0,
         "dropped_frames": 0,
-        "model_live_rows": model.rows().len(),
-        "model_total_rows": model.total_rows(),
+        "live_blocks": session.held_blocks(),
+        "events_applied": applied,
     });
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())

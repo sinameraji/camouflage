@@ -36,8 +36,8 @@ Interactions to verify:
 
 
 Run each scenario and verify behavior. These exercise terminal-side behavior
-not covered by unit tests (which are pure-logic against `RenderModel` and
-`ViewportState`).
+not covered by unit tests (which are pure-logic against `Session` and
+`InlineTerminal`).
 
 ## 1. Stream 50k tokens while scrolling
 
@@ -90,7 +90,13 @@ Replay:
 cargo run --release -p camouflage-tui -- --replay <SESSION_UUID>
 ```
 
-Expected: transcript reconstructs deterministically; `r` re-runs replay.
+Expected: the transcript is printed through the inline renderer and the
+process exits. Tool output is shown in full. `--play <file>` does the same
+for a `.camo` or NDJSON file.
+
+Transcript view: while the TUI is running, press Ctrl+O. Expected: a
+full-screen pager over the session read back from SQLite; `/` searches,
+`n`/`N` move between matches, `q` returns to the live area.
 
 ## 6. Panic restore
 
