@@ -45,6 +45,11 @@ fn now_ms() -> i64 {
 pub enum EventType {
     SessionStarted,
     SessionEnded,
+    /// v2.5+ — Host → renderer: one session's state, for hosts that put
+    /// several sessions on one stream (the deck). Carries the state a
+    /// sidebar needs for the event's `session_id`; see
+    /// `payloads::SessionStatus`.
+    SessionStatus,
     UserMessageCreated,
     AssistantStreamStarted,
     AssistantTokenDelta,
@@ -204,6 +209,7 @@ impl EventType {
         match self {
             EventType::SessionStarted => "SessionStarted",
             EventType::SessionEnded => "SessionEnded",
+            EventType::SessionStatus => "SessionStatus",
             EventType::UserMessageCreated => "UserMessageCreated",
             EventType::AssistantStreamStarted => "AssistantStreamStarted",
             EventType::AssistantTokenDelta => "AssistantTokenDelta",
@@ -266,6 +272,7 @@ impl EventType {
         Some(match s {
             "SessionStarted" => Self::SessionStarted,
             "SessionEnded" => Self::SessionEnded,
+            "SessionStatus" => Self::SessionStatus,
             "UserMessageCreated" => Self::UserMessageCreated,
             "AssistantStreamStarted" => Self::AssistantStreamStarted,
             "AssistantTokenDelta" => Self::AssistantTokenDelta,
@@ -505,6 +512,54 @@ pub mod payloads {
         pub assistant_label: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub user_label: Option<String>,
+    }
+
+    /// v2.5+ — coarse state of one session, as a deck/sidebar shows it.
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    #[serde(rename_all = "snake_case")]
+    pub enum SessionState {
+        /// The agent is running a turn.
+        Working,
+        /// Waiting on the user (approval, a question, input).
+        Blocked,
+        /// Alive but not doing anything.
+        Idle,
+        /// Finished successfully.
+        Done,
+        /// Ended in an error.
+        Failed,
+    }
+
+    /// v2.5+ — `SessionStatus` payload: everything a sidebar needs to show
+    /// one session. `state` is required; the rest is optional and omitted
+    /// when unknown. Hosts send the full status each time (last-write-wins).
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct SessionStatus {
+        pub state: SessionState,
+        /// Human label for the session, e.g. the repo name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub title: Option<String>,
+        /// Where it runs, e.g. `this computer` or a server name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub place: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub branch: Option<String>,
+        /// Why it is blocked or failed (one line).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub detail: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub cost_usd: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub context_used: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub context_limit: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub pr_url: Option<String>,
+        /// When this status was last updated (epoch ms).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub updated_ms: Option<i64>,
     }
 
     #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -1191,6 +1246,7 @@ mod tests {
         let types = [
             EventType::SessionStarted,
             EventType::SessionEnded,
+            EventType::SessionStatus,
             EventType::UserMessageCreated,
             EventType::AssistantStreamStarted,
             EventType::AssistantTokenDelta,
@@ -1243,7 +1299,7 @@ mod tests {
             EventType::ActivityStopRequested,
             EventType::ActivityViewChanged,
         ];
-        assert_eq!(types.len(), 53);
+        assert_eq!(types.len(), 54);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();
@@ -1260,7 +1316,7 @@ mod tests {
         let runtime = include_str!("../../../sdk/node/src/types.js");
         let types = include_str!("../../../sdk/node/src/types.d.ts");
         let all = [
-            EventType::SessionStarted, EventType::SessionEnded, EventType::UserMessageCreated,
+            EventType::SessionStarted, EventType::SessionEnded, EventType::SessionStatus, EventType::UserMessageCreated,
             EventType::AssistantStreamStarted, EventType::AssistantTokenDelta, EventType::AssistantMessageCompleted,
             EventType::ToolExecutionStarted, EventType::ToolExecutionStdout, EventType::ToolExecutionStderr,
             EventType::ToolExecutionFinished, EventType::PatchProposed, EventType::PatchApplied,
@@ -1388,7 +1444,7 @@ mod tests {
             ShowForm, FormResponse, ShowWizard, WizardCompleted, WizardCancelled,
             ModeChangeRequested, ShowToast, Splash, TerminalHandoff, TerminalSuspended,
             ActivityStep, ActivityItem, ActivityLog, ActivityRemoved, ActivitySnapshot,
-            ActivityStopRequested, ActivityViewChanged,
+            ActivityStopRequested, ActivityViewChanged, SessionStatus,
         );
         let mut problems = Vec::new();
         for (name, fields) in &ts {
@@ -1407,6 +1463,44 @@ mod tests {
             }
         }
         assert!(problems.is_empty(), "SDK types drifted from the protocol:\n{}", problems.join("\n"));
+    }
+
+    #[test]
+    fn session_status_wire_format() {
+        // Hosts and the deck key off these exact state strings.
+        for (state, wire) in [
+            (payloads::SessionState::Working, "working"),
+            (payloads::SessionState::Blocked, "blocked"),
+            (payloads::SessionState::Idle, "idle"),
+            (payloads::SessionState::Done, "done"),
+            (payloads::SessionState::Failed, "failed"),
+        ] {
+            let s = serde_json::to_string(&state).unwrap();
+            assert_eq!(s, format!("\"{wire}\""));
+        }
+
+        let p = payloads::SessionStatus {
+            state: payloads::SessionState::Blocked,
+            title: Some("camouflage".into()),
+            place: Some("this computer".into()),
+            branch: Some("feat/deck".into()),
+            detail: Some("waiting for approval".into()),
+            cost_usd: Some(0.42),
+            context_used: Some(12_000),
+            context_limit: Some(200_000),
+            pr_url: Some("https://github.com/sinameraji/camouflage/pull/1".into()),
+            updated_ms: Some(1_762_000_000_000),
+        };
+        let s = serde_json::to_string(&p).unwrap();
+        assert!(s.contains("\"state\":\"blocked\""), "got {s}");
+        let back: payloads::SessionStatus = serde_json::from_str(&s).unwrap();
+        assert_eq!(p, back);
+
+        // Only `state` is required; everything else is additive.
+        let m: payloads::SessionStatus = serde_json::from_str(r#"{"state":"idle"}"#).unwrap();
+        assert_eq!(m.state, payloads::SessionState::Idle);
+        assert!(m.title.is_none());
+        assert!(m.updated_ms.is_none());
     }
 
     #[test]

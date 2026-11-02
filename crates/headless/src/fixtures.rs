@@ -88,12 +88,52 @@ mod tests {
     }
 
     #[test]
+    fn multi_session_fixture_interleaves_two_sessions() {
+        use camouflage_protocol::EventType;
+        use std::collections::HashMap;
+
+        let body = load_fixture("multi-session").expect("fixture exists");
+        let report = validate_stream(&body);
+        assert!(report.ok(), "{:#?}", report.errors);
+
+        let mut sessions: HashMap<String, Vec<i64>> = HashMap::new();
+        let mut statuses = 0;
+        for line in body.lines().filter(|l| !l.trim().is_empty()) {
+            let v: serde_json::Value = serde_json::from_str(line).unwrap();
+            let sid = v["session_id"].as_str().unwrap().to_string();
+            sessions.entry(sid).or_default().push(v["seq"].as_i64().unwrap());
+            if v["event_type"] == "SessionStatus" {
+                statuses += 1;
+            }
+        }
+        assert_eq!(sessions.len(), 2, "fixture should carry two sessions");
+        assert!(statuses >= 2, "fixture should carry SessionStatus events");
+        for (sid, seqs) in &sessions {
+            let mut sorted = seqs.clone();
+            sorted.sort_unstable();
+            assert_eq!(seqs, &sorted, "session {sid} seqs are not increasing");
+        }
+        // The two sessions' events are genuinely interleaved, not blocks.
+        let order: Vec<String> = body
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| {
+                let v: serde_json::Value = serde_json::from_str(l).unwrap();
+                v["session_id"].as_str().unwrap().to_string()
+            })
+            .collect();
+        assert_ne!(order[0], order[1], "sessions should alternate");
+        assert_eq!(EventType::SessionStatus.as_str(), "SessionStatus");
+    }
+
+    #[test]
     fn all_event_types_fixture_covers_every_variant() {
         use camouflage_protocol::EventType;
         let body = load_fixture("all-event-types").expect("fixture exists");
         let variants = [
             EventType::SessionStarted,
             EventType::SessionEnded,
+            EventType::SessionStatus,
             EventType::UserMessageCreated,
             EventType::AssistantStreamStarted,
             EventType::AssistantTokenDelta,

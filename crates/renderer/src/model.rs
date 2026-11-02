@@ -2005,6 +2005,9 @@ impl RenderModel {
                 });
                 self.dirty = true;
             }
+            // v2.5+: per-session status for multi-session streams. The deck
+            // (a later task) consumes it; single-session renderers ignore it.
+            EventType::SessionStatus => {}
         }
         true
     }

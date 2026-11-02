@@ -13,6 +13,7 @@ export const SCHEMA_VERSION = 1;
 export type EventType =
   | "SessionStarted"
   | "SessionEnded"
+  | "SessionStatus"
   | "SessionCompacted"
   | "UserMessageCreated"
   | "AssistantStreamStarted"
@@ -330,6 +331,35 @@ export type ModeChangeRequested = {
   direction: "next" | "prev";
 };
 
+/**
+ * v2.5+: coarse state of one session, as a deck/sidebar shows it.
+ * `working` = running a turn, `blocked` = waiting on the user, `idle` = alive
+ * but not doing anything, `done` = finished successfully, `failed` = errored.
+ */
+export type SessionState = "working" | "blocked" | "idle" | "done" | "failed";
+
+/**
+ * v2.5+: one session's state in a multi-session stream. `state` is required;
+ * everything else is optional and omitted when unknown. Hosts send the full
+ * status each time (last-write-wins). See docs/protocol.md.
+ */
+export type SessionStatus = {
+  state: SessionState;
+  /** Human label for the session, e.g. the repo name. */
+  title?: string;
+  /** Where it runs, e.g. "this computer" or a server name. */
+  place?: string;
+  branch?: string;
+  /** Why it is blocked or failed (one line). */
+  detail?: string;
+  cost_usd?: number;
+  context_used?: number;
+  context_limit?: number;
+  pr_url?: string;
+  /** Epoch ms when this status was last updated. */
+  updated_ms?: number;
+};
+
 /** Optional welcome and branding for the inline renderer. */
 export type SessionStarted = {
   /** First welcome line, shown in the accent color. Defaults to the app title. */
@@ -414,6 +444,7 @@ export type Event = EnvelopeMeta &
   (
     | { event_type: "SessionStarted"; payload?: SessionStarted }
     | { event_type: "SessionEnded"; payload?: Record<string, never> }
+    | { event_type: "SessionStatus"; payload: SessionStatus }
     | { event_type: "SessionCompacted"; payload: SessionCompacted }
     | { event_type: "UserMessageCreated"; payload: UserMessage }
     | { event_type: "AssistantStreamStarted"; payload: AssistantStreamStarted }

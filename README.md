@@ -4,7 +4,7 @@ Event-native rendering/runtime layer for long-running AI agent applications.
 
 ## What Camouflage is
 
-- An event protocol (append-only, serializable, replayable) — 39 event types covering chat, tools, permissions, slash commands, mentions, background tasks
+- An event protocol (append-only, serializable, replayable) — 54 event types covering chat, tools, permissions, slash commands, mentions, background tasks, and per-session status
 - A persistence layer (SQLite, WAL) — every event flushed before render
 - A viewport-virtualized terminal renderer (ratatui) with bounded memory
 - A catalog of overlay primitives — SelectList, Confirm, Form, Wizard, Table, KeyValueView, Toast — for hosts to compose drill-down UX
@@ -72,6 +72,27 @@ Emit one JSON object per line on stdout. The minimum required fields:
 ```
 
 `id`, `session_id`, `seq`, and `timestamp_ms` are filled in by Camouflage if absent.
+
+### Several sessions on one stream
+
+One stream may carry more than one session. Events from different
+`session_id`s interleave freely; `seq` is **per session**, so each session
+counts from its own `0`. `SessionStarted` introduces a session and
+`SessionEnded` removes it. Single-session hosts change nothing — omit
+`session_id` and Camouflage assigns one.
+
+`SessionStatus` carries the state a deck or sidebar shows for one session:
+
+```json
+{"session_id":"11111111-1111-4111-8111-111111111111","seq":1,"event_type":"SessionStatus","payload":{"state":"blocked","title":"camouflage","place":"this computer","branch":"feat/deck","detail":"waiting for approval: run tests","cost_usd":0.42,"context_used":12000,"context_limit":200000,"pr_url":"https://github.com/sinameraji/camouflage/pull/1","updated_ms":1762000000000}}
+```
+
+`state` is required and is one of `working` | `blocked` | `idle` | `done` |
+`failed`. Every other field is optional and omitted when unknown; hosts send
+the full status each time (last-write-wins). See
+[`docs/protocol.md`](docs/protocol.md#multi-session-streams) and
+[`fixtures/multi-session.ndjson`](fixtures/multi-session.ndjson) for a
+complete interleaved example.
 
 ## UI components
 

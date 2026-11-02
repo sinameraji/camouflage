@@ -1,4 +1,5 @@
 {"event_type":"SessionStarted","payload":{}}
+{"event_type":"SessionStatus","payload":{"state":"working","title":"camouflage","place":"this computer","branch":"main","cost_usd":0.42,"context_used":12000,"context_limit":200000,"updated_ms":1762000000000}}
 {"event_type":"StatusUpdate","payload":{"segments":{"mode":"edit","phase":"idle","branch":"main"}}}
 {"event_type":"BackgroundTaskUpdate","payload":{"task_id":"skills","label":"indexing","state":"running","progress":0.5}}
 {"event_type":"BackgroundTaskUpdate","payload":{"task_id":"skills","label":"indexing","state":"done"}}
