@@ -16,6 +16,7 @@ import { existsSync, readFileSync, appendFileSync } from "node:fs";
 import { join, dirname, basename, parse as parsePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SCHEMA_VERSION, encode, validate } from "./types.js";
+import { createLifecycle } from "./lifecycle.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -96,6 +97,32 @@ class CamouflageHandle extends EventEmitter {
     this._stdin = stdin;
     this._closed = false;
     this._closing = null; // Promise once close() begins
+    // Lifecycle facade: `cam.turn()` returns handles that auto-settle.
+    // `permission` is a hoisted function declaration in this module.
+    this._lifecycle = createLifecycle(this, { permission });
+    // The renderer is gone: nothing can be in flight any more. Settle every
+    // open turn so no host promise hangs and no handle looks live.
+    this.on("exit", () => this._lifecycle.settleAll());
+  }
+
+  /**
+   * Open a turn: a bundle of streams, tools and permission requests that
+   * settle together. Closing a handle — or calling `turn.end()` — finishes
+   * everything under it, so a forgotten finish event can never leave the
+   * renderer spinning.
+   *
+   * @example
+   *   const turn = cam.turn();
+   *   const s = turn.stream();
+   *   s.write("hello");
+   *   s.end();
+   *   turn.end();
+   *
+   * @param {{id?: string, settleToolStatus?: string}} [opts]
+   * @returns {import("./lifecycle.js").Turn}
+   */
+  turn(opts = {}) {
+    return this._lifecycle.turn(opts);
   }
 
   /**
@@ -193,26 +220,36 @@ class CamouflageHandle extends EventEmitter {
  * Wait for a child process to exit. After `softTimeoutMs`, sends SIGTERM;
  * after another 2s, SIGKILL. Resolves with the exit code (or -1 if
  * killed without one).
+ *
+ * Never hangs: a child that was killed by a signal reports `exitCode ===
+ * null` with `signalCode` set, and its `exit` event may already have fired
+ * before this is called — both cases resolve immediately.
  */
 function waitForExit(child, softTimeoutMs) {
   return new Promise((resolve) => {
-    if (child.exitCode != null) return resolve(child.exitCode);
-    let resolved = false;
+    if (child.exitCode != null || child.signalCode != null) {
+      resolve(child.exitCode ?? -1);
+      return;
+    }
+    let done = false;
+    let term = null;
+    let kill = null;
     const finalize = (code) => {
-      if (resolved) return;
-      resolved = true;
+      if (done) return;
+      done = true;
+      if (term) clearTimeout(term);
+      if (kill) clearTimeout(kill);
       resolve(code ?? -1);
     };
     child.once("exit", (code) => finalize(code));
-    const term = setTimeout(() => {
+    term = setTimeout(() => {
       try { child.kill("SIGTERM"); } catch { /* ignore */ }
-      const kill = setTimeout(() => {
+      kill = setTimeout(() => {
         try { child.kill("SIGKILL"); } catch { /* ignore */ }
+        // Last resort: a wedged child must not leave close() hanging.
+        finalize(-1);
       }, 2000);
-      // Defensive: if the kill timeout fires, still resolve.
-      child.once("exit", () => clearTimeout(kill));
     }, softTimeoutMs);
-    child.once("exit", () => clearTimeout(term));
   });
 }
 
