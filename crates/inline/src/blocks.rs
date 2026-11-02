@@ -175,7 +175,12 @@ pub fn explore_kind(name: &str) -> Option<&'static str> {
         "grep" | "glob" | "find" | "search" | "rg" | "codesearch" | "code_search"
         | "web_search" | "websearch" => "search",
         "ls" | "list" | "list_dir" | "tree" => "folder",
-        "web_fetch" | "webfetch" | "fetch" => "page",
+        "web_fetch" | "webfetch" | "fetch" | "browser_fetch" | "browserfetch" => "page",
+        "github_read_code" | "github_read_issue" | "github_read_pr" | "github_read_file"
+        | "github_get_file" => "page",
+        "memory_recall" | "job_status" | "job_logs" | "worker_status" | "github_pr_checks"
+        | "github_list_releases" | "github_list_merged_prs" | "github_list_prs"
+        | "github_list_issues" | "github_list_commits" => "lookup",
         _ if n.starts_with("lsp_") => "lookup",
         _ => return None,
     })
@@ -211,7 +216,7 @@ pub fn is_plan_update(name: &str) -> bool {
 pub fn shell_explore_kind(command: &str) -> Option<&'static str> {
     let mut best: Option<&'static str> = None;
     let mut seen = false;
-    for seg in shell_segments(command) {
+    for seg in shell_segments(strip_prompt(command)) {
         let kind = segment_kind(&seg)?;
         seen = true;
         if best.is_none_or(|b| rank(kind) > rank(b)) {
@@ -219,6 +224,17 @@ pub fn shell_explore_kind(command: &str) -> Option<&'static str> {
         }
     }
     seen.then_some(best.unwrap_or("command"))
+}
+
+/// A host may decorate a shell command with a prompt — autopilot's bash rows
+/// send `"$ grep -n foo"` — and that is not part of the command. Only a `$`
+/// followed by whitespace is a prompt; `$HOME/bin/x` is a path.
+fn strip_prompt(command: &str) -> &str {
+    let command = command.trim_start();
+    match command.strip_prefix('$') {
+        Some(rest) if rest.chars().next().is_none_or(char::is_whitespace) => rest.trim_start(),
+        _ => command,
+    }
 }
 
 /// Which noun wins when one command does several read-only things.
@@ -394,10 +410,12 @@ fn segment_kind(seg: &str) -> Option<&'static str> {
     }
     let cmd = w.first()?.rsplit('/').next().unwrap_or("");
     // A preview cut to fit the row ends in "…". The visible part is what we
-    // can judge, so a bare ellipsis is neutral.
+    // can judge, so a bare ellipsis is neutral and a clipped word is still
+    // that word ("echo…" is "echo").
     if cmd.starts_with('…') {
         return Some("command");
     }
+    let cmd = cmd.trim_end_matches('…');
     let args: Vec<&str> = w.iter().skip(1).map(String::as_str).collect();
     Some(match cmd {
         "grep" | "egrep" | "fgrep" | "rg" | "ag" | "ack" | "fd" | "locate" => "search",
@@ -1319,6 +1337,35 @@ mod tests {
         );
         // A preview that hid whole lines can't be judged.
         assert_eq!(shell_explore_kind("cd repo … +2 lines"), None);
+    }
+
+    #[test]
+    fn a_shell_prompt_prefix_is_not_part_of_the_command() {
+        // autopilot's bash rows send "$ <command>" (formatBashTitle).
+        assert_eq!(shell_explore_kind("$ grep -rn foo src"), Some("search"));
+        assert_eq!(
+            shell_explore_kind("$ ls crates/sdk crates/sdk/src 2>/dev/null;…"),
+            Some("folder")
+        );
+        assert_eq!(shell_explore_kind("$ sed -n '1,9p' a.rs"), Some("file"));
+        assert_eq!(shell_explore_kind("$ npm test"), None);
+        assert_eq!(shell_explore_kind("$ cd repo … +2 lines"), None);
+        // A path that starts with $ is not a prompt.
+        assert_eq!(shell_explore_kind("$HOME/bin/tool --flag"), None);
+    }
+
+    #[test]
+    fn read_only_host_tools_fold_too() {
+        assert_eq!(explore_kind("Github_read_issue"), Some("page"));
+        assert_eq!(explore_kind("Github_read_code"), Some("page"));
+        assert_eq!(explore_kind("Browser_fetch"), Some("page"));
+        assert_eq!(explore_kind("Memory_recall"), Some("lookup"));
+        assert_eq!(explore_kind("Job_status"), Some("lookup"));
+        assert_eq!(explore_kind("Github_list_releases"), Some("lookup"));
+        // Actions keep their own row.
+        assert_eq!(explore_kind("Github_create_pr"), None);
+        assert_eq!(explore_kind("Edit"), None);
+        assert_eq!(explore_kind("Subagent"), None);
     }
 
     #[test]

@@ -170,7 +170,7 @@ pub struct Session {
     /// tool keeps its row: it is the only trace of the plan there is.
     plan_seen: bool,
     /// Rows for plan-update tools, dropped when they finish (see
-    /// @@is_plan_update@@).
+    /// `is_plan_update`).
     plan_rows: std::collections::HashSet<u64>,
     segments: BTreeMap<String, String>,
     editor: Editor,
@@ -2848,6 +2848,12 @@ mod tests {
             0,
         );
         let start = |s: &mut Session, id: &str, tool: &str, cmd: &str| {
+            // autopilot sends a bash command as "$ <command>" (formatBashTitle).
+            let cmd = if tool == "Bash" {
+                format!("$ {cmd}")
+            } else {
+                cmd.to_string()
+            };
             s.apply(
                 &ev(
                     EventType::ToolExecutionStarted,
@@ -2938,17 +2944,20 @@ mod tests {
             "Bash",
             "sed -n '505,545p' crates/inline/src/sessi…",
         );
+        // Read-only host tools fold too (github_read_*, browser_fetch, …).
+        start(&mut s, "t15", "Github_read_issue", "#1106");
+        start(&mut s, "t16", "Github_read_pr", "#156");
         // A command that changes something ends the run and gets its own row.
         s.apply(
             &ev(
                 EventType::ToolExecutionStarted,
-                json!({"tool_id": "last", "tool": "Bash", "command": "npm test"}),
+                json!({"tool_id": "last", "tool": "Bash", "command": "$ npm test"}),
             ),
             0,
         );
         assert_eq!(
             history_text(&mut s, 0),
-            vec!["✓ Explored 8 searches · 5 files · 1 folder"]
+            vec!["✓ Explored 8 searches · 5 files · 1 folder · 2 pages"]
         );
     }
 
