@@ -12,8 +12,8 @@
 
 use crate::ansi::parse_ansi;
 use crate::blocks::{
-    explore_kind, gap_between, render_block, run_label, Block, GroupBlock, NoticeKind, PlanItem,
-    PlanStatus, RenderCtx, ToolBlock, ToolStatus,
+    explore_kind_of, gap_between, is_plan_update, render_block, run_label, Block, GroupBlock,
+    NoticeKind, PlanItem, PlanStatus, RenderCtx, ToolBlock, ToolStatus,
 };
 use crate::chrome::{self, InputMode, PickItem, PromptView};
 use crate::compact::CompactState;
@@ -166,6 +166,12 @@ pub struct Session {
     /// a change, and otherwise only on `?`.
     status_until: Option<i64>,
     plan: Option<Vec<PlanItem>>,
+    /// Whether the host has ever sent a plan. Until it has, a plan-update
+    /// tool keeps its row: it is the only trace of the plan there is.
+    plan_seen: bool,
+    /// Rows for plan-update tools, dropped when they finish (see
+    /// @@is_plan_update@@).
+    plan_rows: std::collections::HashSet<u64>,
     segments: BTreeMap<String, String>,
     editor: Editor,
     mode: InputMode,
@@ -236,6 +242,8 @@ impl Session {
             activity: Default::default(),
             browser: None,
             plan: None,
+            plan_seen: false,
+            plan_rows: std::collections::HashSet::new(),
             segments: BTreeMap::new(),
             editor: Editor::new(),
             mode: InputMode::Default,
@@ -473,13 +481,32 @@ impl Session {
                 let tid = s("tool_id");
                 self.became_busy(now);
 
+                // A plan update is state, not an action: the plan is pinned
+                // in the live area and arrives as TodoListUpdate, so a row
+                // per update is noise. The row is held until it finishes in
+                // case the host never sends a plan at all.
+                if is_plan_update(&t.name) {
+                    let id = self.push_quiet(Block::Tool(t), false);
+                    self.tools.insert(tid, (id, None));
+                    self.plan_rows.insert(id);
+                    return;
+                }
+
                 // Every tool, including reads and searches, contributes one bead.
                 self.compact.tool_started(&tid, &t.name, &t.args, now);
 
                 // A run of one tool (code steps) folds like a run of reads,
-                // but keeps its name as the group's label.
+                // but keeps its name as the group's label. A host that knows
+                // a tool only reads can say so instead of leaving it to the
+                // command heuristic.
                 let label = run_label(&t.name);
-                if explore_kind(&t.name).is_none() && label.is_none() {
+                let kind = match p.get("read_only").and_then(Value::as_bool) {
+                    Some(true) => explore_kind_of(&t.name, &t.args).or(Some("command")),
+                    Some(false) => None,
+                    None => explore_kind_of(&t.name, &t.args),
+                };
+                t.explore = kind;
+                if kind.is_none() && label.is_none() {
                     let id = self.push(Block::Tool(t), false);
                     self.tools.insert(tid, (id, None));
                     return;
@@ -606,6 +633,12 @@ impl Session {
                     if let Some((path, diff)) = compact_diff {
                         self.compact.push_code_preview(&path, &diff, now);
                     }
+                }
+
+                // A plan update that the host also reported as a plan needs
+                // no row; a failed one always keeps it.
+                if self.plan_rows.remove(&id) && self.plan_seen && status != ToolStatus::Error {
+                    self.entries.retain(|e| e.id != id);
                 }
 
                 match idx {
@@ -941,6 +974,7 @@ impl Session {
                 self.plan = if items.is_empty() {
                     None
                 } else {
+                    self.plan_seen = true;
                     Some(items.clone())
                 };
                 // Feed the compact region's plan.
@@ -1455,6 +1489,9 @@ impl Session {
     /// may keep animating after a turn ends, whatever the host sent.
     fn settle(&mut self, now: i64, interrupted: bool) {
         let was_busy = self.is_busy();
+        // A plan update still running at the end of a turn is not worth a row.
+        let plan_rows = std::mem::take(&mut self.plan_rows);
+        self.entries.retain(|e| !plan_rows.contains(&e.id));
         let mut any = false;
         for e in self.entries.iter_mut().filter(|e| !e.done) {
             any = true;
@@ -1781,6 +1818,15 @@ impl Session {
 
     fn push_done(&mut self, block: Block) {
         self.push(block, true);
+    }
+
+    /// Push a block that doesn't end a run of reads: a plan update is state,
+    /// not an action, so it must not split the reads around it.
+    fn push_quiet(&mut self, block: Block, done: bool) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.entries.push(Entry { id, block, done });
+        id
     }
 
     fn block_mut(&mut self, id: u64) -> Option<&mut Block> {
@@ -2788,6 +2834,300 @@ mod tests {
         assert_eq!(
             history_text(&mut s, 0),
             vec!["✓ Explored 2 files · 1 search"]
+        );
+    }
+
+    #[test]
+    fn a_turn_of_shell_searches_prints_one_row() {
+        let mut s = session();
+        s.apply(
+            &ev(
+                EventType::TodoListUpdate,
+                json!({"todos": [{"title": "Trace", "status": "in_progress"}]}),
+            ),
+            0,
+        );
+        let start = |s: &mut Session, id: &str, tool: &str, cmd: &str| {
+            s.apply(
+                &ev(
+                    EventType::ToolExecutionStarted,
+                    json!({"tool_id": id, "tool": tool, "command": cmd}),
+                ),
+                0,
+            );
+            s.apply(
+                &ev(
+                    EventType::ToolExecutionFinished,
+                    json!({"tool_id": id, "exit_code": 0}),
+                ),
+                0,
+            );
+        };
+        start(
+            &mut s,
+            "t0",
+            "Bash",
+            "grep -n 'cam\\.send(\\|sendEvent(\\|\\.send('…",
+        );
+        start(
+            &mut s,
+            "t1",
+            "Bash",
+            "grep -n \"$6\\|## 6\\|800\" docs/inline-redes…",
+        );
+        start(
+            &mut s,
+            "t2",
+            "Bash",
+            "grep -n 'AssistantStreamStarted\\|Assistan…",
+        );
+        start(
+            &mut s,
+            "t3",
+            "Bash",
+            "grep -rn 'AssistantStreamStarted\\|ToolExe…",
+        );
+        start(&mut s, "t4", "Tasks_set", "tasks (5 items)");
+        start(&mut s, "t5", "Read", ".../src/camouflage-view.ts");
+        start(
+            &mut s,
+            "t6",
+            "Bash",
+            "ls sdk/node; echo ===; grep -rn \"turn\" cr…",
+        );
+        start(
+            &mut s,
+            "t7",
+            "Bash",
+            "ls crates/sdk crates/sdk/src 2>/dev/null;…",
+        );
+        start(
+            &mut s,
+            "t8",
+            "Bash",
+            "grep -n \"AssistantStreamStarted\\|Assistan…",
+        );
+        start(
+            &mut s,
+            "t9",
+            "Bash",
+            "sed -n '1440,1520p' crates/inline/src/ses…",
+        );
+        start(
+            &mut s,
+            "t10",
+            "Bash",
+            "grep -n \"fn settle\" -A 45 crates/inline/s…",
+        );
+        start(
+            &mut s,
+            "t11",
+            "Bash",
+            "sed -n '1456,1495p' crates/inline/src/ses…",
+        );
+        start(&mut s, "t12", "Read", "sdk/node/src/binding.d.ts");
+        start(
+            &mut s,
+            "t13",
+            "Bash",
+            "grep -rn '\"cancelled\"\\|Cancelled' crates/…",
+        );
+        start(
+            &mut s,
+            "t14",
+            "Bash",
+            "sed -n '505,545p' crates/inline/src/sessi…",
+        );
+        // A command that changes something ends the run and gets its own row.
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({"tool_id": "last", "tool": "Bash", "command": "npm test"}),
+            ),
+            0,
+        );
+        assert_eq!(
+            history_text(&mut s, 0),
+            vec!["✓ Explored 8 searches · 5 files · 1 folder"]
+        );
+    }
+
+    #[test]
+    fn shell_searches_fold_with_reads() {
+        let mut s = session();
+        let start = |s: &mut Session, id: &str, tool: &str, cmd: &str| {
+            s.apply(
+                &ev(
+                    EventType::ToolExecutionStarted,
+                    json!({"tool_id": id, "tool": tool, "command": cmd}),
+                ),
+                0,
+            );
+            s.apply(
+                &ev(
+                    EventType::ToolExecutionFinished,
+                    json!({"tool_id": id, "exit_code": 0}),
+                ),
+                0,
+            );
+        };
+        start(&mut s, "1", "Read", "a.ts");
+        start(&mut s, "2", "Bash", "grep -rn foo src");
+        start(&mut s, "3", "Bash", "sed -n '1,9p' b.rs");
+        assert!(
+            history_text(&mut s, 0).is_empty(),
+            "a read-only shell command joins the run of reads"
+        );
+        // A command that changes something still gets its own row.
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({"tool_id": "4", "tool": "Bash", "command": "npm test"}),
+            ),
+            0,
+        );
+        assert_eq!(
+            history_text(&mut s, 0),
+            vec!["✓ Explored 2 files · 1 search"]
+        );
+    }
+
+    #[test]
+    fn a_host_can_say_a_shell_command_only_reads() {
+        let mut s = session();
+        // The renderer can't tell what a loop does; the host can.
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({
+                    "tool_id": "1",
+                    "tool": "Bash",
+                    "command": "for f in *.ts; do echo $f; done",
+                    "read_only": true,
+                }),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionFinished,
+                json!({"tool_id": "1", "exit_code": 0}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({
+                    "tool_id": "2",
+                    "tool": "Bash",
+                    "command": "for f in *.rs; do wc -l $f; done",
+                    "read_only": true,
+                }),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionFinished,
+                json!({"tool_id": "2", "exit_code": 0}),
+            ),
+            0,
+        );
+        // And a host that says a command writes keeps its row, whatever the
+        // command looks like.
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({
+                    "tool_id": "3",
+                    "tool": "Bash",
+                    "command": "grep -rn foo src",
+                    "read_only": false,
+                }),
+            ),
+            0,
+        );
+        assert_eq!(history_text(&mut s, 0), vec!["✓ Explored 2 commands"]);
+    }
+
+    #[test]
+    fn plan_updates_print_no_row() {
+        let mut s = session();
+        s.apply(
+            &ev(
+                EventType::TodoListUpdate,
+                json!({"todos": [{"title": "Trace", "status": "in_progress"}]}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({"tool_id": "1", "tool": "Tasks_set", "command": "tasks (1 item)"}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionFinished,
+                json!({"tool_id": "1", "exit_code": 0}),
+            ),
+            0,
+        );
+        assert!(
+            history_text(&mut s, 0).is_empty(),
+            "the plan is pinned in the live area, not printed per update"
+        );
+    }
+
+    #[test]
+    fn a_plan_update_keeps_its_row_when_the_host_sends_no_plan() {
+        let mut s = session();
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({"tool_id": "1", "tool": "Tasks_set", "command": "tasks (1 item)"}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionFinished,
+                json!({"tool_id": "1", "exit_code": 0}),
+            ),
+            0,
+        );
+        assert_eq!(history_text(&mut s, 0), vec!["✓ Tasks_set tasks (1 item)"]);
+    }
+
+    #[test]
+    fn a_failed_plan_update_keeps_its_row() {
+        let mut s = session();
+        s.apply(
+            &ev(
+                EventType::TodoListUpdate,
+                json!({"todos": [{"title": "Trace", "status": "in_progress"}]}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionStarted,
+                json!({"tool_id": "1", "tool": "Tasks_set", "command": "tasks (1 item)"}),
+            ),
+            0,
+        );
+        s.apply(
+            &ev(
+                EventType::ToolExecutionFinished,
+                json!({"tool_id": "1", "exit_code": 1}),
+            ),
+            0,
+        );
+        assert_eq!(
+            history_text(&mut s, 0),
+            vec!["✗ Tasks_set tasks (1 item) · Exit code 1"]
         );
     }
 
