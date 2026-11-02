@@ -1,0 +1,27 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› why does the footer flicker?
+──── live area at reasoning shown ────
+
+  thinking… The footer is redrawn every frame because status_until keeps it visible for four
+  seconds after a change.
+⠙ Writing… · 0s · ↓ 0 tokens · esc to interrupt
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Type ahead · esc to interrupt                                                                 │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  Showing reasoning
+────
+
+  thinking… The footer is redrawn every frame because status_until keeps it visible for four
+  seconds after a change.
+
+  The footer redraws on every spinner tick; freezing the frame index while idle fixes it.
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  Showing reasoning                                             gpt-6-luna · 12.4k tokens · $0.91

@@ -1,0 +1,18 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› /cost
+
+  Usage
+
+  • Model gpt-6-luna
+  • Input 44.1k tokens
+  • Output 9.8k tokens
+  • Cost $3.43
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts                                               gpt-6-luna · 53.9k tokens · $3.43

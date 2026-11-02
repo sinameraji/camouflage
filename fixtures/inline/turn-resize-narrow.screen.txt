@@ -1,0 +1,20 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› summarise the diff
+
+  The change folds a run of one tool into a single row so long code steps stop flooding the
+  transcript.
+
+✓ Read crates/inline/src/compact.rs
+✓ Edit crates/inline/src/compact.rs · +18 −4
+
+  Narrow terminals now wrap the summary instead of
+  truncating it.
+──── live area ────
+
+╭──────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                │
+╰──────────────────────────────────────────────────────────╯
+  ? for shortcuts        gpt-6-luna · 12.4k tokens · $0.91

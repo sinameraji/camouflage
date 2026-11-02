@@ -1,0 +1,15 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› show the plan
+
+✓ Read crates/inline/tests/replay.rs
+
+  The plan is on track; the soak assertion is next.
+──── live area ────
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts                                                                                                            gpt-6-luna · 12.4k tokens · $0.91

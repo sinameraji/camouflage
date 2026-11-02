@@ -7,7 +7,7 @@
 export const SCHEMA_VERSION = 1;
 
 const KNOWN_TYPES = new Set([
-  "SessionStarted", "SessionEnded", "SessionCompacted",
+  "SessionStarted", "SessionEnded", "SessionStatus", "SessionCompacted",
   "UserMessageCreated",
   "AssistantStreamStarted", "AssistantTokenDelta", "AssistantMessageCompleted",
   "ToolExecutionStarted", "ToolExecutionStdout", "ToolExecutionStderr", "ToolExecutionFinished",

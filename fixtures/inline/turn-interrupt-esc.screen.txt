@@ -1,0 +1,16 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› rewrite the whole renderer
+
+  That's a large change; let me start with the block renderer.
+
+■ Bash cargo test --workspace · stopped · 1s
+  └ Interrupted · what should autopilot do instead?
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts                                               gpt-6-luna · 12.4k tokens · $0.91

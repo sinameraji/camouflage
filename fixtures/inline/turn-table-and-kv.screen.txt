@@ -1,0 +1,25 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› /sessions
+
+  Recent sessions
+
+  ID   │ Title                  │ Updated
+  ─────┼────────────────────────┼──────────
+  a1f2 │ inline replay fixtures │ 2m ago
+  b7c9 │ compact region beads   │ 1h ago
+  d3e4 │ fuzz target            │ yesterday
+
+  Session a1f2
+
+  • Model gpt-6-luna
+  • Branch main
+  • Turns 18
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts                                               gpt-6-luna · 12.4k tokens · $0.91

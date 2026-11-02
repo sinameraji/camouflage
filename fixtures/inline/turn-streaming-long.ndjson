@@ -1,0 +1,25 @@
+{"t":0,"in":{"event_type":"SessionStarted","payload":{"title":"autopilot 2.11.0","detail":["gpt-6-luna \u00b7 ~/project \u00b7 main","/ for commands \u00b7 @ to mention files"],"accent":"orange","assistant_label":"autopilot"}}}
+{"t":20,"in":{"event_type":"SlashCommandsRegistered","payload":{"commands":[{"name":"help","description":"Show the commands and shortcuts","args_hint":null},{"name":"model","description":"Switch the model","args_hint":"[name]"},{"name":"hooks","description":"Manage hooks","args_hint":null},{"name":"sessions","description":"Resume a previous session","args_hint":null},{"name":"theme","description":"Pick a colour theme","args_hint":null},{"name":"agents","description":"Show running agents","args_hint":null},{"name":"mcp","description":"Manage MCP servers","args_hint":null},{"name":"permissions","description":"Review allowed tools","args_hint":null},{"name":"cost","description":"Show token usage and cost","args_hint":null},{"name":"clear","description":"Clear the transcript","args_hint":null},{"name":"compact","description":"Compact the conversation","args_hint":null},{"name":"settings","description":"Open settings","args_hint":null}]}}}
+{"t":30,"in":{"event_type":"MentionCandidatesRegistered","payload":{"candidates":[{"token":"crates/inline/src/session.rs","kind":"file"},{"token":"crates/inline/src/blocks.rs","kind":"file"},{"token":"crates/inline/src/chrome.rs","kind":"file"},{"token":"crates/inline/tests/replay.rs","kind":"file"},{"token":"fixtures/inline/README.md","kind":"file"},{"token":"scripts/gen_inline_fixtures.py","kind":"file"},{"token":"Cargo.toml","kind":"file"},{"token":"README.md","kind":"file"}]}}}
+{"t":40,"in":{"event_type":"StatusUpdate","payload":{"segments":{"model":"gpt-6-luna","tokens":"12.4k tokens","cost":"$0.91"}}}}
+{"t":90,"out":{"event_type":"UserInputSubmitted","payload":{"text":"explain the compact region"}}}
+{"t":140,"in":{"event_type":"StatusUpdate","payload":{"segments":{"phase":"thinking"}}}}
+{"t":140,"in":{"event_type":"AssistantStreamStarted","payload":{"stream_id":"s1"}}}
+{"t":158,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"The compact region repla"}}}
+{"t":176,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"ces the tool rows and th"}}}
+{"t":194,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"e plan while a turn is r"}}}
+{"t":212,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"unning. "}}}
+{"t":270,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"Each tool contributes on"}}}
+{"t":288,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"e bead, so a long run of"}}}
+{"t":306,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":" reads stays a single li"}}}
+{"t":324,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"ne. "}}}
+{"t":382,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"When the turn settles th"}}}
+{"t":400,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"e region is cleared and "}}}
+{"t":418,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"the finished blocks prin"}}}
+{"t":436,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"t once. "}}}
+{"t":494,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"That keeps the live fram"}}}
+{"t":512,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"e a fixed height no matt"}}}
+{"t":530,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"er how long the turn get"}}}
+{"t":548,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"s. "}}}
+{"t":648,"in":{"event_type":"AssistantMessageCompleted","payload":{"stream_id":"s1","text":"The compact region replaces the tool rows and the plan while a turn is running. Each tool contributes one bead, so a long run of reads stays a single line. When the turn settles the region is cleared and the finished blocks print once. That keeps the live frame a fixed height no matter how long the turn gets. "}}}
+{"t":708,"in":{"event_type":"StatusUpdate","payload":{"segments":{"phase":""}}}}

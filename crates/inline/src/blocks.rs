@@ -5,10 +5,13 @@
 //! - assistant text: markdown indented two columns, no label
 //! - tools: one quiet row each (glyph, name, args cut in the middle, then
 //!   `+a −r` / failure / elapsed); a running tool adds one faint line of its
-//!   latest output; failures show the end of theirs; runs of reads and
-//!   searches fold into `Explored 5 files · 3 searches`, and runs of one
-//!   tool (code steps) into `Code · 25 steps` with the name printed once.
-//!   Ctrl+O shows the full layout (summary, diff, output).
+//!   latest output; failures show the end of theirs; runs of reads, searches
+//!   and read-only shell commands fold into `Explored 5 files · 3 searches ·
+//!   2 commands`, and runs of one tool (code steps) into `Code · 25 steps`
+//!   with the name printed once. Ctrl+O shows the full layout (summary, diff,
+//!   output).
+//! - plan updates (`tasks_set`) are state, not actions: the plan is pinned in
+//!   the live area, so they print no row of their own.
 //! - one blank row between blocks; consecutive tool rows sit together
 
 use crate::highlight::highlight;
@@ -59,6 +62,9 @@ pub struct ToolBlock {
     pub diff: Option<(String, Vec<DiffLine>)>,
     pub started_at_ms: Option<i64>,
     pub elapsed_ms: Option<u64>,
+    /// What this tool counts as in a group summary, when the host said it
+    /// only reads and the command itself couldn't be classified.
+    pub explore: Option<&'static str>,
 }
 
 impl ToolBlock {
@@ -74,6 +80,7 @@ impl ToolBlock {
             diff: None,
             started_at_ms: None,
             elapsed_ms: None,
+            explore: None,
         }
     }
 }
@@ -168,8 +175,352 @@ pub fn explore_kind(name: &str) -> Option<&'static str> {
         "grep" | "glob" | "find" | "search" | "rg" | "codesearch" | "code_search"
         | "web_search" | "websearch" => "search",
         "ls" | "list" | "list_dir" | "tree" => "folder",
-        "web_fetch" | "webfetch" | "fetch" => "page",
+        "web_fetch" | "webfetch" | "fetch" | "browser_fetch" | "browserfetch" => "page",
+        "github_read_code" | "github_read_issue" | "github_read_pr" | "github_read_file"
+        | "github_get_file" => "page",
+        "memory_recall" | "job_status" | "job_logs" | "worker_status" | "github_pr_checks"
+        | "github_list_releases" | "github_list_merged_prs" | "github_list_prs"
+        | "github_list_issues" | "github_list_commits" => "lookup",
         _ if n.starts_with("lsp_") => "lookup",
+        _ => return None,
+    })
+}
+
+/// Like [`explore_kind`], but also reads the arguments: a shell tool is
+/// exploration when its command only reads (`grep -rn foo`, `ls src`,
+/// `sed -n '1,20p' a.rs`). Those are how a turn actually explores a repo, so
+/// they join the run of reads instead of breaking it with a row each.
+pub fn explore_kind_of(name: &str, args: &str) -> Option<&'static str> {
+    if let Some(kind) = explore_kind(name) {
+        return Some(kind);
+    }
+    match name.to_ascii_lowercase().as_str() {
+        "bash" | "shell" | "sh" | "run" | "exec" | "terminal" | "command" => {
+            shell_explore_kind(args)
+        }
+        _ => None,
+    }
+}
+
+/// Tools that only update the plan. Their rows are noise: the plan itself is
+/// pinned in the live area and arrives as `TodoListUpdate`.
+pub fn is_plan_update(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "tasks_set" | "set_tasks" | "todo_write" | "todowrite" | "update_plan" | "plan_set"
+    )
+}
+
+/// What a read-only shell command counts as in a group summary, or None when
+/// it may change something (and so gets its own row).
+pub fn shell_explore_kind(command: &str) -> Option<&'static str> {
+    let mut best: Option<&'static str> = None;
+    let mut seen = false;
+    for seg in shell_segments(strip_prompt(command)) {
+        let kind = segment_kind(&seg)?;
+        seen = true;
+        if best.is_none_or(|b| rank(kind) > rank(b)) {
+            best = Some(kind);
+        }
+    }
+    seen.then_some(best.unwrap_or("command"))
+}
+
+/// A host may decorate a shell command with a prompt — autopilot's bash rows
+/// send `"$ grep -n foo"` — and that is not part of the command. Only a `$`
+/// followed by whitespace is a prompt; `$HOME/bin/x` is a path.
+fn strip_prompt(command: &str) -> &str {
+    let command = command.trim_start();
+    match command.strip_prefix('$') {
+        Some(rest) if rest.chars().next().is_none_or(char::is_whitespace) => rest.trim_start(),
+        _ => command,
+    }
+}
+
+/// Which noun wins when one command does several read-only things.
+fn rank(kind: &str) -> u8 {
+    match kind {
+        "search" => 3,
+        "folder" => 2,
+        "file" => 1,
+        _ => 0,
+    }
+}
+
+/// Split a command into its simple commands. Separators inside quotes don't
+/// count, and `>&` / `&>` are redirections, not separators.
+fn shell_segments(cmd: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = cmd.chars().peekable();
+    while let Some(c) = chars.next() {
+        if let Some(q) = quote {
+            cur.push(c);
+            if c == '\\' && q == '"' {
+                if let Some(n) = chars.next() {
+                    cur.push(n);
+                }
+            } else if c == q {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' => {
+                quote = Some(c);
+                cur.push(c);
+            }
+            '\\' => {
+                cur.push(c);
+                if let Some(n) = chars.next() {
+                    cur.push(n);
+                }
+            }
+            ';' | '\n' => out.push(std::mem::take(&mut cur)),
+            '|' | '&' => {
+                if cur.ends_with('>') || chars.peek() == Some(&'>') {
+                    cur.push(c);
+                    continue;
+                }
+                out.push(std::mem::take(&mut cur));
+                if chars.peek() == Some(&c) {
+                    chars.next();
+                }
+            }
+            _ => cur.push(c),
+        }
+    }
+    out.push(cur);
+    out.retain(|s| !s.trim().is_empty());
+    out
+}
+
+/// Words of one simple command, with quotes removed.
+fn words(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    let mut started = false;
+    for c in s.chars() {
+        match quote {
+            Some(q) => {
+                if c == q {
+                    quote = None;
+                } else {
+                    cur.push(c);
+                }
+                started = true;
+            }
+            None => match c {
+                '\'' | '"' => {
+                    quote = Some(c);
+                    started = true;
+                }
+                c if c.is_whitespace() => {
+                    if started {
+                        out.push(std::mem::take(&mut cur));
+                        started = false;
+                    }
+                }
+                _ => {
+                    cur.push(c);
+                    started = true;
+                }
+            },
+        }
+    }
+    if started {
+        out.push(cur);
+    }
+    out
+}
+
+/// Drop the harmless redirections a command uses to silence noise.
+fn strip_dev_null(s: &str) -> String {
+    let mut out = s.to_string();
+    for pat in [
+        "2>/dev/null",
+        "1>/dev/null",
+        "&>/dev/null",
+        ">/dev/null",
+        "2>&1",
+        "1>&2",
+    ] {
+        out = out.replace(pat, " ");
+    }
+    out
+}
+
+fn has_unquoted(s: &str, needle: char) -> bool {
+    let mut quote: Option<char> = None;
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        match quote {
+            Some(q) => {
+                if c == '\\' && q == '"' {
+                    chars.next();
+                } else if c == q {
+                    quote = None;
+                }
+            }
+            None => {
+                if c == '\'' || c == '"' {
+                    quote = Some(c);
+                } else if c == needle {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn is_env_assignment(word: &str) -> bool {
+    let Some((name, _)) = word.split_once('=') else {
+        return false;
+    };
+    !name.is_empty()
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// One simple command: what it reads, or None when it may write.
+fn segment_kind(seg: &str) -> Option<&'static str> {
+    let seg = strip_dev_null(seg);
+    // "… +3 lines": the preview hid whole commands, and one of them may write.
+    if seg.contains("… +") {
+        return None;
+    }
+    // A redirection writes a file; only /dev/null was harmless.
+    if has_unquoted(&seg, '>') {
+        return None;
+    }
+    let mut w = words(&seg);
+    while let Some(first) = w.first() {
+        let f = first.as_str();
+        if f == "!" || f == "time" || f == "command" || f == "builtin" || is_env_assignment(f) {
+            w.remove(0);
+        } else {
+            break;
+        }
+    }
+    let cmd = w.first()?.rsplit('/').next().unwrap_or("");
+    // A preview cut to fit the row ends in "…". The visible part is what we
+    // can judge, so a bare ellipsis is neutral and a clipped word is still
+    // that word ("echo…" is "echo").
+    if cmd.starts_with('…') {
+        return Some("command");
+    }
+    let cmd = cmd.trim_end_matches('…');
+    let args: Vec<&str> = w.iter().skip(1).map(String::as_str).collect();
+    Some(match cmd {
+        "grep" | "egrep" | "fgrep" | "rg" | "ag" | "ack" | "fd" | "locate" => "search",
+        "find" => {
+            if args.iter().any(|a| {
+                matches!(
+                    *a,
+                    "-delete"
+                        | "-exec"
+                        | "-execdir"
+                        | "-ok"
+                        | "-okdir"
+                        | "-fprint"
+                        | "-fprintf"
+                        | "-fls"
+                )
+            }) {
+                return None;
+            }
+            "search"
+        }
+        "ls" | "tree" | "du" | "df" => "folder",
+        "cat" | "head" | "tail" | "wc" | "nl" | "bat" | "less" | "more" | "jq" | "diff"
+        | "file" | "stat" | "md5sum" | "shasum" | "sha256sum" | "cut" | "sort" | "uniq" | "tr"
+        | "column" | "basename" | "dirname" | "realpath" | "readlink" => "file",
+        "sed" => {
+            if args
+                .iter()
+                .any(|a| *a == "--in-place" || a.starts_with("--in-place=") || a.starts_with("-i"))
+            {
+                return None;
+            }
+            "file"
+        }
+        "awk" | "gawk" | "mawk" => "file",
+        "echo" | "printf" | "pwd" | "which" | "type" | "env" | "date" | "true" | "false" | "cd"
+        | "export" | "set" | "unset" | "sleep" | "test" | "[" | "seq" | "yes" | "whoami"
+        | "uname" | "hostname" => "command",
+        "git" => git_kind(&args)?,
+        _ => return None,
+    })
+}
+
+/// A git subcommand that only reads.
+fn git_kind(args: &[&str]) -> Option<&'static str> {
+    // Global flags before the subcommand: `git -C dir log`, `git --no-pager diff`.
+    let mut i = 0;
+    while i < args.len() {
+        match args[i] {
+            "-C" | "-c" | "--git-dir" | "--work-tree" | "--namespace" => i += 2,
+            a if a.starts_with("--git-dir=")
+                || a.starts_with("--work-tree=")
+                || a.starts_with("-c") =>
+            {
+                i += 1
+            }
+            "--no-pager" | "--paginate" | "-P" | "--no-optional-locks" => i += 1,
+            _ => break,
+        }
+    }
+    let sub = *args.get(i)?;
+    let rest = &args[i + 1..];
+    Some(match sub {
+        "grep" => "search",
+        "log" | "show" | "diff" | "blame" | "status" | "ls-files" | "rev-parse" | "describe"
+        | "shortlog" | "cat-file" | "show-ref" | "for-each-ref" | "whatchanged" | "reflog" => {
+            "command"
+        }
+        // Listing forms only: `git branch new` creates one.
+        "branch" | "tag" => {
+            if rest.iter().any(|a| !a.starts_with('-')) {
+                return None;
+            }
+            "command"
+        }
+        "remote" => {
+            if rest
+                .iter()
+                .any(|a| !matches!(*a, "-v" | "--verbose" | "show" | "get-url"))
+            {
+                return None;
+            }
+            "command"
+        }
+        "stash" => {
+            if !matches!(rest.first().copied(), None | Some("list") | Some("show")) {
+                return None;
+            }
+            "command"
+        }
+        "config" => {
+            if !rest
+                .iter()
+                .any(|a| matches!(*a, "-l" | "--list" | "--get" | "--get-all" | "--get-regexp"))
+            {
+                return None;
+            }
+            "command"
+        }
+        "worktree" => {
+            if rest.first().copied() != Some("list") {
+                return None;
+            }
+            "command"
+        }
         _ => return None,
     })
 }
@@ -243,7 +594,10 @@ fn render_group(g: &GroupBlock, width: usize, theme: &Theme, ctx: RenderCtx) -> 
     let live = !g.closed || g.tools.iter().any(|t| t.status == ToolStatus::Running);
     let mut counts: Vec<(&str, usize)> = Vec::new();
     for t in &g.tools {
-        let kind = explore_kind(&t.name).unwrap_or("step");
+        let kind = t
+            .explore
+            .or_else(|| explore_kind_of(&t.name, &t.args))
+            .unwrap_or("step");
         match counts.iter_mut().find(|(k, _)| *k == kind) {
             Some((_, n)) => *n += 1,
             None => counts.push((kind, 1)),
@@ -948,6 +1302,124 @@ mod tests {
                 ctx()
             )),
             vec!["⠋ Exploring 2 files · 2 searches", "  └ Glob *.rs"]
+        );
+    }
+
+    #[test]
+    fn read_only_shell_commands_count_as_exploration() {
+        assert_eq!(shell_explore_kind("grep -rn foo src"), Some("search"));
+        assert_eq!(
+            shell_explore_kind("ls crates/sdk crates/sdk/src 2>/dev/null"),
+            Some("folder")
+        );
+        assert_eq!(
+            shell_explore_kind("sed -n '1440,1520p' crates/inline/src/session.rs"),
+            Some("file")
+        );
+        assert_eq!(
+            shell_explore_kind("ls sdk/node; echo ===; grep -rn \"turn\" crates/"),
+            Some("search")
+        );
+        assert_eq!(
+            shell_explore_kind("git -C repo log --oneline -3"),
+            Some("command")
+        );
+        assert_eq!(shell_explore_kind("cat a.rs | head -20"), Some("file"));
+        assert_eq!(shell_explore_kind("cd crates && rg settle"), Some("search"));
+        // A row preview cut to fit the terminal keeps its first word.
+        assert_eq!(
+            shell_explore_kind("ls crates/sdk crates/sdk/src 2>/dev/null;…"),
+            Some("folder")
+        );
+        assert_eq!(
+            shell_explore_kind("grep -n 'cam\\.send(\\|sendEvent('…"),
+            Some("search")
+        );
+        // A preview that hid whole lines can't be judged.
+        assert_eq!(shell_explore_kind("cd repo … +2 lines"), None);
+    }
+
+    #[test]
+    fn a_shell_prompt_prefix_is_not_part_of_the_command() {
+        // autopilot's bash rows send "$ <command>" (formatBashTitle).
+        assert_eq!(shell_explore_kind("$ grep -rn foo src"), Some("search"));
+        assert_eq!(
+            shell_explore_kind("$ ls crates/sdk crates/sdk/src 2>/dev/null;…"),
+            Some("folder")
+        );
+        assert_eq!(shell_explore_kind("$ sed -n '1,9p' a.rs"), Some("file"));
+        assert_eq!(shell_explore_kind("$ npm test"), None);
+        assert_eq!(shell_explore_kind("$ cd repo … +2 lines"), None);
+        // A path that starts with $ is not a prompt.
+        assert_eq!(shell_explore_kind("$HOME/bin/tool --flag"), None);
+    }
+
+    #[test]
+    fn read_only_host_tools_fold_too() {
+        assert_eq!(explore_kind("Github_read_issue"), Some("page"));
+        assert_eq!(explore_kind("Github_read_code"), Some("page"));
+        assert_eq!(explore_kind("Browser_fetch"), Some("page"));
+        assert_eq!(explore_kind("Memory_recall"), Some("lookup"));
+        assert_eq!(explore_kind("Job_status"), Some("lookup"));
+        assert_eq!(explore_kind("Github_list_releases"), Some("lookup"));
+        // Actions keep their own row.
+        assert_eq!(explore_kind("Github_create_pr"), None);
+        assert_eq!(explore_kind("Edit"), None);
+        assert_eq!(explore_kind("Subagent"), None);
+    }
+
+    #[test]
+    fn commands_that_change_things_are_not_exploration() {
+        for cmd in [
+            "npm test",
+            "cargo build",
+            "rm -rf target",
+            "sed -i 's/a/b/' a.rs",
+            "echo hi > out.txt",
+            "git commit -m x",
+            "git branch new",
+            "find . -delete",
+            "curl https://example.com",
+            "grep foo a.rs | xargs rm",
+            "",
+        ] {
+            assert_eq!(shell_explore_kind(cmd), None, "{cmd}");
+        }
+    }
+
+    #[test]
+    fn a_shell_search_joins_the_run_of_reads() {
+        assert_eq!(explore_kind_of("Bash", "grep -rn foo src"), Some("search"));
+        assert_eq!(explore_kind_of("Bash", "npm test"), None);
+        assert_eq!(explore_kind_of("Read", "a.ts"), Some("file"));
+    }
+
+    #[test]
+    fn a_run_of_shell_searches_folds_with_reads() {
+        let tool = |name: &str, args: &str| {
+            let mut t = ToolBlock::new(name, args);
+            t.status = ToolStatus::Ok;
+            t.started_at_ms = Some(0);
+            t.elapsed_ms = Some(1500);
+            t
+        };
+        let g = GroupBlock {
+            tools: vec![
+                tool("Read", "a.ts"),
+                tool("Bash", "grep -rn foo src"),
+                tool("Bash", "sed -n '1,9p' b.rs"),
+            ],
+            closed: true,
+            label: None,
+        };
+        assert_eq!(
+            text(&render_block(
+                &Block::Group(g),
+                60,
+                &Theme::default(),
+                ctx()
+            )),
+            vec!["✓ Explored 2 files · 1 search · 1s"]
         );
     }
 

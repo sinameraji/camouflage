@@ -44,6 +44,30 @@ jobs:
         working-directory: sdk/node
         run: npm test
 
+  # The fuzz targets need nightly and a sanitizer, so they run in their own
+  # job with a fixed time budget rather than in the test matrix. A crash
+  # fails the job; the corpus is rebuilt from scratch each run.
+  fuzz:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: crates/inline/fuzz
+      - run: cargo install cargo-fuzz --locked
+      # `+nightly` is required, not just installed: rust-toolchain.toml pins
+      # stable, and cargo-fuzz spawns a plain `cargo build` that would pick it
+      # up. The `+nightly` proxy sets RUSTUP_TOOLCHAIN for that child.
+      - name: Fuzz Session::apply
+        working-directory: crates/inline/fuzz
+        run: cargo +nightly fuzz run session_apply -- -max_total_time=60
+      - name: Fuzz Session::key
+        working-directory: crates/inline/fuzz
+        run: cargo +nightly fuzz run session_key -- -max_total_time=60
+
   # The release builds Windows and Intel Mac binaries; make sure every PR
   # still compiles for them. Windows has no pseudo-terminal tests.
   build:

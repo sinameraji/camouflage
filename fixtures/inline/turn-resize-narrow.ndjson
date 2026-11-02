@@ -1,0 +1,21 @@
+{"t":0,"in":{"event_type":"SessionStarted","payload":{"title":"autopilot 2.11.0","detail":["gpt-6-luna \u00b7 ~/project \u00b7 main","/ for commands \u00b7 @ to mention files"],"accent":"orange","assistant_label":"autopilot"}}}
+{"t":20,"in":{"event_type":"SlashCommandsRegistered","payload":{"commands":[{"name":"help","description":"Show the commands and shortcuts","args_hint":null},{"name":"model","description":"Switch the model","args_hint":"[name]"},{"name":"hooks","description":"Manage hooks","args_hint":null},{"name":"sessions","description":"Resume a previous session","args_hint":null},{"name":"theme","description":"Pick a colour theme","args_hint":null},{"name":"agents","description":"Show running agents","args_hint":null},{"name":"mcp","description":"Manage MCP servers","args_hint":null},{"name":"permissions","description":"Review allowed tools","args_hint":null},{"name":"cost","description":"Show token usage and cost","args_hint":null},{"name":"clear","description":"Clear the transcript","args_hint":null},{"name":"compact","description":"Compact the conversation","args_hint":null},{"name":"settings","description":"Open settings","args_hint":null}]}}}
+{"t":30,"in":{"event_type":"MentionCandidatesRegistered","payload":{"candidates":[{"token":"crates/inline/src/session.rs","kind":"file"},{"token":"crates/inline/src/blocks.rs","kind":"file"},{"token":"crates/inline/src/chrome.rs","kind":"file"},{"token":"crates/inline/tests/replay.rs","kind":"file"},{"token":"fixtures/inline/README.md","kind":"file"},{"token":"scripts/gen_inline_fixtures.py","kind":"file"},{"token":"Cargo.toml","kind":"file"},{"token":"README.md","kind":"file"}]}}}
+{"t":40,"in":{"event_type":"StatusUpdate","payload":{"segments":{"model":"gpt-6-luna","tokens":"12.4k tokens","cost":"$0.91"}}}}
+{"t":90,"out":{"event_type":"UserInputSubmitted","payload":{"text":"summarise the diff"}}}
+{"t":140,"in":{"event_type":"StatusUpdate","payload":{"segments":{"phase":"thinking"}}}}
+{"t":140,"in":{"event_type":"AssistantStreamStarted","payload":{"stream_id":"s1"}}}
+{"t":152,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"The change folds a run of one tool into "}}}
+{"t":164,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"a single row so long code steps stop flo"}}}
+{"t":176,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"oding the transcript."}}}
+{"t":196,"in":{"event_type":"AssistantMessageCompleted","payload":{"stream_id":"s1","text":"The change folds a run of one tool into a single row so long code steps stop flooding the transcript."}}}
+{"t":216,"in":{"event_type":"ToolExecutionStarted","payload":{"tool_id":"t1","tool":"Read","command":"crates/inline/src/compact.rs","started_at_ms":216}}}
+{"t":916,"in":{"event_type":"ToolExecutionFinished","payload":{"tool_id":"t1","exit_code":0,"summary":"706 lines"}}}
+{"t":976,"resize":[60,24]}
+{"t":976,"in":{"event_type":"ToolExecutionStarted","payload":{"tool_id":"t2","tool":"Edit","command":"crates/inline/src/compact.rs","started_at_ms":976}}}
+{"t":1476,"in":{"event_type":"ToolExecutionFinished","payload":{"tool_id":"t2","exit_code":0,"summary":"Updated compact.rs \u00b7 +18 \u22124"}}}
+{"t":1506,"in":{"event_type":"AssistantStreamStarted","payload":{"stream_id":"s2"}}}
+{"t":1518,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s2","token":"Narrow terminals now wrap the summary in"}}}
+{"t":1530,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s2","token":"stead of truncating it."}}}
+{"t":1550,"in":{"event_type":"AssistantMessageCompleted","payload":{"stream_id":"s2","text":"Narrow terminals now wrap the summary instead of truncating it."}}}
+{"t":1630,"in":{"event_type":"StatusUpdate","payload":{"segments":{"phase":""}}}}

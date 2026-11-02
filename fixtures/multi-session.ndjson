@@ -1,0 +1,9 @@
+{"session_id":"11111111-1111-4111-8111-111111111111","seq":0,"event_type":"SessionStarted","payload":{"title":"camouflage"}}
+{"session_id":"22222222-2222-4222-8222-222222222222","seq":0,"event_type":"SessionStarted","payload":{"title":"installer"}}
+{"session_id":"11111111-1111-4111-8111-111111111111","seq":1,"event_type":"SessionStatus","payload":{"state":"working","title":"camouflage","place":"this computer","branch":"feat/deck","cost_usd":0.42,"context_used":12000,"context_limit":200000,"updated_ms":1762000000000}}
+{"session_id":"22222222-2222-4222-8222-222222222222","seq":1,"event_type":"SessionStatus","payload":{"state":"blocked","title":"installer","place":"server-1","branch":"dl/sessions","detail":"waiting for approval: run tests","updated_ms":1762000001000}}
+{"session_id":"11111111-1111-4111-8111-111111111111","seq":2,"event_type":"UserMessageCreated","payload":{"text":"add the deck"}}
+{"session_id":"22222222-2222-4222-8222-222222222222","seq":2,"event_type":"SessionStatus","payload":{"state":"done","title":"installer","branch":"dl/sessions","pr_url":"https://github.com/directionally-local/installer/pull/49","cost_usd":1.25,"updated_ms":1762000002000}}
+{"session_id":"11111111-1111-4111-8111-111111111111","seq":3,"event_type":"SessionStatus","payload":{"state":"failed","title":"camouflage","branch":"feat/deck","detail":"tests failed: 2 assertions","updated_ms":1762000003000}}
+{"session_id":"22222222-2222-4222-8222-222222222222","seq":3,"event_type":"SessionEnded","payload":{}}
+{"session_id":"11111111-1111-4111-8111-111111111111","seq":4,"event_type":"SessionEnded","payload":{}}

@@ -1,0 +1,25 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› /mcp
+──── live area when the user sent SelectListResponse ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ MCP servers                                                                                     │
+│                                                                                                 │
+│ Connected                                                                                       │
+│ › 1. ● github                             connected · 14 tools                                  │
+│   2. ● linear                             connected · 6 tools                                   │
+│                                                                                                 │
+│ Available                                                                                       │
+│   3. ○ sentry                             not configured                                        │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ↑↓ to choose · type to search · enter to select · esc to cancel
+────
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts                                               gpt-6-luna · 12.4k tokens · $0.91

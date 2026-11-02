@@ -16,3 +16,5 @@ export {
 } from "./types.js";
 
 export { mount, selectList, confirm, permission, table, keyValueView, form, wizard, tasksSet, suspendTerminal, resumeTerminal } from "./binding.js";
+
+export { Turn, StreamHandle, ToolHandle } from "./lifecycle.js";

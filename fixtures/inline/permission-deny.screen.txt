@@ -1,0 +1,28 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› delete the build directory
+──── live area when the user sent PermissionResponse ────
+⠧ Waiting for you… · 0s · ↓ 0 tokens · esc to interrupt
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Run rm -rf target                                                                               │
+│                                                                                                 │
+│ Do you want to allow this Bash?                                                                 │
+│ › 1. Yes                                                                                        │
+│   2. Yes, and don't ask again this session                                                      │
+│   3. No, and tell autopilot what to do differently  esc                                         │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ↑↓ to choose · enter to confirm · esc to interrupt
+────
+
+  └ Interrupted · what should autopilot do instead?
+
+  Understood — I won't touch the build directory.
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts                                               gpt-6-luna · 12.4k tokens · $0.91

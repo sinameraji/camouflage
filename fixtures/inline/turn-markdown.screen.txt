@@ -1,0 +1,38 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› write up the fixture plan
+
+  Fixture plan
+
+  The replay harness already diffs the final screen, so the corpus only needs coverage, not
+  cleverness.
+
+  • long turns with many tools
+  • resizes mid-turn
+  • interrupts from both keys
+  • every picker and form
+  • permission prompts with diffs
+  • /clear
+
+  Budget
+
+  Area    │ Fixtures │ Notes
+  ────────┼──────────┼──────────────────────────
+  turns   │ 20       │ tools, streaming, errors
+  pickers │ 9        │ one per command
+  forms   │ 3        │ text, multiline, password
+
+  │ #[test]
+  │ fn recorded_sessions_render_as_before() {
+  │     // every fixture, every run
+  │ }
+
+  │ A renderer change that alters any of it fails here first.
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts                                               gpt-6-luna · 12.4k tokens · $0.91

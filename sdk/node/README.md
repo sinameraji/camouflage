@@ -89,6 +89,7 @@ Extends `EventEmitter`. Send events with `send()`; subscribe to outbound events 
 |---------------------------------|-------------------------------------------------|
 | `send(event_type, payload?)`    | Write one event into the renderer.              |
 | `sendEvent({ event_type, payload? })` | Write a pre-built `Event`.                |
+| `turn(opts?)` → `Turn`          | Open a turn whose handles auto-settle (below).  |
 | `close()` → `Promise<number>`   | Graceful shutdown; resolves with exit code.     |
 | `kill(signal?)`                 | Forceful — only if `close()` is wedged.         |
 
@@ -104,6 +105,51 @@ Extends `EventEmitter`. Send events with `send()`; subscribe to outbound events 
 | `"cancelRequested"`   | `{}` — user pressed Esc                          |
 | `"event"`            | any outbound `Event` (raw)                        |
 | `"exit"`             | `{ code, signal }` — renderer exited             |
+
+### Lifecycle API: turns, streams and tools that settle themselves
+
+The raw protocol is ~41 events and the host has to get the ordering right:
+start a stream before its deltas, finish every tool, end every stream,
+clear the busy phase. Forget one finish event and the renderer keeps a
+spinner running forever.
+
+`cam.turn()` flips that around: open a handle, write meaning into it, and
+closing the handle — or the whole turn — settles everything underneath it.
+
+```js
+const turn = cam.turn();
+
+const s = turn.stream();          // AssistantStreamStarted
+s.reasoning("thinking…");         // AssistantReasoningDelta (Ctrl+R in the UI)
+s.write("Hello");                 // AssistantTokenDelta
+s.end();                          // AssistantMessageCompleted
+
+const tool = turn.tool({ name: "Bash", args: "npm test" }); // ToolExecutionStarted
+tool.stdout("1..5\n");            // ToolExecutionStdout
+tool.finish({ status: "ok", summary: "5 passed", diff });   // ToolExecutionFinished
+
+const { choice } = await turn.permission({ title: "edit src/auth.ts", diff });
+
+turn.end();                       // settles anything still open
+```
+
+Guarantees:
+
+- **Closing a handle settles it.** `s.end()`, `tool.finish()` and `turn.end()`
+  are idempotent; a second call is a no-op, never a duplicate event.
+- **`turn.end()` settles everything under the turn**: open streams get
+  `AssistantMessageCompleted`, open tools get `ToolExecutionFinished`
+  (override with `end({ toolStatus: "cancelled" })`), unanswered
+  `turn.permission()` promises resolve `{ choice: "deny" }`, and the busy
+  `phase` segment is cleared so no spinner outlives the turn (opt out with
+  `end({ phase: null })`).
+- **A renderer exit settles everything**: every open handle closes and every
+  pending promise resolves, so no host hangs on a dead renderer.
+- **`send()` stays available** as the escape hatch — handles and raw sends
+  interleave freely.
+- Using a handle after its turn ended throws (`turn.stream()` on an ended
+  turn, an unknown `status`), so ordering bugs surface immediately instead
+  of silently corrupting the UI.
 
 ### Convenience helpers
 

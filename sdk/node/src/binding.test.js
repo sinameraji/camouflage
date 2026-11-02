@@ -113,6 +113,17 @@ test("close() resolves with the child's exit code", async () => {
   assert.equal(code, 0);
 });
 
+test("close() resolves after the renderer was killed by a signal", async () => {
+  // A signal-killed child reports exitCode === null and its exit event has
+  // already fired; close() used to wait for an event that never comes and
+  // hang the host forever.
+  const cam = await mountFake();
+  cam.kill("SIGKILL");
+  await new Promise((r) => cam.on("exit", r));
+  const code = await cam.close();
+  assert.equal(typeof code, "number");
+});
+
 test("selectList() helper round-trips via the fake echo renderer", async () => {
   // The fake echoes any inbound NDJSON back on stdout. Sending a ShowSelectList
   // makes the fake "respond" with that exact event — not a real
