@@ -4,8 +4,7 @@ Direct dependencies, with rationale. Budget: ≤15 for v0.1.
 
 | Crate                 | Used by              | Why                                          | Alternatives considered           |
 |-----------------------|----------------------|----------------------------------------------|-----------------------------------|
-| ratatui               | tui                  | Terminal UI; minimal, modern, diff-based     | tui-rs (unmaintained), cursive    |
-| crossterm             | tui                  | Cross-platform terminal backend for ratatui  | termion (Linux-only)              |
+| crossterm             | tui                  | Cross-platform terminal backend (raw mode, keys, /dev/tty) | termion (Linux-only) |
 | tokio                 | tui, headless        | Async runtime; needed for concurrent I/O     | smol, std threads                 |
 | serde                 | protocol, …          | Event (de)serialisation                      | manual JSON parsing               |
 | serde_json            | protocol, …          | NDJSON transport, payload values             | simd-json (heavier)               |
@@ -17,9 +16,9 @@ Direct dependencies, with rationale. Budget: ≤15 for v0.1.
 | tracing               | tui, store           | Structured logging                           | log + env_logger                  |
 | tracing-subscriber    | tui                  | Tracing -> stderr formatter                  | fmt by hand                       |
 | libc                  | tui                  | Open /dev/tty + apply termios (raw mode) so the TUI works when stdin is a pipe of NDJSON events | nix (heavier) |
-| unicode-width         | tui                  | Display-width-aware truncation of long rows / status segments on narrow terminals | char-count fallback (wrong for emoji + CJK) |
+| unicode-width         | inline               | Display-width-aware truncation of long rows / status segments on narrow terminals | char-count fallback (wrong for emoji + CJK) |
 
-**Total direct deps: 14** (under the 15 budget).
+**Total direct deps: 13** (under the 15 budget).
 
 ## Rules
 
@@ -31,4 +30,6 @@ Direct dependencies, with rationale. Budget: ≤15 for v0.1.
 
 ## Transitive surface
 
-`rusqlite` (with `bundled`) and `ratatui` pull the largest trees. Both are widely used, actively maintained, and have no native runtime dependencies once `bundled` is set.
+`rusqlite` (with `bundled`) pulls the largest tree. It is widely used,
+actively maintained, and has no native runtime dependencies once `bundled`
+is set.

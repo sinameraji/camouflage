@@ -128,7 +128,7 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     let (w, h) = terminal_size();
     let theme = detect_theme();
     let mut term = InlineTerminal::new(screen, w, h);
-    let mut session = Session::new(app_title, theme, term.content_width(), h as usize);
+    let mut session = Session::new(app_title.clone(), theme.clone(), term.content_width(), h as usize);
     if let Ok(cwd) = std::env::current_dir() {
         if let Some((repo, branch)) = resolve_project_context(&cwd) {
             session.set_project_context(repo, branch);
@@ -142,7 +142,7 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     // waits for the host's own (which may carry a title and welcome lines).
     // Through the writer, like everything else: housekeeping may hold the
     // database for a while on the first run after an upgrade.
-    let _ = writer.0.send(Some(make_event(&seq, session_id, EventType::SessionStarted, serde_json::json!({ "synthetic": true }))));
+    let _ = writer.0.send(StoreMsg::Event(make_event(&seq, session_id, EventType::SessionStarted, serde_json::json!({ "synthetic": true }))));
 
     let mut last_frame = None;
     // Host-driven draws are batched to one per MIN_FRAME_GAP_MS (one per
@@ -152,6 +152,9 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     let mut deferred = false;
     // A child process owns the terminal (TerminalSuspend): no drawing.
     let mut suspended = false;
+    // Ctrl+O's full-screen transcript. While it is open the app feeds it
+    // keys and draws it; the session's live area is untouched.
+    let mut transcript: Option<crate::transcript::Transcript> = None;
     // Loop statistics, written on exit when CAMOUFLAGE_STATS_PATH is set
     // (the idle soak test uses these to prove idle means no wakeups).
     let mut wakeups: u64 = 0;
@@ -160,7 +163,11 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     let result: Result<()> = async {
         loop {
             let now = now_ms();
-            let mut deadline = if suspended { None } else { session.next_wakeup(now) };
+            let mut deadline = if suspended || transcript.is_some() {
+                None
+            } else {
+                session.next_wakeup(now)
+            };
             let gap = if session.focused { MIN_FRAME_GAP_MS } else { UNFOCUSED_FRAME_MS };
             if deferred {
                 let at = last_draw + gap;
@@ -230,15 +237,37 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
                     Input::Term(TermEvent::FocusLost) => session.focused = false,
                     Input::Term(TermEvent::FocusGained) => session.focused = true,
                     Input::Term(TermEvent::Resize(w, h)) => {
-                        session.resize((w as usize).saturating_sub(1), h as usize);
-                        let frame = session.live_frame(now);
-                        term.resize(w, h, &frame)?;
-                        last_frame = Some(frame);
+                        if let Some(view) = transcript.as_mut() {
+                            view.resize(w as usize, h as usize);
+                            view.draw(term.get_mut())?;
+                        } else {
+                            session.resize((w as usize).saturating_sub(1), h as usize);
+                            let frame = session.live_frame(now);
+                            term.resize(w, h, &frame)?;
+                            last_frame = Some(frame);
+                        }
                     }
-                    Input::Term(TermEvent::Paste(text)) => session.key(Key::Paste(text), now),
+                    Input::Term(TermEvent::Paste(text)) => {
+                        if transcript.is_none() {
+                            session.key(Key::Paste(text), now);
+                        }
+                    }
                     Input::Term(TermEvent::Key(k)) => {
-                        if let Some(key) = map_key(k) {
+                        let mut close = false;
+                        if let Some(view) = transcript.as_mut() {
+                            if view.handle_key(k) {
+                                view.leave(term.get_mut())?;
+                                close = true;
+                            } else {
+                                view.draw(term.get_mut())?;
+                            }
+                        } else if let Some(key) = map_key(k) {
                             session.key(key, now);
+                        }
+                        if close {
+                            transcript = None;
+                            last_frame = None;
+                            urgent = true;
                         }
                     }
                     Input::Term(_) | Input::Tick => {}
@@ -246,6 +275,28 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
                 handled += 1;
                 if handled < 1000 {
                     pending = rx.try_recv().ok();
+                }
+            }
+
+            // Ctrl+O: page the full transcript, built from the store. The
+            // app keeps the event loop and feeds the view keys, so the key
+            // reader never races it for the terminal.
+            if session.transcript_requested {
+                session.transcript_requested = false;
+                if let Some(store) = &store {
+                    let _ = flush_store(&writer.0);
+                    let events = store.load_session(session_id).unwrap_or_default();
+                    let cfg = crate::replay::ReplayConfig {
+                        app_title: app_title.clone(),
+                        theme: theme.clone(),
+                        width: term.content_width(),
+                        height: term.size().1 as usize,
+                    };
+                    let view = crate::transcript::Transcript::new(events, cfg);
+                    view.enter(term.get_mut())?;
+                    transcript = Some(view);
+                } else {
+                    session.flash_message("The transcript needs a session store (drop --no-store)", now_ms());
                 }
             }
 
@@ -266,6 +317,18 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
 
             let now = now_ms();
             if suspended {
+                continue;
+            }
+            // The transcript owns the screen while it is open. Host events
+            // still apply to the session, so the live area is current when
+            // the view closes.
+            if transcript.is_some() {
+                if host_closed {
+                    if let Some(view) = transcript.take() {
+                        let _ = view.leave(term.get_mut());
+                    }
+                    break;
+                }
                 continue;
             }
             let gap = if session.focused { MIN_FRAME_GAP_MS } else { UNFOCUSED_FRAME_MS };
@@ -305,6 +368,9 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     .await;
 
     // Leave the transcript on screen, drop the input box, restore the tty.
+    if let Some(view) = transcript.take() {
+        let _ = view.leave(term.get_mut());
+    }
     let now = now_ms();
     session.resize(term.content_width(), term.size().1 as usize);
     let history = session.take_history(now);
@@ -318,8 +384,8 @@ pub async fn run(cfg: InlineConfig) -> Result<()> {
     // behind a long housekeeping pass (first run after an upgrade): after
     // 1.5 s exit anyway; SQLite rolls an unfinished VACUUM back safely.
     let (writer_tx, writer_thread) = writer;
-    let _ = writer_tx.send(Some(make_event(&seq, session_id, EventType::SessionEnded, serde_json::json!({}))));
-    let _ = writer_tx.send(None);
+    let _ = writer_tx.send(StoreMsg::Event(make_event(&seq, session_id, EventType::SessionEnded, serde_json::json!({}))));
+    let _ = writer_tx.send(StoreMsg::Close);
     if let Some(t) = writer_thread {
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
         while !t.is_finished() && std::time::Instant::now() < deadline {
@@ -376,9 +442,13 @@ const STORE_BATCH_MS: u64 = 250;
 /// Persist events on a background thread, grouped into one transaction per
 /// STORE_BATCH_MS. Sleeps (no timers) when no events arrive. A crash loses
 /// at most the last batch from the store; the screen is unaffected.
-/// `None` asks the writer to flush and stop; the host reader may still hold
-/// a sender while it waits on stdin.
-type StoreMsg = Option<Event>;
+/// `Flush` saves everything buffered and answers when it is on disk (the
+/// transcript view reads the store); `Close` flushes and stops.
+enum StoreMsg {
+    Event(Event),
+    Flush(std::sync::mpsc::Sender<()>),
+    Close,
+}
 
 fn spawn_store_writer(store: Option<Arc<SqliteStore>>) -> (std::sync::mpsc::Sender<StoreMsg>, Option<std::thread::JoinHandle<()>>) {
     let (tx, rx) = std::sync::mpsc::channel::<StoreMsg>();
@@ -389,37 +459,50 @@ fn spawn_store_writer(store: Option<Arc<SqliteStore>>) -> (std::sync::mpsc::Send
         .spawn(move || {
             // Saves conversations, not keystrokes; see persist.rs.
             let mut coalescer = crate::persist::Coalescer::default();
+            let mut batch: Vec<Event> = Vec::new();
+            let mut waiters: Vec<std::sync::mpsc::Sender<()>> = Vec::new();
+            let flush = |batch: &mut Vec<Event>, coalescer: &mut crate::persist::Coalescer, waiters: &mut Vec<std::sync::mpsc::Sender<()>>| {
+                batch.extend(coalescer.flush());
+                if !batch.is_empty() {
+                    let _ = store.append_batch(batch);
+                    batch.clear();
+                }
+                for w in waiters.drain(..) {
+                    let _ = w.send(());
+                }
+            };
             loop {
                 let first = match rx.recv() {
-                    Ok(Some(ev)) => ev,
+                    Ok(StoreMsg::Event(ev)) => ev,
+                    Ok(StoreMsg::Flush(done)) => {
+                        waiters.push(done);
+                        flush(&mut batch, &mut coalescer, &mut waiters);
+                        continue;
+                    }
                     // Closing (or every sender gone): save what's buffered.
-                    _ => {
-                        let rest = coalescer.flush();
-                        if !rest.is_empty() {
-                            let _ = store.append_batch(&rest);
-                        }
+                    Ok(StoreMsg::Close) | Err(_) => {
+                        flush(&mut batch, &mut coalescer, &mut waiters);
                         break;
                     }
                 };
-                let mut batch = coalescer.push(first);
+                batch.extend(coalescer.push(first));
                 let mut close = false;
                 let until = std::time::Instant::now() + std::time::Duration::from_millis(STORE_BATCH_MS);
                 while let Some(left) = until.checked_duration_since(std::time::Instant::now()) {
                     match rx.recv_timeout(left) {
-                        Ok(Some(ev)) => batch.extend(coalescer.push(ev)),
-                        Ok(None) => {
+                        Ok(StoreMsg::Event(ev)) => batch.extend(coalescer.push(ev)),
+                        Ok(StoreMsg::Flush(done)) => {
+                            waiters.push(done);
+                            break;
+                        }
+                        Ok(StoreMsg::Close) => {
                             close = true;
                             break;
                         }
                         Err(_) => break,
                     }
                 }
-                if close {
-                    batch.extend(coalescer.flush());
-                }
-                if !batch.is_empty() {
-                    let _ = store.append_batch(&batch);
-                }
+                flush(&mut batch, &mut coalescer, &mut waiters);
                 if close {
                     break;
                 }
@@ -427,6 +510,16 @@ fn spawn_store_writer(store: Option<Arc<SqliteStore>>) -> (std::sync::mpsc::Send
         })
         .ok();
     (tx, handle)
+}
+
+/// Ask the writer to put everything buffered on disk. Returns false when the
+/// writer is gone (or there is no store), so the caller can still read.
+fn flush_store(writer: &std::sync::mpsc::Sender<StoreMsg>) -> bool {
+    let (tx, rx) = std::sync::mpsc::channel();
+    if writer.send(StoreMsg::Flush(tx)).is_err() {
+        return false;
+    }
+    rx.recv_timeout(std::time::Duration::from_secs(2)).is_ok()
 }
 
 /// Retention and compaction, once per start on a low-priority thread: drop
@@ -473,7 +566,7 @@ fn spawn_host_reader(session_id: Uuid, tx: mpsc::Sender<Input>, writer: std::syn
             if ev.schema_version == 0 {
                 ev.schema_version = SCHEMA_VERSION;
             }
-            let _ = writer.send(Some(ev.clone()));
+            let _ = writer.send(StoreMsg::Event(ev.clone()));
             if tx.send(Input::Host(ev)).await.is_err() {
                 return;
             }
@@ -716,7 +809,7 @@ fn make_event(seq: &AtomicI64, session_id: Uuid, event_type: EventType, payload:
 /// runners, `script`, and a few IDE task terminals. Taken literally that leaves
 /// the renderer one cell wide, so every line is drawn as a single "…" and the
 /// picker never appears. Fall back to $COLUMNS/$LINES, then 80×24.
-fn terminal_size() -> (u16, u16) {
+pub(crate) fn terminal_size() -> (u16, u16) {
     let reported = crossterm::terminal::size().ok();
     let env = |name: &str| std::env::var(name).ok().and_then(|value| value.trim().parse::<u16>().ok());
     resolve_size(reported, env("COLUMNS"), env("LINES"))
@@ -731,7 +824,7 @@ fn resolve_size(reported: Option<(u16, u16)>, columns: Option<u16>, lines: Optio
 }
 
 /// Dark unless COLORFGBG says the background is light.
-fn detect_theme() -> Theme {
+pub(crate) fn detect_theme() -> Theme {
     let light = std::env::var("COLORFGBG")
         .ok()
         .and_then(|v| v.rsplit(';').next().and_then(|bg| bg.parse::<u8>().ok()))

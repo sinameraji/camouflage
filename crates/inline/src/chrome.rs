@@ -529,7 +529,7 @@ pub fn shortcuts(theme: &Theme, width: usize) -> Vec<Line> {
         ],
         [
             "esc to interrupt",
-            "ctrl+o to expand output",
+            "ctrl+o for the transcript",
             "ctrl+r for reasoning",
         ],
     ];

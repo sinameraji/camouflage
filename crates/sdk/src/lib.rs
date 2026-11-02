@@ -5,7 +5,7 @@
 //! This crate is a thin re-export facade over the workspace's internal
 //! crates. Hosts embedding Camouflage should depend on `camouflage` (this
 //! crate) — not the internal `camouflage-protocol` / `camouflage-store` /
-//! `camouflage-renderer` crates directly, which may rearrange between
+//! `camouflage-inline` crates directly, which may rearrange between
 //! versions.
 //!
 //! ## Quick start (embedding the renderer in a Rust host)
@@ -16,18 +16,20 @@
 //! // 1. Persist events to a store (the architecture invariant is
 //! //    "persist before render/broadcast").
 //! let store = SqliteStore::open("session.db").unwrap();
-//! let session = uuid::Uuid::new_v4();
+//! let session_id = uuid::Uuid::new_v4();
 //!
-//! // 2. Apply events to a renderer.
-//! let mut model = RenderModel::new();
+//! // 2. Apply events to the inline renderer.
+//! let mut session = Session::new("my-app", Theme::dark(), 80, 24);
 //! let event = Event::new(
-//!     session, 0, EventType::SessionStarted, serde_json::json!({}),
+//!     session_id, 0, EventType::SessionStarted, serde_json::json!({}),
 //! );
 //! store.append_event(&event).unwrap();
-//! model.apply(&event);
+//! session.apply(&event, 0);
 //!
-//! // 3. Optionally project a Snapshot for a remote frontend.
-//! let snapshot: Snapshot = model.snapshot();
+//! // 3. Print finished blocks into the terminal's scrollback.
+//! for line in session.take_history(0) {
+//!     println!("{}", line.plain_text());
+//! }
 //! ```
 //!
 //! ## Wire protocol (for non-Rust hosts)
@@ -39,19 +41,17 @@
 //!
 //! ## Cargo binaries the workspace ships
 //!
-//! - `camouflage-tui` — interactive renderer
+//! - `camouflage-tui` — interactive inline renderer, replay and transcript view
 //! - `camouflage-record` — persist NDJSON to SQLite, no UI
 //! - `camouflage-broadcast` — fan NDJSON to WebSocket clients
 //! - `camouflage-export` — dump a stored session to portable NDJSON
 //! - `camouflage-validate` — strict NDJSON validator
-//! - `camouflage-replay-check` — deterministic CI helper
 //!
 //! ## Modules
 //!
 //! - [`protocol`]    — `Event`, `EventType`, payload structs, `Direction`
 //! - [`store`]       — `EventStore` trait, `SqliteStore` reference impl
-//! - [`renderer`]    — `RenderModel`, `Renderer` trait, `Snapshot`,
-//!   markdown helpers, theme registry
+//! - [`inline`]      — `Session`, blocks, markdown, theme, terminal writer
 //! - [`headless`]    — NDJSON decoder, strict validator, fixture loader
 //! - [`prelude`]     — common imports
 
@@ -65,9 +65,9 @@ pub mod store {
     pub use camouflage_store::*;
 }
 
-pub mod renderer {
-    //! Re-export of `camouflage_renderer`.
-    pub use camouflage_renderer::*;
+pub mod inline {
+    //! Re-export of `camouflage_inline`.
+    pub use camouflage_inline::*;
 }
 
 pub mod headless {
@@ -77,11 +77,9 @@ pub mod headless {
 
 pub mod prelude {
     //! Common imports for hosts embedding Camouflage.
+    pub use camouflage_inline::{Session, Theme};
     pub use camouflage_protocol::{
         payloads, Direction, Event, EventType, ProtocolError, SCHEMA_VERSION,
-    };
-    pub use camouflage_renderer::{
-        RenderModel, Renderer, Snapshot, SnapshotRenderer, ViewportState,
     };
     pub use camouflage_store::{EventStore, SqliteStore};
 }
@@ -95,17 +93,17 @@ mod tests {
 
     #[test]
     fn prelude_imports_are_usable() {
-        let session = uuid::Uuid::nil();
-        let _ev = Event::new(
-            session,
+        let session_id = uuid::Uuid::nil();
+        let ev = Event::new(
+            session_id,
             0,
             EventType::SessionStarted,
             serde_json::json!({}),
         );
-        let mut model = RenderModel::new();
-        let _snap = model.snapshot();
+        let mut session = Session::new("test", Theme::dark(), 80, 24);
+        session.apply(&ev, 0);
         let store = SqliteStore::open_in_memory().expect("store");
-        assert_eq!(store.latest_seq(session).unwrap_or(-1), -1);
+        assert_eq!(store.latest_seq(session_id).unwrap_or(-1), -1);
     }
 
     #[test]

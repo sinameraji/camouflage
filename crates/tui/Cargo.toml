@@ -8,17 +8,11 @@ license.workspace = true
 name = "camouflage-tui"
 path = "src/main.rs"
 
-[[bin]]
-name = "camouflage-diff"
-path = "src/bin/camouflage_diff.rs"
-
 [dependencies]
 camouflage-protocol = { workspace = true }
 camouflage-store = { workspace = true }
-camouflage-renderer = { workspace = true }
 camouflage-headless = { workspace = true }
-camouflage-inline = { path = "../inline" }
-ratatui = { workspace = true }
+camouflage-inline = { workspace = true }
 crossterm = { workspace = true, features = ["use-dev-tty"] }
 tokio = { workspace = true }
 clap = { workspace = true }
@@ -28,7 +22,6 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde_json = { workspace = true }
 libc = { workspace = true }
-unicode-width = { workspace = true }
 
 [dev-dependencies]
 vt100 = "0.16"

@@ -27,7 +27,7 @@
 //!
 //! Wire format: one event per websocket text frame, identical NDJSON to what
 //! `camouflage-tui --stdin-events` consumes on stdin. Clients can either
-//! parse them directly or wrap a `RenderModel` in JS/WASM (Slice F).
+//! parse them directly or render them with the inline session in JS/WASM.
 //!
 //! This is the "broadcast everything to everyone" minimum. Snapshot-mode
 //! transport (where each client gets `Snapshot` documents instead of raw

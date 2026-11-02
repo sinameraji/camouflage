@@ -51,7 +51,7 @@ interface MountOptions {
   env?: NodeJS.ProcessEnv;   // merged with process.env
   inheritStderr?: boolean;   // default true; false → "stderr" event
   renderToTerminal?: boolean; // true → stdout goes to terminal, responses on fd 3
-  ui?: "inline" | "fullscreen"; // default "inline" (since 2.4.0); see below
+  ui?: "inline";            // the only UI; kept for compatibility
 }
 ```
 
@@ -60,7 +60,8 @@ and redraws only a small live region (the reply being streamed, the
 spinner, the input box). The transcript stays after exit, text selection
 works normally, and an idle renderer uses no CPU. It draws on the terminal
 (`/dev/tty`) even in the default piped mode, so it works with a plain
-`mount({ ui: "inline" })`.
+`mount({ ui: "inline" })`. The old `"fullscreen"` mode was removed; passing
+it makes the renderer exit with a clear error.
 
 ### Helpers that wait for the user
 

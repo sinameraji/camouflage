@@ -6,9 +6,9 @@ Event-native rendering/runtime layer for long-running AI agent applications.
 
 - An event protocol (append-only, serializable, replayable) — 39 event types covering chat, tools, permissions, slash commands, mentions, background tasks
 - A persistence layer (SQLite, WAL) — every event flushed before render
-- A viewport-virtualized terminal renderer (ratatui) with bounded memory
+- An inline terminal renderer: finished output is printed once into the terminal's normal scrollback, and only a small live region is redrawn
 - A catalog of overlay primitives — SelectList, Confirm, Form, Wizard, Table, KeyValueView, Toast — for hosts to compose drill-down UX
-- A replay/timeline substrate with playback controls + inline event inspector
+- Replay (`--replay`, `--play`) and a searchable Ctrl+O transcript view, both built from SQLite
 - A Node SDK (`camouflage` on npm) that wraps the renderer subprocess and the protocol
 - A high-performance candidate replacement for React Ink in agent UIs
 
@@ -33,10 +33,16 @@ Run the benchmark:
 cargo run --release -p camouflage-bench -- --events 100000 --tools 1000 --tokens 50000
 ```
 
-Replay a stored session:
+Replay a stored session (the transcript is printed and the process exits):
 
 ```bash
 cargo run --release -p camouflage-tui -- --replay <SESSION_UUID>
+```
+
+Play a shareable `.camo` file (header line + NDJSON, or plain NDJSON):
+
+```bash
+cargo run --release -p camouflage-tui -- --play session.camo
 ```
 
 ## Node SDK
@@ -77,9 +83,9 @@ Emit one JSON object per line on stdout. The minimum required fields:
 
 Surfaces the renderer draws natively:
 
-- **Transcript** — user / assistant / system / tool rows with hand-rolled markdown (paragraphs, fenced ``` code, bulleted + numbered lists)
-- **Busy-turn summary** — turn-scoped elapsed time and token count, compact plan progress, live agents, a bounded trail of reads/edits/shell actions, and the latest action; Ctrl+O expands tool detail
-- **Tool view** — per-tool status glyphs (✓ done, ✗ error, ⊘ cancelled, ⊗ rejected), duration, repeated-signature warning, optional captured stdout overlay
+- **Transcript** — user / assistant / system / tool rows with markdown (paragraphs, fenced ``` code, bulleted + numbered lists, tables) and syntax highlighting
+- **Busy-turn summary** — turn-scoped elapsed time and token count, compact plan progress, live agents, a bounded trail of reads/edits/shell actions, and the latest action
+- **Tool view** — per-tool status glyphs (✓ done, ✗ error, ⊘ cancelled, ⊗ rejected), duration, repeated-signature warning, inline diffs, and collapsed output
 - **Permission modal** — vertical 1/2/3 picker with ↑↓ / j/k navigation, `?` help overlay, inline unified `+/-` diff for file edits, free-text feedback that rides along with the response
 - **Task ribbon** — background tasks with a celebration window so completed entries linger ~2s with a strikethrough ✓ before sweeping
 - **Slash command picker** — fuzzy filter with `[builtin] [project] [global]` source badges
@@ -87,33 +93,36 @@ Surfaces the renderer draws natively:
 - **Status bar** — mode · timer · cost · branch, plus warn segments (e.g. `/compact recommended` past 80% of the context limit)
 - **Toasts** — bottom-right, multiple stack, TTL-driven sweep
 - **Catalog overlays** — SelectList, Confirm, Form (text/secret/multiline fields), Wizard (multi-step), Table, KeyValueView; compose host-side for drill-down menus and wizards
-- **Replay UI** — play/pause/step/speed controls, scrub timeline, side-panel event inspector with kind filter
+- **Transcript view** — Ctrl+O pages the whole session from SQLite in the alternate screen, with `/` search and `n`/`N` navigation
 
 ## Keyboard controls
 
-Transcript / input:
+Input and transcript:
 
 | Key            | Action                                  |
 |----------------|-----------------------------------------|
 | Enter          | submit input as `UserMessageCreated`    |
 | Esc            | cancel active stream                    |
-| ↑ / ↓          | scroll line (frozen anchor while away from bottom) |
-| PgUp / PgDn    | scroll page                             |
-| Home / End     | scroll to top / jump to latest          |
-| Ctrl+E         | jump to latest (or end-of-line when typing) |
-| Ctrl+A         | start-of-line when typing               |
-| Ctrl+W / Ctrl+U| delete word / line before cursor        |
-| Ctrl+F         | open inline search                      |
-| Ctrl+C         | quit                                    |
+| ↑ / ↓          | prompt history                          |
+| PgUp / PgDn    | scroll the terminal's own scrollback    |
+| Ctrl+O         | open the full transcript view           |
+| Ctrl+R         | show / hide model reasoning             |
+| Ctrl+B         | background jobs and agents browser      |
+| Ctrl+C         | interrupt a turn; twice to exit         |
+| Ctrl+D         | exit when the input is empty            |
+| Shift+Tab      | switch modes                            |
+| `\` + Enter    | newline                                 |
 
-Overlays (empty input only, so they don't fire mid-prose):
+Transcript view:
 
-| Key | Action                                |
-|-----|---------------------------------------|
-| `?` | toggle help overlay                   |
-| `M` | toggle live metrics (events/s, frame, RSS) |
-| `T` | cycle theme                           |
-| `X` | toggle most-recent tool's stdout/stderr overlay |
+| Key            | Action                                  |
+|----------------|-----------------------------------------|
+| ↑ / ↓, j / k   | scroll one line                         |
+| PgUp / PgDn    | scroll a page                           |
+| Home / End     | top / bottom                            |
+| `/`            | search                                  |
+| `n` / `N`      | next / previous match                   |
+| `q` / Esc      | close                                   |
 
 Permission modal:
 
@@ -126,26 +135,17 @@ Permission modal:
 | Esc            | deny                                    |
 | (any other)    | buffered as feedback on the response    |
 
-Replay (with empty input, `--replay` mode):
-
-| Key      | Action                  |
-|----------|-------------------------|
-| Space    | play / pause            |
-| ← / →    | step backward / forward |
-| `+` / `-`| faster / slower         |
-| `0`      | restart                 |
-
 ## How this differs from React Ink
 
 | Concern          | React Ink                              | Camouflage                                |
 |------------------|----------------------------------------|-------------------------------------------|
-| State model      | retained UI tree                       | append-only event log + bounded view      |
-| Memory           | grows with transcript length           | bounded (row cap, evict-then-page-back)   |
-| Streaming        | re-renders on each token               | mutates one active row, 30–60 FPS throttle|
+| State model      | retained UI tree                       | append-only event log + live region       |
+| Memory           | grows with transcript length           | flat: printed blocks are dropped          |
+| Streaming        | re-renders on each token               | prints finished paragraphs, redraws only the live area |
 | Modals           | nested React subtrees                  | one overlay slot, ≈hundreds of bytes      |
 | Persistence      | none                                   | SQLite WAL, persisted before render       |
 | Replay           | not supported                          | first-class, deterministic                |
-| Terminal scrollback | trusted                             | not trusted — own viewport                |
+| Terminal scrollback | trusted                             | used for finished output; live area is redrawn |
 | Output ownership | mixed (tool stdout, model, UI)         | renderer is sole writer; everything else is an event |
 
 See `ARCHITECTURE.md` for details and `BENCHMARKS.md` for the headline numbers.
