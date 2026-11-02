@@ -163,6 +163,12 @@ and finalises the row.
 The host began invoking a tool. Renderer adds a collapsed tool row.
 `tool_id` correlates subsequent stdout/stderr/finished events.
 
+Optional `read_only` (bool): the tool only reads. The renderer folds such
+tools into one `Explored …` row instead of printing a row each, and uses it
+to override its own guess from `tool`/`command` — a shell command it can't
+classify (a loop, a script) folds when the host says it only reads, and a
+command that looks read-only keeps its row when the host says it writes.
+
 #### `ToolExecutionStdout`, `ToolExecutionStderr`
 ```json
 { "event_type": "ToolExecutionStdout", "payload": { "tool_id": "t1", "chunk": "FAIL src/auth/login.test.ts\n" } }
