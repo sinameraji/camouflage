@@ -1,0 +1,16 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› explain the compact region
+
+  The compact region replaces the tool rows and the plan while a turn is running. Each tool
+  contributes one bead, so a long run of reads stays a single line. When the turn settles the
+  region is cleared and the finished blocks print once. That keeps the live frame a fixed height no
+  matter how long the turn gets.
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts                                               gpt-6-luna · 12.4k tokens · $0.91

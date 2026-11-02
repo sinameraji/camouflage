@@ -1,0 +1,18 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› keep going
+
+  Continuing from the compacted summary.
+
+· Conversation compacted
+✓ Read docs/inline-redesign.md
+
+  The redesign notes still match the implementation.
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts                                               gpt-6-luna · 12.4k tokens · $0.91

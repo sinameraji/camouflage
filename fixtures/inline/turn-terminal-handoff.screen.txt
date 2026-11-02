@@ -1,0 +1,15 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› ! git status --short
+
+✓ Bash git status --short
+
+  Three files changed, one new fixture.
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts                                               gpt-6-luna · 12.4k tokens · $0.91

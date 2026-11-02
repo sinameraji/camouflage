@@ -1,0 +1,23 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› what can I press?
+
+  Press ? for the full list.
+──── live area at shortcuts panel ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › ?                                                                                             │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  / for commands                  shift+tab to switch modes       esc to interrupt
+  @ to mention files              \ + enter for a newline         ctrl+o to expand output
+  ↑ for history                   ctrl+c twice to exit            ctrl+r for reasoning
+                                                                gpt-6-luna · 12.4k tokens · $0.91
+────
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts                                               gpt-6-luna · 12.4k tokens · $0.91

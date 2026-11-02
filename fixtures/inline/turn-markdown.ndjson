@@ -1,0 +1,25 @@
+{"t":0,"in":{"event_type":"SessionStarted","payload":{"title":"autopilot 2.11.0","detail":["gpt-6-luna \u00b7 ~/project \u00b7 main","/ for commands \u00b7 @ to mention files"],"accent":"orange","assistant_label":"autopilot"}}}
+{"t":20,"in":{"event_type":"SlashCommandsRegistered","payload":{"commands":[{"name":"help","description":"Show the commands and shortcuts","args_hint":null},{"name":"model","description":"Switch the model","args_hint":"[name]"},{"name":"hooks","description":"Manage hooks","args_hint":null},{"name":"sessions","description":"Resume a previous session","args_hint":null},{"name":"theme","description":"Pick a colour theme","args_hint":null},{"name":"agents","description":"Show running agents","args_hint":null},{"name":"mcp","description":"Manage MCP servers","args_hint":null},{"name":"permissions","description":"Review allowed tools","args_hint":null},{"name":"cost","description":"Show token usage and cost","args_hint":null},{"name":"clear","description":"Clear the transcript","args_hint":null},{"name":"compact","description":"Compact the conversation","args_hint":null},{"name":"settings","description":"Open settings","args_hint":null}]}}}
+{"t":30,"in":{"event_type":"MentionCandidatesRegistered","payload":{"candidates":[{"token":"crates/inline/src/session.rs","kind":"file"},{"token":"crates/inline/src/blocks.rs","kind":"file"},{"token":"crates/inline/src/chrome.rs","kind":"file"},{"token":"crates/inline/tests/replay.rs","kind":"file"},{"token":"fixtures/inline/README.md","kind":"file"},{"token":"scripts/gen_inline_fixtures.py","kind":"file"},{"token":"Cargo.toml","kind":"file"},{"token":"README.md","kind":"file"}]}}}
+{"t":40,"in":{"event_type":"StatusUpdate","payload":{"segments":{"model":"gpt-6-luna","tokens":"12.4k tokens","cost":"$0.91"}}}}
+{"t":90,"out":{"event_type":"UserInputSubmitted","payload":{"text":"write up the fixture plan"}}}
+{"t":140,"in":{"event_type":"StatusUpdate","payload":{"segments":{"phase":"thinking"}}}}
+{"t":140,"in":{"event_type":"AssistantStreamStarted","payload":{"stream_id":"s1"}}}
+{"t":152,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"## Fixture plan\n\nThe replay harness alre"}}}
+{"t":164,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"ady diffs the final screen, so the corpu"}}}
+{"t":176,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"s only needs\n**coverage**, not clevernes"}}}
+{"t":188,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"s.\n\n- long turns with many tools\n- resiz"}}}
+{"t":200,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"es mid-turn\n- interrupts from both keys\n"}}}
+{"t":212,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"- every picker and form\n- permission pro"}}}
+{"t":224,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"mpts with diffs\n- `/clear`\n\n### Budget\n\n"}}}
+{"t":236,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"| Area | Fixtures | Notes |\n| --- | --- "}}}
+{"t":248,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"| --- |\n| turns | 20 | tools, streaming,"}}}
+{"t":260,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":" errors |\n| pickers | 9 | one per comman"}}}
+{"t":272,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"d |\n| forms | 3 | text, multiline, passw"}}}
+{"t":284,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"ord |\n\n```rust\n#[test]\nfn recorded_sessi"}}}
+{"t":296,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"ons_render_as_before() {\n    // every fi"}}}
+{"t":308,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"xture, every run\n}\n```\n\n> A renderer cha"}}}
+{"t":320,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"nge that alters any of it fails here fir"}}}
+{"t":332,"in":{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":"st.\n"}}}
+{"t":352,"in":{"event_type":"AssistantMessageCompleted","payload":{"stream_id":"s1","text":"## Fixture plan\n\nThe replay harness already diffs the final screen, so the corpus only needs\n**coverage**, not cleverness.\n\n- long turns with many tools\n- resizes mid-turn\n- interrupts from both keys\n- every picker and form\n- permission prompts with diffs\n- `/clear`\n\n### Budget\n\n| Area | Fixtures | Notes |\n| --- | --- | --- |\n| turns | 20 | tools, streaming, errors |\n| pickers | 9 | one per command |\n| forms | 3 | text, multiline, password |\n\n```rust\n#[test]\nfn recorded_sessions_render_as_before() {\n    // every fixture, every run\n}\n```\n\n> A renderer change that alters any of it fails here first.\n"}}}
+{"t":432,"in":{"event_type":"StatusUpdate","payload":{"segments":{"phase":""}}}}

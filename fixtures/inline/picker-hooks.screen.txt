@@ -1,0 +1,23 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› /hooks
+──── live area when the user sent SelectListResponse ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Hooks                                                                                           │
+│ Run on every turn                                                                               │
+│                                                                                                 │
+│ › 1. ● pre-tool                           scripts/pre-tool.sh                                   │
+│   2. ● post-edit                          scripts/fmt.sh                                        │
+│   3. ○ stop                               scripts/notify.sh                                     │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ↑↓ to choose · type to search · enter to select · esc to cancel
+────
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts                                               gpt-6-luna · 12.4k tokens · $0.91

@@ -1,0 +1,13 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+✓ Read crates/inline/src/session.rs
+
+  The session state machine is 4,431 lines; the prompt paths are the interesting part.
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › look at @crates/inline/src/session.rs                                                         │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts                                               gpt-6-luna · 12.4k tokens · $0.91
