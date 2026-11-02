@@ -98,3 +98,18 @@ export {
   InvalidEvent,
   ExitEvent,
 } from "./binding.js";
+
+export {
+  Turn,
+  StreamHandle,
+  ToolHandle,
+  Lifecycle,
+  TurnOptions,
+  TurnEndOptions,
+  StreamOptions,
+  StreamEndOptions,
+  ToolSpec,
+  ToolFinishSpec,
+  PermissionSpec,
+  ToolStatus,
+} from "./lifecycle.js";

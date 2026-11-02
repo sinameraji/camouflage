@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { Event, EventType, PayloadOf, PermissionRequested, TodoItem } from "./types.js";
+import type { Turn, TurnOptions } from "./lifecycle.js";
 
 export interface MountOptions {
   /** Executable name or path. Defaults to "camouflage-tui" (PATH lookup). */
@@ -226,6 +227,20 @@ export interface CamouflageHandle extends EventEmitter {
   close(): Promise<number>;
   /** Force-kill the renderer. */
   kill(signal?: NodeJS.Signals): void;
+  /**
+   * Open a turn: a bundle of streams, tools and permission requests that
+   * settle together. Closing a handle — or calling `turn.end()` — finishes
+   * everything under it, so a forgotten finish event can never leave the
+   * renderer spinning. Every open turn also settles when the renderer exits.
+   *
+   * @example
+   *   const turn = cam.turn();
+   *   const s = turn.stream();
+   *   s.write("hello");
+   *   s.end();
+   *   turn.end();
+   */
+  turn(opts?: TurnOptions): Turn;
 
   // Typed event subscriptions (EventEmitter overrides):
   on(event: "userInput", listener: (text: string) => void): this;
