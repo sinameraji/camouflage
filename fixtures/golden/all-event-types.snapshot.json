@@ -7,68 +7,68 @@
       "text": "session started"
     },
     {
-      "seq": 4,
+      "seq": 5,
       "kind": "user",
       "text": "hello"
     },
     {
-      "seq": 5,
+      "seq": 6,
       "kind": "assistant",
       "text": "hi there"
     },
     {
-      "seq": 9,
+      "seq": 10,
       "kind": "tool",
       "text": "bash ls (3ms)",
       "tool_id": "t1"
     },
     {
-      "seq": 13,
+      "seq": 14,
       "kind": "system",
       "text": "patch proposed: src/x.rs (+3 -1)"
     },
     {
-      "seq": 14,
+      "seq": 15,
       "kind": "system",
       "text": "patch applied: src/x.rs"
     },
     {
-      "seq": 15,
+      "seq": 16,
       "kind": "control",
       "text": "permission requested: apply patch (edit)"
     },
     {
-      "seq": 16,
+      "seq": 17,
       "kind": "control",
       "text": "permission granted"
     },
     {
-      "seq": 17,
+      "seq": 18,
       "kind": "control",
       "text": "permission denied"
     },
     {
-      "seq": 18,
+      "seq": 19,
       "kind": "error",
       "text": "oops"
     },
     {
-      "seq": 19,
+      "seq": 20,
       "kind": "error",
       "text": "[quota] quota  (upgrade)"
     },
     {
-      "seq": 20,
+      "seq": 21,
       "kind": "system",
       "text": "session compacted"
     },
     {
-      "seq": 21,
+      "seq": 22,
       "kind": "marker",
       "text": "end of warmup"
     },
     {
-      "seq": 39,
+      "seq": 40,
       "kind": "system",
       "text": "session ended"
     }

@@ -296,6 +296,32 @@ mod tests {
     }
 
     #[test]
+    fn interleaved_sessions_keep_per_session_seq() {
+        // One stream may carry several sessions; the store keys events by
+        // (session_id, seq), so interleaved appends must not collide and each
+        // session must replay in its own seq order.
+        let s = SqliteStore::open_in_memory().unwrap();
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        let batch = vec![
+            ev(a, 0, EventType::SessionStarted),
+            ev(b, 0, EventType::SessionStarted),
+            ev(a, 1, EventType::SessionStatus),
+            ev(b, 1, EventType::SessionStatus),
+            ev(a, 2, EventType::SessionEnded),
+            ev(b, 2, EventType::SessionEnded),
+        ];
+        s.append_batch(&batch).unwrap();
+        assert_eq!(s.latest_seq(a).unwrap(), 2);
+        assert_eq!(s.latest_seq(b).unwrap(), 2);
+        let loaded_a = s.load_session(a).unwrap();
+        let loaded_b = s.load_session(b).unwrap();
+        assert_eq!(loaded_a.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![0, 1, 2]);
+        assert_eq!(loaded_b.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![0, 1, 2]);
+        assert!(loaded_a.iter().all(|e| e.session_id == a));
+        assert!(loaded_b.iter().all(|e| e.session_id == b));
+    }
+
+    #[test]
     fn append_and_load() {
         let s = SqliteStore::open_in_memory().unwrap();
         let sid = Uuid::new_v4();

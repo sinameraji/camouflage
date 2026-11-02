@@ -1,0 +1,29 @@
+{
+  "total_rows": 4,
+  "rows": [
+    {
+      "seq": 0,
+      "kind": "system",
+      "text": "session started"
+    },
+    {
+      "seq": 4,
+      "kind": "user",
+      "text": "add the deck"
+    },
+    {
+      "seq": 7,
+      "kind": "system",
+      "text": "session ended"
+    },
+    {
+      "seq": 8,
+      "kind": "system",
+      "text": "session ended"
+    }
+  ],
+  "status": {
+    "phase": "idle"
+  },
+  "tasks": []
+}

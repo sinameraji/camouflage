@@ -17,9 +17,9 @@ Camouflage consumer) is one JSON object. The minimum required fields:
 ```
 
 The renderer fills in `id` (random UUID), `session_id` (auto-assigned),
-`seq` (monotonic), `timestamp_ms` (now), and `schema_version` (1) if
-omitted. Full form (what `camouflage-record` persists and
-`camouflage-export` emits):
+`seq` (monotonic **per session**), `timestamp_ms` (now), and
+`schema_version` (1) if omitted. Full form (what `camouflage-record`
+persists and `camouflage-export` emits):
 
 ```json
 {
@@ -82,6 +82,35 @@ Optional payload fields (v0.5+):
 
 Both labels can be re-set on any subsequent `SessionStarted` so an
 adapter can update branding mid-session without restarting the TUI.
+
+#### `SessionStatus` (v2.5+)
+```json
+{
+  "event_type": "SessionStatus",
+  "payload": {
+    "state": "blocked",
+    "title": "camouflage",
+    "place": "this computer",
+    "branch": "feat/deck",
+    "detail": "waiting for approval: run tests",
+    "cost_usd": 0.42,
+    "context_used": 12000,
+    "context_limit": 200000,
+    "pr_url": "https://github.com/sinameraji/camouflage/pull/1",
+    "updated_ms": 1762000000000
+  }
+}
+```
+One session's state, for hosts that put several sessions on one stream (the
+deck). `state` is required and is one of `working` (running a turn),
+`blocked` (waiting on the user), `idle` (alive, not doing anything), `done`
+(finished successfully) or `failed` (errored). Everything else is optional
+and omitted when unknown: `title` (e.g. the repo), `place` (where it runs),
+`branch`, `detail` (why it is blocked or failed), `cost_usd`,
+`context_used` / `context_limit`, `pr_url`, and `updated_ms` (epoch ms).
+Hosts send the full status each time (last-write-wins); the event's
+`session_id` says which session it describes. Renderers that show a single
+session may ignore it.
 
 #### `Splash` (v0.4.9+)
 ```json
@@ -571,6 +600,23 @@ Display-only marker row. Useful for bookmarking phases of a session.
 `ActivityViewChanged` (renderer → host): long-running jobs and agents the
 host owns, shown as a footer badge and a browser (Ctrl+B). See
 [`activity.md`](activity.md).
+
+## Multi-session streams
+
+A stream may carry several sessions. Events from different `session_id`s
+interleave freely in one NDJSON stream:
+
+- `seq` is **per session**, not per stream. Each session counts from its own
+  `0`. `camouflage-validate` checks monotonicity per `session_id` and reports
+  a regression (`SeqOutOfOrder`) instead of comparing seqs across sessions.
+- `SessionStarted` introduces a session; `SessionEnded` removes it.
+- `SessionStatus` carries each session's state (see above).
+- Single-session hosts change nothing: omit `session_id` and the decoder
+  assigns one, with a single seq counter.
+
+[`fixtures/multi-session.ndjson`](../fixtures/multi-session.ndjson) is a
+complete two-session example; the headless decoder, store and validator all
+accept it.
 
 ## Wire-protocol guarantees
 

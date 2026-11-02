@@ -11,8 +11,8 @@ pub mod validate;
 
 use camouflage_protocol::{Event, EventType, SCHEMA_VERSION};
 use serde::Deserialize;
-use std::collections::HashSet;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt};
 use uuid::Uuid;
 
@@ -58,16 +58,39 @@ struct Shorthand {
 
 /// Stateful decoder that assigns sequence numbers / a session id when the
 /// upstream emitter does not provide them. Cheap to construct.
+///
+/// One stream may carry several sessions: events from different
+/// `session_id`s interleave freely, and `seq` is assigned per session (the
+/// protocol's `seq` is per-session, not per-stream).
 pub struct NdjsonDecoder {
     default_session: Uuid,
-    seq: AtomicI64,
+    /// Next seq to hand out for each session seen so far.
+    seqs: Mutex<HashMap<Uuid, i64>>,
 }
 
 impl NdjsonDecoder {
     pub fn new(default_session: Uuid) -> Self {
         Self {
             default_session,
-            seq: AtomicI64::new(0),
+            seqs: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Next seq for `session_id`, advancing that session's counter.
+    fn next_seq(&self, session_id: Uuid) -> i64 {
+        let mut seqs = self.seqs.lock().unwrap();
+        let next = seqs.entry(session_id).or_insert(0);
+        let seq = *next;
+        *next += 1;
+        seq
+    }
+
+    /// Keep a session's counter ahead of an externally-supplied seq.
+    fn observe_seq(&self, session_id: Uuid, seq: i64) {
+        let mut seqs = self.seqs.lock().unwrap();
+        let next = seqs.entry(session_id).or_insert(0);
+        if seq + 1 > *next {
+            *next = seq + 1;
         }
     }
 
@@ -88,16 +111,17 @@ impl NdjsonDecoder {
         let payload = s.payload.unwrap_or(serde_json::Value::Null);
         crate::validate::validate_payload(event_type, payload.clone())
             .map_err(|source| NdjsonError::InvalidPayload { event_type, source })?;
-        let seq = s
-            .seq
-            .unwrap_or_else(|| self.seq.fetch_add(1, Ordering::Relaxed));
-        // Keep the local counter ahead of any externally-supplied seq.
-        if let Some(seq_v) = s.seq {
-            self.seq.fetch_max(seq_v + 1, Ordering::Relaxed);
-        }
+        let session_id = s.session_id.unwrap_or(self.default_session);
+        let seq = match s.seq {
+            Some(seq) => {
+                self.observe_seq(session_id, seq);
+                seq
+            }
+            None => self.next_seq(session_id),
+        };
         Ok(Event {
             id: s.id.unwrap_or_else(Uuid::new_v4),
-            session_id: s.session_id.unwrap_or(self.default_session),
+            session_id,
             seq,
             timestamp_ms: s.timestamp_ms.unwrap_or_else(now_ms),
             schema_version: if schema_version == 0 {
@@ -168,7 +192,7 @@ fn diagnostic_event(decoder: &NdjsonDecoder, message: String) -> Event {
     Event {
         id: Uuid::new_v4(),
         session_id: decoder.default_session,
-        seq: decoder.seq.fetch_add(1, Ordering::Relaxed),
+        seq: decoder.next_seq(decoder.default_session),
         timestamp_ms: now_ms(),
         schema_version: SCHEMA_VERSION,
         event_type: EventType::RuntimeError,
@@ -203,6 +227,45 @@ mod tests {
         let b = d.parse_line(r#"{"event_type":"SessionEnded"}"#).unwrap();
         assert_eq!(a.seq, 0);
         assert_eq!(b.seq, 1);
+    }
+
+    #[test]
+    fn interleaved_sessions_get_per_session_seq() {
+        let d = NdjsonDecoder::new(Uuid::nil());
+        let a = Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap();
+        let b = Uuid::parse_str("22222222-2222-4222-8222-222222222222").unwrap();
+        let line = |sid: Uuid, et: &str, payload: &str| {
+            format!(r#"{{"session_id":"{sid}","event_type":"{et}","payload":{payload}}}"#)
+        };
+        let events = [
+            d.parse_line(&line(a, "SessionStarted", "{}")).unwrap(),
+            d.parse_line(&line(b, "SessionStarted", "{}")).unwrap(),
+            d.parse_line(&line(a, "SessionStatus", r#"{"state":"working"}"#)).unwrap(),
+            d.parse_line(&line(b, "SessionStatus", r#"{"state":"blocked"}"#)).unwrap(),
+            d.parse_line(&line(a, "SessionEnded", "{}")).unwrap(),
+        ];
+        assert_eq!(events[0].session_id, a);
+        assert_eq!(events[1].session_id, b);
+        // Each session counts from zero independently.
+        assert_eq!(
+            events.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            vec![0, 0, 1, 1, 2]
+        );
+    }
+
+    #[test]
+    fn supplied_seq_advances_only_that_session() {
+        let d = NdjsonDecoder::new(Uuid::nil());
+        let a = Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap();
+        let b = Uuid::parse_str("22222222-2222-4222-8222-222222222222").unwrap();
+        let with_seq = |sid: Uuid, seq: i64| {
+            format!(r#"{{"session_id":"{sid}","seq":{seq},"event_type":"SessionEnded"}}"#)
+        };
+        d.parse_line(&with_seq(a, 41)).unwrap();
+        let next_a = d.parse_line(&format!(r#"{{"session_id":"{a}","event_type":"SessionEnded"}}"#)).unwrap();
+        let next_b = d.parse_line(&format!(r#"{{"session_id":"{b}","event_type":"SessionEnded"}}"#)).unwrap();
+        assert_eq!(next_a.seq, 42);
+        assert_eq!(next_b.seq, 0);
     }
 
     #[tokio::test]
