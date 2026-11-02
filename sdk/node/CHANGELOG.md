@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.12.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.11.0...camouflage-tui-v2.12.0) (2026-11-02)
+
+
+### Features
+
+* **inline:** fold read-only shell commands into the run of reads ([2b8ef3d](https://github.com/sinameraji/camouflage/commit/2b8ef3da84b7b8781221e08ae132ce2b43fb7487))
+* **inline:** fold read-only shell commands into the run of reads ([fb1d37a](https://github.com/sinameraji/camouflage/commit/fb1d37a1a02c43a6c8d329d2f1c76470a74a5501))
+* **protocol:** per-session status and multi-session streams ([dd3efd7](https://github.com/sinameraji/camouflage/commit/dd3efd74e605057b82abc4ad077d12ee24c5898a))
+* **protocol:** per-session status and multi-session streams ([d7b243d](https://github.com/sinameraji/camouflage/commit/d7b243da5b9ba51d96feee471ec307c6e3530101)), closes [#146](https://github.com/sinameraji/camouflage/issues/146)
+* **sdk:** add lifecycle API with turn/stream/tool handles that auto-settle ([45f609b](https://github.com/sinameraji/camouflage/commit/45f609bc8d8539dc4c1dd772e9c7d5f65e7af50c)), closes [#131](https://github.com/sinameraji/camouflage/issues/131)
+* **sdk:** lifecycle API — turn/stream/tool handles that auto-settle ([ea48b67](https://github.com/sinameraji/camouflage/commit/ea48b67513a57574608a34eb79811c22e6524693))
+
+
+### Bug Fixes
+
+* **inline:** fold shell rows in a real session ([d69e41b](https://github.com/sinameraji/camouflage/commit/d69e41b4f9370d0d97281d8704330c06f6b0d0e5))
+* **inline:** fold shell rows in a real session ([fd78f0d](https://github.com/sinameraji/camouflage/commit/fd78f0d74979363cfa20cfda8f8f2a5c25f11b18))
+
 ## [2.11.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.10.2...camouflage-tui-v2.11.0) (2026-10-30)
 
 
