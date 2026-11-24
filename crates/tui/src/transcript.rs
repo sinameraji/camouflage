@@ -83,6 +83,10 @@ impl Transcript {
                     KeyCode::Backspace => {
                         search.query.pop();
                     }
+                    // ^H arrives as Ctrl+H from terminals that send BS for Backspace.
+                    KeyCode::Char('h') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                        search.query.pop();
+                    }
                     KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => {
                         search.query.push(c);
                     }
@@ -312,6 +316,18 @@ mod tests {
         let search = t.search.as_ref().expect("search stays open");
         assert_eq!(search.matches.len(), 1);
         assert!(t.scroll <= search.matches[0]);
+    }
+
+    #[test]
+    fn backspace_and_ctrl_h_edit_the_search() {
+        let mut t = transcript_with(&["alpha"]);
+        t.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for c in "abc".chars() {
+            t.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        t.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        t.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
+        assert_eq!(t.search.as_ref().expect("search open").query, "a");
     }
 
     #[test]

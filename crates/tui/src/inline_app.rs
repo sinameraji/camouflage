@@ -411,6 +411,10 @@ fn map_key(k: KeyEvent) -> Option<Key> {
     let alt = k.modifiers.contains(KeyModifiers::ALT);
     let shift = k.modifiers.contains(KeyModifiers::SHIFT);
     Some(match k.code {
+        // Many terminals send ^H (0x08) for Backspace instead of DEL (0x7f),
+        // often with Ctrl+Backspace sending the other byte. crossterm reports
+        // ^H as Ctrl+H, so treat it as Backspace like readline does.
+        KeyCode::Char('h') if ctrl && !alt => Key::Backspace { word: false },
         KeyCode::Char(c) if ctrl => Key::Ctrl(c.to_ascii_lowercase()),
         KeyCode::Char('b') if alt => Key::Left { word: true },
         KeyCode::Char('f') if alt => Key::Right { word: true },
@@ -932,6 +936,9 @@ mod tests {
         assert_eq!(map_key(key(KeyCode::Char('c'), KeyModifiers::CONTROL)), Some(Key::Ctrl('c')));
         assert_eq!(map_key(key(KeyCode::Enter, KeyModifiers::SHIFT)), Some(Key::Enter { shift: true, alt: false }));
         assert_eq!(map_key(key(KeyCode::Backspace, KeyModifiers::ALT)), Some(Key::Backspace { word: true }));
+        // ^H, which terminals that send BS for Backspace produce, deletes a character.
+        assert_eq!(map_key(key(KeyCode::Char('h'), KeyModifiers::CONTROL)), Some(Key::Backspace { word: false }));
+        assert_eq!(map_key(key(KeyCode::Backspace, KeyModifiers::NONE)), Some(Key::Backspace { word: false }));
         assert_eq!(map_key(key(KeyCode::Tab, KeyModifiers::SHIFT)), Some(Key::BackTab));
         let mut release = key(KeyCode::Char('a'), KeyModifiers::NONE);
         release.kind = KeyEventKind::Release;
