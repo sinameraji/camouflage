@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.13.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.13.0...camouflage-tui-v2.13.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* **tui:** treat ^H as Backspace ([d7558aa](https://github.com/sinameraji/camouflage/commit/d7558aabf0eedbb342856b92831459c032c76edd))
+
 ## [2.13.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.12.0...camouflage-tui-v2.13.0) (2026-11-02)
 
 
