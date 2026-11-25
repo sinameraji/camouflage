@@ -82,6 +82,12 @@ impl Editor {
         &self.buf
     }
 
+    /// The buffer with every paste chip replaced by the text it stands for:
+    /// what a submit sends (`text()` is what's on screen).
+    pub fn expanded_text(&self) -> String {
+        self.expand_chips(&self.buf)
+    }
+
     pub fn cursor(&self) -> usize {
         self.cur
     }

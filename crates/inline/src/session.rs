@@ -4233,6 +4233,30 @@ mod tests {
     }
 
     #[test]
+    fn multiline_field_submits_a_collapsed_paste_as_its_text() {
+        let mut s = session();
+        s.apply(
+            &ev(
+                EventType::ShowForm,
+                json!({"id": "f", "fields": [
+                    {"name": "message", "label": "Message", "kind": "multiline"}
+                ]}),
+            ),
+            0,
+        );
+        let pasted: String = (1..=22).map(|i| format!("line {i}\n")).collect();
+        type_str(&mut s, "see: ");
+        s.key(Key::Paste(pasted.clone()), 0);
+        let live = live_text(&s, 0).join("\n");
+        assert!(live.contains("[Pasted text #1 +22 lines]"), "{live}");
+        s.key(Key::Tab, 0);
+        assert_eq!(
+            s.take_outbound()[0].payload,
+            json!({"id": "f", "values": {"message": format!("see: {pasted}")}})
+        );
+    }
+
+    #[test]
     fn esc_cancels_a_form() {
         let mut s = session();
         s.apply(
