@@ -152,7 +152,9 @@ impl FormState {
         }
         let mut values = Map::new();
         for f in &self.fields {
-            values.insert(f.name.clone(), json!(f.editor.text()));
+            // A long paste shows as a `[Pasted text #N +M lines]` chip; the
+            // value is the pasted text, the same as a prompt submit.
+            values.insert(f.name.clone(), json!(f.editor.expanded_text()));
         }
         FormOutcome::Submitted(values)
     }
