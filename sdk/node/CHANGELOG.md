@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.13.2](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.13.1...camouflage-tui-v2.13.2) (2026-11-25)
+
+
+### Bug Fixes
+
+* **inline:** expand paste chips when a form is submitted ([64d9880](https://github.com/sinameraji/camouflage/commit/64d9880a884f7d59255c7796188107d8960c03cc))
+
 ## [2.13.1](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.13.0...camouflage-tui-v2.13.1) (2026-11-24)
 
 
