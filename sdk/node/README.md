@@ -124,6 +124,8 @@ s.reasoning("thinking…");         // AssistantReasoningDelta (Ctrl+R in the UI
 s.write("Hello");                 // AssistantTokenDelta
 s.end();                          // AssistantMessageCompleted
 
+turn.toolCallArgs('{"path":');    // AssistantToolCallArgsDelta (spinner counter only)
+
 const tool = turn.tool({ name: "Bash", args: "npm test" }); // ToolExecutionStarted
 tool.stdout("1..5\n");            // ToolExecutionStdout
 tool.finish({ status: "ok", summary: "5 passed", diff });   // ToolExecutionFinished
@@ -132,6 +134,10 @@ const { choice } = await turn.permission({ title: "edit src/auth.ts", diff });
 
 turn.end();                       // settles anything still open
 ```
+
+`turn.toolCallArgs(chunk)` feeds the spinner's token count while the model
+writes a (possibly large) tool-call payload. It is counter-only: no
+transcript row is created or changed.
 
 Guarantees:
 

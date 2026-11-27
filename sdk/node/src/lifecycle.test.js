@@ -60,6 +60,28 @@ test("turn.stream() drives start → delta → completed in order", async (t) =>
   await cam.close();
 });
 
+test("turn.toolCallArgs() counts arguments without opening a stream or block", async (t) => {
+  const { cam, ofType, types, waitFor } = await mountRecording(t);
+  const turn = cam.turn();
+
+  // Tool-call arguments are not tied to a visible assistant stream: the
+  // renderer must only add them to the spinner's token count.
+  turn.toolCallArgs('{"path":"src/a.ts"');
+  turn.toolCallArgs("}");
+
+  await waitFor(() => ofType("AssistantToolCallArgsDelta").length === 2);
+  assert.deepEqual(types(), ["AssistantToolCallArgsDelta", "AssistantToolCallArgsDelta"]);
+  assert.deepEqual(
+    ofType("AssistantToolCallArgsDelta").map((e) => e.payload.token),
+    ['{"path":"src/a.ts"', "}"],
+  );
+  assert.equal(types().includes("AssistantStreamStarted"), false, "no stream is opened");
+
+  turn.end();
+  assert.equal(turn.toolCallArgs("late"), false, "after end() it is dropped");
+  await cam.close();
+});
+
 test("turn.tool() drives start → stdout → finish, with ok mapped to done", async (t) => {
   const { cam, ofType, waitFor } = await mountRecording(t);
   const turn = cam.turn();

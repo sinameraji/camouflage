@@ -55,6 +55,7 @@ export type EventType =
   | "ShowToast"
   | "MentionQuery"
   | "AssistantReasoningDelta"
+  | "AssistantToolCallArgsDelta"
   | "TerminalSuspend"
   | "TerminalResume"
   | "TerminalSuspended"
@@ -81,6 +82,8 @@ export interface EnvelopeMeta {
 export type UserMessage = { text: string };
 export type AssistantStreamStarted = { stream_id: string };
 export type AssistantTokenDelta = { stream_id: string; token: string };
+/** Counter-only: the spinner counts these chunks; they never enter the transcript. */
+export type AssistantToolCallArgsDelta = { token: string };
 export type AssistantMessageCompleted = {
   stream_id: string;
   /** Optional final text; replaces what was streamed (e.g. after cleanup). */
@@ -451,6 +454,8 @@ export type Event = EnvelopeMeta &
     | { event_type: "AssistantTokenDelta"; payload: AssistantTokenDelta }
     /** v2.4+: the model's reasoning, shown when the user presses Ctrl+R (inline UI). */
     | { event_type: "AssistantReasoningDelta"; payload: AssistantTokenDelta }
+    /** v2.13.3+: streamed tool-call arguments; counted by the spinner, never shown. */
+    | { event_type: "AssistantToolCallArgsDelta"; payload: AssistantToolCallArgsDelta }
     /** v2.4+: hand the terminal to a child process; see `suspendTerminal()`. */
     | { event_type: "TerminalSuspend"; payload: TerminalHandoff }
     | { event_type: "TerminalResume"; payload: TerminalHandoff }

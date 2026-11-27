@@ -413,6 +413,11 @@ impl Session {
             EventType::AssistantReasoningDelta => {
                 let token = s("token");
                 let sid = s("stream_id");
+                // Count reasoning toward the spinner before the early
+                // returns below: reasoning that is too late to display still
+                // means the model is working.
+                self.became_busy(now);
+                self.streamed_chars += token.chars().count() as u64;
                 if let Some(id) = self.reasoning.get(&sid).copied() {
                     if let Some(Block::Reasoning { text }) = self.block_mut(id) {
                         text.push_str(&token);
@@ -442,7 +447,21 @@ impl Session {
                     },
                 );
                 self.reasoning.insert(sid, id);
+            }
+            EventType::AssistantToolCallArgsDelta => {
+                // Counter-only: the model is writing a tool call's
+                // arguments. Add to the spinner's tally, but never touch
+                // entries or streams — these arguments must not leak into
+                // the transcript.
+                //
+                // It also must not start a turn: a late chunk after an
+                // abort/cancel would set busy_since while idle and skew the
+                // next turn's elapsed clock and token baseline.
+                if !self.is_busy() {
+                    return;
+                }
                 self.became_busy(now);
+                self.streamed_chars += s("token").chars().count() as u64;
             }
             EventType::AssistantTokenDelta => {
                 let token = s("token");
@@ -2762,6 +2781,24 @@ mod tests {
             .collect()
     }
 
+    /// The spinner's `↓ N tokens` count from the live frame.
+    fn spinner_tokens(s: &Session, now: i64) -> u64 {
+        let lines = live_text(s, now);
+        let line = lines
+            .iter()
+            .find(|l| l.contains("tokens"))
+            .unwrap_or_else(|| panic!("no spinner token line: {lines:?}"));
+        line.split("tokens")
+            .next()
+            .unwrap()
+            .trim()
+            .rsplit(|c: char| !c.is_ascii_digit())
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
+    }
+
     fn type_str(s: &mut Session, t: &str) {
         for ch in t.chars() {
             s.key(Key::Text(ch.to_string()), 0);
@@ -3362,6 +3399,144 @@ mod tests {
             vec!["  thinking… Check the config first.", "", "  Done."]
         );
         assert_eq!(s.held_blocks(), 0);
+    }
+
+    #[test]
+    fn reasoning_and_tool_call_args_move_the_spinner_tokens_without_showing_text() {
+        let mut s = session();
+        s.apply(
+            &ev(EventType::StatusUpdate, json!({"segments": {"phase": "thinking"}})),
+            1_000,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantStreamStarted,
+                json!({"stream_id": "s"}),
+            ),
+            1_000,
+        );
+        assert_eq!(spinner_tokens(&s, 1_000), 0);
+
+        s.apply(
+            &ev(
+                EventType::AssistantReasoningDelta,
+                json!({"stream_id": "s", "token": "PRIVATE-THOUGHT-"}),
+            ),
+            1_001,
+        );
+        let after_reasoning = spinner_tokens(&s, 1_001);
+        assert!(after_reasoning > 0, "reasoning moves the counter");
+        assert!(
+            !live_text(&s, 1_001)
+                .iter()
+                .any(|l| l.contains("PRIVATE-THOUGHT-")),
+            "reasoning is not in the rendered transcript"
+        );
+
+        let held = s.held_blocks();
+        s.apply(
+            &ev(
+                EventType::AssistantToolCallArgsDelta,
+                json!({"token": "{\"path\":\"PRIVATE-ARGS.txt\"}"}),
+            ),
+            1_002,
+        );
+        assert_eq!(
+            s.held_blocks(),
+            held,
+            "tool-call args never open a transcript block"
+        );
+        let after_args = spinner_tokens(&s, 1_002);
+        assert!(
+            after_args > after_reasoning,
+            "tool-call args move the counter ({after_args} vs {after_reasoning})"
+        );
+
+        let mut rendered = live_text(&s, 1_002);
+        rendered.extend(history_text(&mut s, 1_002));
+        assert!(
+            !rendered.iter().any(|l| l.contains("PRIVATE-THOUGHT-")),
+            "{rendered:?}"
+        );
+        assert!(
+            !rendered.iter().any(|l| l.contains("PRIVATE-ARGS")),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn a_late_tool_call_args_chunk_does_not_start_or_count_into_the_next_turn() {
+        let mut s = session();
+        // One complete turn, settled by the host's idle phase.
+        s.apply(
+            &ev(EventType::StatusUpdate, json!({"segments": {"phase": "thinking"}})),
+            1_000,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantStreamStarted,
+                json!({"stream_id": "s"}),
+            ),
+            1_000,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantToolCallArgsDelta,
+                json!({"token": "{\"path\":\"a.ts\"}"}),
+            ),
+            1_010,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantMessageCompleted,
+                json!({"stream_id": "s", "text": "done"}),
+            ),
+            1_020,
+        );
+        s.apply(
+            &ev(EventType::StatusUpdate, json!({"segments": {"phase": ""}})),
+            1_030,
+        );
+        assert!(!s.is_busy());
+        assert!(s.busy_since.is_none());
+
+        // A trailing chunk from the aborted stream arrives while idle.
+        let before = s.streamed_chars;
+        s.apply(
+            &ev(
+                EventType::AssistantToolCallArgsDelta,
+                json!({"token": "LATE-STRAY-MARKER"}),
+            ),
+            5_000,
+        );
+        assert!(
+            s.busy_since.is_none(),
+            "a counter-only chunk must not start a turn"
+        );
+        assert!(!s.is_busy());
+        assert_eq!(
+            s.streamed_chars, before,
+            "a chunk arriving while idle is not counted"
+        );
+
+        // The next turn starts with a fresh clock and token baseline.
+        s.apply(
+            &ev(EventType::StatusUpdate, json!({"segments": {"phase": "thinking"}})),
+            10_000,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantStreamStarted,
+                json!({"stream_id": "s2"}),
+            ),
+            10_000,
+        );
+        assert_eq!(spinner_tokens(&s, 10_000), 0);
+        assert!(
+            live_text(&s, 10_000).iter().any(|l| l.contains("0s")),
+            "{:?}",
+            live_text(&s, 10_000)
+        );
     }
 
     #[test]

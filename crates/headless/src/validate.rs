@@ -111,6 +111,9 @@ pub(crate) fn validate_payload(
         AssistantTokenDelta | AssistantReasoningDelta => {
             serde_json::from_value::<payloads::AssistantTokenDelta>(payload)?;
         }
+        AssistantToolCallArgsDelta => {
+            serde_json::from_value::<payloads::AssistantToolCallArgsDelta>(payload)?;
+        }
         AssistantMessageCompleted => {
             serde_json::from_value::<payloads::AssistantMessageCompleted>(payload)?;
         }
@@ -388,6 +391,21 @@ mod tests {
     fn rejects_token_delta_wrong_type() {
         let line =
             r#"{"event_type":"AssistantTokenDelta","payload":{"stream_id":"s1","token":42}}"#;
+        let err = validate_line(1, line).unwrap_err();
+        assert!(matches!(err, ValidationError::BadPayload { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn accepts_tool_call_args_delta() {
+        // Counter-only events carry just the streamed argument text.
+        let line = r#"{"event_type":"AssistantToolCallArgsDelta","payload":{"token":"{\"path\":\"a.ts\""}}"#;
+        let kind = validate_line(1, line).unwrap();
+        assert_eq!(kind, EventType::AssistantToolCallArgsDelta);
+    }
+
+    #[test]
+    fn rejects_tool_call_args_delta_missing_token() {
+        let line = r#"{"event_type":"AssistantToolCallArgsDelta","payload":{}}"#;
         let err = validate_line(1, line).unwrap_err();
         assert!(matches!(err, ValidationError::BadPayload { .. }), "{err:?}");
     }

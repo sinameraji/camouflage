@@ -168,6 +168,11 @@ pub enum EventType {
     /// is the same as `AssistantTokenDelta`. Hidden until the user presses
     /// Ctrl+R; renderers that don't show reasoning ignore it.
     AssistantReasoningDelta,
+    /// v2.13.3+ — Host → renderer: a chunk of a tool call's streamed arguments
+    /// (e.g. a large file write). Counter-only: the renderer adds it to the
+    /// spinner's token count but never creates or changes a transcript
+    /// block. Payload `{ "token": String }`.
+    AssistantToolCallArgsDelta,
     /// v2.4+ — Host → renderer: give the terminal to a child process (e.g.
     /// a `!` shell command). The inline renderer clears its live area,
     /// leaves raw mode, stops reading keys, then answers
@@ -251,6 +256,7 @@ impl EventType {
             EventType::ShowToast => "ShowToast",
             EventType::MentionQuery => "MentionQuery",
             EventType::AssistantReasoningDelta => "AssistantReasoningDelta",
+            EventType::AssistantToolCallArgsDelta => "AssistantToolCallArgsDelta",
             EventType::TerminalSuspend => "TerminalSuspend",
             EventType::TerminalResume => "TerminalResume",
             EventType::TerminalSuspended => "TerminalSuspended",
@@ -314,6 +320,7 @@ impl EventType {
             "ShowToast" => Self::ShowToast,
             "MentionQuery" => Self::MentionQuery,
             "AssistantReasoningDelta" => Self::AssistantReasoningDelta,
+            "AssistantToolCallArgsDelta" => Self::AssistantToolCallArgsDelta,
             "TerminalSuspend" => Self::TerminalSuspend,
             "TerminalResume" => Self::TerminalResume,
             "TerminalSuspended" => Self::TerminalSuspended,
@@ -377,6 +384,14 @@ pub mod payloads {
     #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct AssistantTokenDelta {
         pub stream_id: String,
+        pub token: String,
+    }
+
+    /// Counter-only: the spinner counts these chunks, but they never enter
+    /// the transcript.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct AssistantToolCallArgsDelta {
         pub token: String,
     }
 
@@ -1288,6 +1303,7 @@ mod tests {
             EventType::ShowToast,
             EventType::MentionQuery,
             EventType::AssistantReasoningDelta,
+            EventType::AssistantToolCallArgsDelta,
             EventType::TerminalSuspend,
             EventType::TerminalResume,
             EventType::TerminalSuspended,
@@ -1299,7 +1315,7 @@ mod tests {
             EventType::ActivityStopRequested,
             EventType::ActivityViewChanged,
         ];
-        assert_eq!(types.len(), 54);
+        assert_eq!(types.len(), 55);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();
@@ -1329,7 +1345,7 @@ mod tests {
             EventType::ShowForm, EventType::FormResponse, EventType::ShowWizard, EventType::WizardCompleted,
             EventType::WizardCancelled, EventType::ModeChangeRequested, EventType::CancelRequested,
             EventType::TranscriptCleared, EventType::Splash, EventType::ShowToast,
-            EventType::MentionQuery, EventType::AssistantReasoningDelta,
+            EventType::MentionQuery, EventType::AssistantReasoningDelta, EventType::AssistantToolCallArgsDelta,
             EventType::TerminalSuspend, EventType::TerminalResume, EventType::TerminalSuspended,
             EventType::ActivityUpdate, EventType::ActivityLog, EventType::ActivityRemoved, EventType::ActivitySnapshot, EventType::ActivityBrowserOpen, EventType::ActivityStopRequested, EventType::ActivityViewChanged,
         ];
@@ -1433,7 +1449,7 @@ mod tests {
             ($($t:ident),* $(,)?) => { $( rust.insert(stringify!($t), rust_fields::<$t>()); )* };
         }
         payloads!(
-            UserMessage, AssistantStreamStarted, AssistantTokenDelta, AssistantMessageCompleted,
+            UserMessage, AssistantStreamStarted, AssistantTokenDelta, AssistantToolCallArgsDelta, AssistantMessageCompleted,
             ToolStarted, ToolOutput, ToolFinished, DiffPayload, PatchProposed, PatchApplied,
             PermissionRequested, PermissionGranted, PermissionDenied, RuntimeError, Cta,
             StatusUpdate, BackgroundTaskUpdate, TodoItem, TodoListUpdate, SessionStarted,

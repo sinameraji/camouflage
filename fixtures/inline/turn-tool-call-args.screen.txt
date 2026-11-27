@@ -1,0 +1,29 @@
+autopilot 2.11.0
+gpt-6-luna · ~/project · main
+/ for commands · @ to mention files
+
+› write the notes file
+──── live area at reasoning before tool-call args ────
+⠋ Writing… · 0s · ↓ 21 tokens · esc to interrupt
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Type ahead · esc to interrupt                                                                 │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts
+────
+──── live area at tool-call args streaming ────
+⠙ Writing… · 0s · ↓ 48 tokens · esc to interrupt
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Type ahead · esc to interrupt                                                                 │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts
+────
+
+  Wrote notes.md.
+──── live area ────
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › Ask autopilot anything · / for commands                                                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts                                               gpt-6-luna · 12.4k tokens · $0.91

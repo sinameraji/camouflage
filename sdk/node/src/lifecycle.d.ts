@@ -136,6 +136,12 @@ export class Turn {
    */
   permission(spec?: PermissionSpec): Promise<PermissionResponseEvent>;
   /**
+   * Feed streamed tool-call arguments to the spinner's token count
+   * (`AssistantToolCallArgsDelta`). Counter-only: never creates or changes a
+   * transcript row. Returns false once the turn has ended.
+   */
+  toolCallArgs(token: unknown): boolean;
+  /**
    * Settle every stream, tool and permission still open under this turn,
    * then clear the busy phase. Idempotent.
    */

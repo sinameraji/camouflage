@@ -63,7 +63,8 @@ impl Coalescer {
                 out.push(ev);
                 out
             }
-            ActivityLog | MentionQuery => Vec::new(),
+            // Counter-only spinner events: like keystrokes, not conversation.
+            AssistantToolCallArgsDelta | ActivityLog | MentionQuery => Vec::new(),
             MentionCandidatesRegistered if ev.payload.get("for_query").is_some() => Vec::new(),
             SlashCommandsRegistered | MentionCandidatesRegistered | StatusUpdate => {
                 let body = ev.payload.to_string();
@@ -170,6 +171,7 @@ mod tests {
         assert!(c.push(ev(102, EventType::StatusUpdate, st)).is_empty());
         assert!(c.push(ev(103, EventType::ActivityLog, json!({"id": "j", "chunk": "x"}))).is_empty());
         assert!(c.push(ev(104, EventType::MentionCandidatesRegistered, json!({"for_query": "../", "candidates": []}))).is_empty());
+        assert!(c.push(ev(105, EventType::AssistantToolCallArgsDelta, json!({"token": "{\"path\":\"a"}))).is_empty(), "counter-only tool-call args are not saved");
     }
 
     #[test]

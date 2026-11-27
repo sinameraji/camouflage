@@ -71,6 +71,8 @@ Turns:
 - `turn-plan-progress` — a todo list advancing through three states.
 - `turn-reasoning` — reasoning deltas, hidden unless Ctrl+R.
 - `turn-reasoning-expanded` — the same turn with Ctrl+R pressed.
+- `turn-tool-call-args` — a long tool-call payload: the spinner counts it,
+  the transcript never shows it.
 - `turn-tools-expanded` — Ctrl+O showing full tool output mid-turn.
 - `turn-shortcuts` — the `?` shortcuts panel.
 - `turn-markdown` — headings, lists, a table, a fenced block, a quote.

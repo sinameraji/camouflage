@@ -331,6 +331,26 @@ class Turn {
   }
 
   /**
+   * Feed a chunk of a tool call's streamed arguments to the spinner's token
+   * count (AssistantToolCallArgsDelta). Counter-only: it never creates or
+   * changes a transcript row, so it is safe for payloads the renderer
+   * shouldn't show while streaming (e.g. a large file write). Do NOT send
+   * this as `AssistantTokenDelta` on a synthetic stream id — the renderer
+   * would open and print a visible block for the unknown stream.
+   *
+   * Late chunks after `end()` are dropped: returns false, never throws.
+   *
+   * @param {unknown} token
+   * @returns {boolean}
+   */
+  toolCallArgs(token) {
+    if (this._ended) return false;
+    return this._send("AssistantToolCallArgsDelta", {
+      token: token == null ? "" : String(token),
+    });
+  }
+
+  /**
    * End the turn: settle every stream, tool and permission still open under
    * it, then clear the busy phase so no spinner is left running.
    *

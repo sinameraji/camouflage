@@ -171,6 +171,16 @@ A new assistant message has begun streaming. `stream_id` keys subsequent
 A single token (or chunk) appended to the active stream. Renderer
 concatenates onto the active assistant row in place.
 
+#### `AssistantToolCallArgsDelta`
+```json
+{ "event_type": "AssistantToolCallArgsDelta", "payload": { "token": "{\"path\":\"src/a.ts\"" } }
+```
+A chunk of a tool call's streamed arguments (e.g. a large file write).
+Counter-only: the renderer adds `token` to the spinner's token count but
+never creates or changes a transcript row. Use this instead of sending
+`AssistantTokenDelta` on a synthetic stream id — an unknown stream would
+open a visible block and leak the arguments into the transcript.
+
 #### `AssistantMessageCompleted`
 ```json
 { "event_type": "AssistantMessageCompleted", "payload": { "stream_id": "s1" } }
