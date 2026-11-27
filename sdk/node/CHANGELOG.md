@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.13.3](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.13.2...camouflage-tui-v2.13.3) (2026-11-27)
+
+
+### Bug Fixes
+
+* **inline:** keep the spinner token counter moving during reasoning and tool calls ([374b45f](https://github.com/sinameraji/camouflage/commit/374b45f699593350309bea8283aef4001313e438))
+
 ## [2.13.2](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.13.1...camouflage-tui-v2.13.2) (2026-11-25)
 
 
