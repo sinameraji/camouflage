@@ -373,6 +373,32 @@ def turn_reasoning_expanded() -> Rec:
     return r
 
 
+def turn_tool_call_args() -> Rec:
+    r = Rec().start()
+    r.wait(40).user("write the notes file")
+    r.wait(50).thinking()
+    r.send("AssistantStreamStarted", {"stream_id": "s1"})
+    for tok in [
+        "I should write the notes file in one go. ",
+        "The arguments are long, so I'll stream them.",
+    ]:
+        r.wait(25).send("AssistantReasoningDelta", {"stream_id": "s1", "token": tok})
+    r.wait(20).snapshot("reasoning before tool-call args")
+    # The model is writing a Write call. Counter-only: none of this marker
+    # text may reach the transcript; only the spinner's token count moves.
+    for tok in [
+        '{"path":"notes.md","content":"',
+        "TOOLCALLARGSLEAKMARKER ",
+        "first line\\nsecond line\\n",
+        'third line","reasoning":"none"}',
+    ]:
+        r.wait(15).send("AssistantToolCallArgsDelta", {"token": tok})
+    r.wait(20).snapshot("tool-call args streaming")
+    r.reply("s1", "Wrote notes.md.")
+    r.wait(60).idle()
+    return r
+
+
 def turn_tools_expanded() -> Rec:
     r = Rec().start()
     r.wait(40).user("run the suite")
@@ -1204,6 +1230,7 @@ SCENARIOS = {
     "turn-plan-progress": turn_plan_progress,
     "turn-reasoning": turn_reasoning,
     "turn-reasoning-expanded": turn_reasoning_expanded,
+    "turn-tool-call-args": turn_tool_call_args,
     "turn-tools-expanded": turn_tools_expanded,
     "turn-shortcuts": turn_shortcuts,
     "turn-markdown": turn_markdown,

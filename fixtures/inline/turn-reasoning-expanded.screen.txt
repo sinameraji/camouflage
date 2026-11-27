@@ -7,7 +7,7 @@ gpt-6-luna · ~/project · main
 
   thinking… The footer is redrawn every frame because status_until keeps it visible for four
   seconds after a change.
-⠙ Writing… · 0s · ↓ 0 tokens · esc to interrupt
+⠙ Writing… · 0s · ↓ 26 tokens · esc to interrupt
 
 ╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ › Type ahead · esc to interrupt                                                                 │
