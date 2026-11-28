@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.14.0](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.13.3...camouflage-tui-v2.14.0) (2026-11-28)
+
+
+### Features
+
+* **inline:** add counter-only AssistantTokenCountDelta event ([68be8ed](https://github.com/sinameraji/camouflage/commit/68be8ed94b3d7bd434779b2788279ef7131b5e2b))
+* **inline:** counter-only AssistantTokenCountDelta event (ENG-31) ([c5fd006](https://github.com/sinameraji/camouflage/commit/c5fd00691fc63ee108f47193c8f31e8436ada7b4))
+
 ## [2.13.3](https://github.com/sinameraji/camouflage/compare/camouflage-tui-v2.13.2...camouflage-tui-v2.13.3) (2026-11-27)
 
 
