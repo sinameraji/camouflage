@@ -459,7 +459,7 @@ export type Event = EnvelopeMeta &
     | { event_type: "AssistantReasoningDelta"; payload: AssistantTokenDelta }
     /** v2.13.3+: streamed tool-call arguments; counted by the spinner, never shown. */
     | { event_type: "AssistantToolCallArgsDelta"; payload: AssistantToolCallArgsDelta }
-    /** v2.13.4+: token counts the host knows about; counted by the spinner, never shown. */
+    /** v2.14+: token counts the host knows about; counted by the spinner, never shown. */
     | { event_type: "AssistantTokenCountDelta"; payload: AssistantTokenCountDelta }
     /** v2.4+: hand the terminal to a child process; see `suspendTerminal()`. */
     | { event_type: "TerminalSuspend"; payload: TerminalHandoff }

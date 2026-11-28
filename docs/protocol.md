@@ -181,6 +181,16 @@ never creates or changes a transcript row. Use this instead of sending
 `AssistantTokenDelta` on a synthetic stream id — an unknown stream would
 open a visible block and leak the arguments into the transcript.
 
+#### `AssistantTokenCountDelta`
+```json
+{ "event_type": "AssistantTokenCountDelta", "payload": { "tokens": 400 } }
+```
+A number of tokens the host counted for work the renderer never sees
+character by character (for example a provider's own usage figure).
+Counter-only: the renderer adds `tokens` to the spinner's token count but
+never creates or changes a transcript row. Like `AssistantToolCallArgsDelta`,
+a count is ignored unless a turn is already busy.
+
 #### `AssistantMessageCompleted`
 ```json
 { "event_type": "AssistantMessageCompleted", "payload": { "stream_id": "s1" } }

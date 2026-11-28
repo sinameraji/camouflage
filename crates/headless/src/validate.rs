@@ -414,6 +414,21 @@ mod tests {
     }
 
     #[test]
+    fn accepts_token_count_delta() {
+        // Counter-only events carry just a token count.
+        let line = r#"{"event_type":"AssistantTokenCountDelta","payload":{"tokens":400}}"#;
+        let kind = validate_line(1, line).unwrap();
+        assert_eq!(kind, EventType::AssistantTokenCountDelta);
+    }
+
+    #[test]
+    fn rejects_token_count_delta_missing_tokens() {
+        let line = r#"{"event_type":"AssistantTokenCountDelta","payload":{}}"#;
+        let err = validate_line(1, line).unwrap_err();
+        assert!(matches!(err, ValidationError::BadPayload { .. }), "{err:?}");
+    }
+
+    #[test]
     fn accepts_session_status() {
         let line = r#"{"event_type":"SessionStatus","payload":{"state":"blocked","title":"camouflage","detail":"waiting for approval"}}"#;
         let kind = validate_line(1, line).unwrap();

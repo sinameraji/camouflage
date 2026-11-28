@@ -173,7 +173,7 @@ pub enum EventType {
     /// spinner's token count but never creates or changes a transcript
     /// block. Payload `{ "token": String }`.
     AssistantToolCallArgsDelta,
-    /// v2.13.4+ — Host → renderer: a number of tokens the host counted for a
+    /// v2.14+ — Host → renderer: a number of tokens the host counted for a
     /// stream that the renderer never sees character by character (for
     /// example a provider's own usage figure). Counter-only: the renderer
     /// adds it to the spinner's token count and never creates or changes a
