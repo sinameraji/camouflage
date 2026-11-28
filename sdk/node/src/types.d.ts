@@ -56,6 +56,7 @@ export type EventType =
   | "MentionQuery"
   | "AssistantReasoningDelta"
   | "AssistantToolCallArgsDelta"
+  | "AssistantTokenCountDelta"
   | "TerminalSuspend"
   | "TerminalResume"
   | "TerminalSuspended"
@@ -84,6 +85,8 @@ export type AssistantStreamStarted = { stream_id: string };
 export type AssistantTokenDelta = { stream_id: string; token: string };
 /** Counter-only: the spinner counts these chunks; they never enter the transcript. */
 export type AssistantToolCallArgsDelta = { token: string };
+/** Counter-only: the spinner adds `tokens`; they never enter the transcript. */
+export type AssistantTokenCountDelta = { tokens: number };
 export type AssistantMessageCompleted = {
   stream_id: string;
   /** Optional final text; replaces what was streamed (e.g. after cleanup). */
@@ -456,6 +459,8 @@ export type Event = EnvelopeMeta &
     | { event_type: "AssistantReasoningDelta"; payload: AssistantTokenDelta }
     /** v2.13.3+: streamed tool-call arguments; counted by the spinner, never shown. */
     | { event_type: "AssistantToolCallArgsDelta"; payload: AssistantToolCallArgsDelta }
+    /** v2.13.4+: token counts the host knows about; counted by the spinner, never shown. */
+    | { event_type: "AssistantTokenCountDelta"; payload: AssistantTokenCountDelta }
     /** v2.4+: hand the terminal to a child process; see `suspendTerminal()`. */
     | { event_type: "TerminalSuspend"; payload: TerminalHandoff }
     | { event_type: "TerminalResume"; payload: TerminalHandoff }

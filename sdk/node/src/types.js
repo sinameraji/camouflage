@@ -23,7 +23,7 @@ const KNOWN_TYPES = new Set([
   "ShowWizard", "WizardCompleted", "WizardCancelled",
   "ModeChangeRequested", "CancelRequested",
   "TranscriptCleared", "Splash", "ShowToast", "MentionQuery",
-  "AssistantReasoningDelta", "AssistantToolCallArgsDelta",
+  "AssistantReasoningDelta", "AssistantToolCallArgsDelta", "AssistantTokenCountDelta",
   "TerminalSuspend", "TerminalResume", "TerminalSuspended",
   "ActivityUpdate", "ActivityLog", "ActivityRemoved", "ActivitySnapshot",
   "ActivityBrowserOpen", "ActivityStopRequested", "ActivityViewChanged",

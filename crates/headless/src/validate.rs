@@ -114,6 +114,9 @@ pub(crate) fn validate_payload(
         AssistantToolCallArgsDelta => {
             serde_json::from_value::<payloads::AssistantToolCallArgsDelta>(payload)?;
         }
+        AssistantTokenCountDelta => {
+            serde_json::from_value::<payloads::AssistantTokenCountDelta>(payload)?;
+        }
         AssistantMessageCompleted => {
             serde_json::from_value::<payloads::AssistantMessageCompleted>(payload)?;
         }

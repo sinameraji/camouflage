@@ -463,6 +463,25 @@ impl Session {
                 self.became_busy(now);
                 self.streamed_chars += s("token").chars().count() as u64;
             }
+            EventType::AssistantTokenCountDelta => {
+                // Counter-only: the host already counted these tokens (for
+                // example a provider's usage figure) for work the renderer
+                // never sees character by character. Move the spinner, but
+                // never touch entries, streams or reasoning — a count must
+                // not open or change a transcript block.
+                //
+                // Like the tool-call arguments above, a late count must not
+                // start a turn: it would set busy_since while idle and skew
+                // the next turn's elapsed clock and token baseline.
+                if !self.is_busy() {
+                    return;
+                }
+                self.became_busy(now);
+                let tokens = p.get("tokens").and_then(Value::as_u64).unwrap_or(0);
+                // The spinner divides characters by four, so add four
+                // characters per token to raise the shown count by `tokens`.
+                self.streamed_chars = self.streamed_chars.saturating_add(tokens.saturating_mul(4));
+            }
             EventType::AssistantTokenDelta => {
                 let token = s("token");
                 if !token.trim().is_empty() {
@@ -3537,6 +3556,97 @@ mod tests {
             "{:?}",
             live_text(&s, 10_000)
         );
+    }
+
+    #[test]
+    fn token_count_delta_moves_the_spinner_without_a_block() {
+        let mut s = session();
+        s.apply(
+            &ev(EventType::StatusUpdate, json!({"segments": {"phase": "thinking"}})),
+            1_000,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantStreamStarted,
+                json!({"stream_id": "s"}),
+            ),
+            1_000,
+        );
+        let blocks = s.held_blocks();
+        let before = spinner_tokens(&s, 1_000);
+        s.apply(
+            &ev(EventType::AssistantTokenCountDelta, json!({"tokens": 7})),
+            1_001,
+        );
+        assert_eq!(
+            s.held_blocks(),
+            blocks,
+            "a token count never opens a transcript block"
+        );
+        let after = spinner_tokens(&s, 1_001);
+        assert_eq!(
+            after,
+            before + 7,
+            "the count raises the spinner by exactly its tokens ({after} vs {before})"
+        );
+        assert!(s.is_busy());
+    }
+
+    #[test]
+    fn a_late_token_count_delta_does_not_start_or_count_into_the_next_turn() {
+        let mut s = session();
+        s.apply(
+            &ev(EventType::StatusUpdate, json!({"segments": {"phase": "thinking"}})),
+            1_000,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantStreamStarted,
+                json!({"stream_id": "s"}),
+            ),
+            1_000,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantMessageCompleted,
+                json!({"stream_id": "s", "text": "done"}),
+            ),
+            1_010,
+        );
+        s.apply(
+            &ev(EventType::StatusUpdate, json!({"segments": {"phase": ""}})),
+            1_020,
+        );
+        assert!(!s.is_busy());
+
+        // A count for the settled stream arrives while idle.
+        let before = s.streamed_chars;
+        s.apply(
+            &ev(EventType::AssistantTokenCountDelta, json!({"tokens": 9})),
+            5_000,
+        );
+        assert!(
+            s.busy_since.is_none(),
+            "a counter-only count must not start a turn"
+        );
+        assert_eq!(
+            s.streamed_chars, before,
+            "a count arriving while idle is not counted"
+        );
+
+        // The next turn starts with a fresh baseline.
+        s.apply(
+            &ev(EventType::StatusUpdate, json!({"segments": {"phase": "thinking"}})),
+            10_000,
+        );
+        s.apply(
+            &ev(
+                EventType::AssistantStreamStarted,
+                json!({"stream_id": "s2"}),
+            ),
+            10_000,
+        );
+        assert_eq!(spinner_tokens(&s, 10_000), 0);
     }
 
     #[test]
