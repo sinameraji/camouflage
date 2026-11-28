@@ -173,6 +173,12 @@ pub enum EventType {
     /// spinner's token count but never creates or changes a transcript
     /// block. Payload `{ "token": String }`.
     AssistantToolCallArgsDelta,
+    /// v2.14+ — Host → renderer: a number of tokens the host counted for a
+    /// stream that the renderer never sees character by character (for
+    /// example a provider's own usage figure). Counter-only: the renderer
+    /// adds it to the spinner's token count and never creates or changes a
+    /// transcript block. Payload `{ "tokens": u64 }`.
+    AssistantTokenCountDelta,
     /// v2.4+ — Host → renderer: give the terminal to a child process (e.g.
     /// a `!` shell command). The inline renderer clears its live area,
     /// leaves raw mode, stops reading keys, then answers
@@ -257,6 +263,7 @@ impl EventType {
             EventType::MentionQuery => "MentionQuery",
             EventType::AssistantReasoningDelta => "AssistantReasoningDelta",
             EventType::AssistantToolCallArgsDelta => "AssistantToolCallArgsDelta",
+            EventType::AssistantTokenCountDelta => "AssistantTokenCountDelta",
             EventType::TerminalSuspend => "TerminalSuspend",
             EventType::TerminalResume => "TerminalResume",
             EventType::TerminalSuspended => "TerminalSuspended",
@@ -321,6 +328,7 @@ impl EventType {
             "MentionQuery" => Self::MentionQuery,
             "AssistantReasoningDelta" => Self::AssistantReasoningDelta,
             "AssistantToolCallArgsDelta" => Self::AssistantToolCallArgsDelta,
+            "AssistantTokenCountDelta" => Self::AssistantTokenCountDelta,
             "TerminalSuspend" => Self::TerminalSuspend,
             "TerminalResume" => Self::TerminalResume,
             "TerminalSuspended" => Self::TerminalSuspended,
@@ -393,6 +401,14 @@ pub mod payloads {
     #[cfg_attr(test, derive(schemars::JsonSchema))]
     pub struct AssistantToolCallArgsDelta {
         pub token: String,
+    }
+
+    /// Counter-only: the spinner adds `tokens`, but these never enter the
+    /// transcript.
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[cfg_attr(test, derive(schemars::JsonSchema))]
+    pub struct AssistantTokenCountDelta {
+        pub tokens: u64,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1304,6 +1320,7 @@ mod tests {
             EventType::MentionQuery,
             EventType::AssistantReasoningDelta,
             EventType::AssistantToolCallArgsDelta,
+            EventType::AssistantTokenCountDelta,
             EventType::TerminalSuspend,
             EventType::TerminalResume,
             EventType::TerminalSuspended,
@@ -1315,7 +1332,7 @@ mod tests {
             EventType::ActivityStopRequested,
             EventType::ActivityViewChanged,
         ];
-        assert_eq!(types.len(), 55);
+        assert_eq!(types.len(), 56);
         for t in types {
             let ev = sample(t, json!({"k": "v"}));
             let s = serde_json::to_string(&ev).unwrap();
@@ -1449,7 +1466,7 @@ mod tests {
             ($($t:ident),* $(,)?) => { $( rust.insert(stringify!($t), rust_fields::<$t>()); )* };
         }
         payloads!(
-            UserMessage, AssistantStreamStarted, AssistantTokenDelta, AssistantToolCallArgsDelta, AssistantMessageCompleted,
+            UserMessage, AssistantStreamStarted, AssistantTokenDelta, AssistantToolCallArgsDelta, AssistantTokenCountDelta, AssistantMessageCompleted,
             ToolStarted, ToolOutput, ToolFinished, DiffPayload, PatchProposed, PatchApplied,
             PermissionRequested, PermissionGranted, PermissionDenied, RuntimeError, Cta,
             StatusUpdate, BackgroundTaskUpdate, TodoItem, TodoListUpdate, SessionStarted,

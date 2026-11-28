@@ -16,6 +16,7 @@ export {
   AssistantStreamStarted,
   AssistantTokenDelta,
   AssistantToolCallArgsDelta,
+  AssistantTokenCountDelta,
   AssistantMessageCompleted,
   ToolStarted,
   ToolOutput,

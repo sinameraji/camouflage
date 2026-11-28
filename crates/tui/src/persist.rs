@@ -64,7 +64,7 @@ impl Coalescer {
                 out
             }
             // Counter-only spinner events: like keystrokes, not conversation.
-            AssistantToolCallArgsDelta | ActivityLog | MentionQuery => Vec::new(),
+            AssistantToolCallArgsDelta | AssistantTokenCountDelta | ActivityLog | MentionQuery => Vec::new(),
             MentionCandidatesRegistered if ev.payload.get("for_query").is_some() => Vec::new(),
             SlashCommandsRegistered | MentionCandidatesRegistered | StatusUpdate => {
                 let body = ev.payload.to_string();

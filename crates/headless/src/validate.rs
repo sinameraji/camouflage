@@ -114,6 +114,9 @@ pub(crate) fn validate_payload(
         AssistantToolCallArgsDelta => {
             serde_json::from_value::<payloads::AssistantToolCallArgsDelta>(payload)?;
         }
+        AssistantTokenCountDelta => {
+            serde_json::from_value::<payloads::AssistantTokenCountDelta>(payload)?;
+        }
         AssistantMessageCompleted => {
             serde_json::from_value::<payloads::AssistantMessageCompleted>(payload)?;
         }
@@ -406,6 +409,21 @@ mod tests {
     #[test]
     fn rejects_tool_call_args_delta_missing_token() {
         let line = r#"{"event_type":"AssistantToolCallArgsDelta","payload":{}}"#;
+        let err = validate_line(1, line).unwrap_err();
+        assert!(matches!(err, ValidationError::BadPayload { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn accepts_token_count_delta() {
+        // Counter-only events carry just a token count.
+        let line = r#"{"event_type":"AssistantTokenCountDelta","payload":{"tokens":400}}"#;
+        let kind = validate_line(1, line).unwrap();
+        assert_eq!(kind, EventType::AssistantTokenCountDelta);
+    }
+
+    #[test]
+    fn rejects_token_count_delta_missing_tokens() {
+        let line = r#"{"event_type":"AssistantTokenCountDelta","payload":{}}"#;
         let err = validate_line(1, line).unwrap_err();
         assert!(matches!(err, ValidationError::BadPayload { .. }), "{err:?}");
     }
